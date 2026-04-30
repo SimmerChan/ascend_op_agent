@@ -20,7 +20,7 @@
 import os
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import yaml
 from pydantic import BaseModel, Field
@@ -106,7 +106,7 @@ class Config(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     @classmethod
-    def from_file(cls, path: str | Path) -> "Config":
+    def from_file(cls, path: Union[str, Path]) -> "Config":
         """从文件加载配置"""
         path = Path(path).expanduser()
         if not path.exists():
@@ -142,7 +142,7 @@ class Config(BaseModel):
         """获取默认配置路径"""
         return Path("~/.ascend_op_agent/config.yaml").expanduser()
 
-    def save(self, path: str | Path) -> None:
+    def save(self, path: Union[str, Path]) -> None:
         """保存配置到文件"""
         path = Path(path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -151,7 +151,7 @@ class Config(BaseModel):
             yaml.dump(self.model_dump(), f, default_flow_style=False, allow_unicode=True)
 
 
-def load_config(config_path: Optional[str | Path] = None) -> Config:
+def load_config(config_path: Optional[Union[str, Path]] = None) -> Config:
     """加载配置的便捷函数
 
     Args:
