@@ -1,9 +1,9 @@
 ---
-title: feat: Ascend Op Agent Core System
+title: "feat: Ascend Op Agent Core System"
 type: feat
 status: active
 date: 2026-04-30
-origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements.md
+origin: "docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements.md"
 ---
 
 # Ascend Op Agent 核心系统实现规划
@@ -122,7 +122,7 @@ origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements
 **决策**: HTTP bearer token从环境变量或keyring获取，不在配置文件明文
 **理由**: KD-10的具体化
 
-### KD-10: Hermes Agent作为参考架构
+### KD-13: Hermes Agent作为参考架构
 **决策**: 作为git submodule引入，不直接依赖运行时
 **理由**: 复用其架构设计模式
 
