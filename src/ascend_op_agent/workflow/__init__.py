@@ -45,6 +45,13 @@ from ascend_op_agent.workflow.models import (
     ArchitectureMapping,
 )
 from ascend_op_agent.workflow.skill_save import SkillSaver, OpResult, SkillDimension
+from ascend_op_agent.workflow.performance import (
+    PerformanceMetric,
+    BenchmarkCase,
+    PerformanceResult,
+    PerformanceReport,
+    PerformanceEvaluator,
+)
 
 __all__ = [
     "OperatorWorkflow",
@@ -69,4 +76,9 @@ __all__ = [
     "SkillSaver",
     "OpResult",
     "SkillDimension",
+    "PerformanceMetric",
+    "BenchmarkCase",
+    "PerformanceResult",
+    "PerformanceReport",
+    "PerformanceEvaluator",
 ]
