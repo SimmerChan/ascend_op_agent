@@ -35,16 +35,21 @@ origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements
 | R7 | 技能保存（可选） | KD4 |
 | R8 | MCP服务器集成 | KD6 |
 | R9 | Skill仓库管理 | KD7 |
+| R10 | 性能评测报告（必选） | KD8 |
 
 ## Scope Boundaries
 
-### In Scope
+### In Scope (MVP)
 - Agent核心引擎（会话管理、Prompt组装、工具注册）
 - 本地开发模式
 - 远程开发模式（SSH）
-- MCP服务器集成（stdio/HTTP）
-- Skill仓库管理（git/local）
-- 六阶段工作流（R1-R6，R7-R9为并行能力）
+- 六阶段工作流（R1-R5，含R10性能评测）
+
+### In Scope (Future)
+- R6 框架适配（PyTorch/TensorFlow）
+- R7 技能保存与发布
+- R8 MCP服务器集成
+- R9 Skill仓库管理
 
 ### Out of Scope
 - 算子融合优化
@@ -73,6 +78,26 @@ origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements
 ### KD-5: 代码修复限定为确定性修复
 **决策**: 仅自动修复语法错误、拼写错误、缺失头文件、类型不匹配
 **理由**: 逻辑错误超出LLM可靠修复范围
+
+### KD-6: MCP服务器集成
+**决策**: 支持通过配置文件连接外部MCP服务器
+**理由**: 复用社区已有的MCP工具和服务
+
+### KD-7: Skill仓库混合组织
+**决策**: 技能按混合维度组织——基础模板 + Bugfix + 性能优化
+**理由**: 不同经验有不同复用场景
+
+### KD-8: 性能评测为必选阶段
+**决策**: Phase 7性能评测使用torch_npu.profiler对比基准
+**理由**: 确保算子性能达标
+
+### KD-9: LLM API通过环境变量配置
+**决策**: API密钥通过环境变量获取，不硬编码
+**理由**: 安全性要求
+
+### KD-10: Hermes Agent作为参考架构
+**决策**: 作为git submodule引入，不直接依赖运行时
+**理由**: 复用其架构设计模式
 
 ## Open Questions
 
@@ -152,9 +177,10 @@ origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements
 - Create: `tests/test_cli.py`
 
 **Approach:**
-- pyproject.toml: click, rich, pydantic, pyyaml, sqlparse, fts5
+- pyproject.toml: click, rich, pydantic, pyyaml, sqlparse, fts5, paramiko, mcp
 - config.yaml.example: 包含所有配置项及注释
 - CLI使用click + rich构建，支持init/run/skill/mcp/sync命令
+- hermes-agent: 作为git submodule引入，路径 `external/hermes-agent`
 
 **Patterns to follow:**
 - 参考 hermes-agent/cli-config.yaml.example 配置格式
@@ -184,7 +210,9 @@ origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements
 - Create: `src/ascend_op_agent/agent/prompt_builder.py`
 - Create: `src/ascend_op_agent/agent/tool_registry.py`
 - Create: `src/ascend_op_agent/agent/context.py`
+- Create: `src/ascend_op_agent/agent/SOUL.md`  # Agent Identity定义
 - Create: `tests/test_agent.py`
+- Reference: `hermes-agent/` 作为git submodule引入
 
 **Approach:**
 
@@ -235,7 +263,7 @@ def register(name, toolset, schema, handler, check_fn=None):
 
 **Goal:** 实现本地和远程开发模式，支持SSH连接和文件同步
 
-**Requirements:** R1.3, KD2, Deferred-SSH
+**Requirements:** R1, KD2
 
 **Dependencies:** Unit 1
 
@@ -341,7 +369,7 @@ mcp:
 
 **Goal:** 实现Skill仓库同步和本地索引，支持git仓库和本地路径
 
-**Requirements:** R9, KD7, KD8, Deferred-Skill
+**Requirements:** R9, KD7
 
 **Dependencies:** Unit 1
 
@@ -518,7 +546,7 @@ class TensorFlowAdapter:
 
 **Goal:** 实现技能保存和发布流程
 
-**Requirements:** R7, KD4, KD8, KD9, KD10
+**Requirements:** R7, KD7
 
 **Dependencies:** Unit 5, Unit 6
 
@@ -593,6 +621,48 @@ skill publish <skill_name>  # → git push → PR创建
 **Verification:**
 - `python -m pytest tests/integration/ -v` 通过
 
+---
+
+- [ ] **Unit 10: 性能评测报告（Phase 7）**
+
+**Goal:** 实现性能评测和报告生成
+
+**Requirements:** R10, KD8
+
+**Dependencies:** Unit 6 (Phase 4编译验证通过)
+
+**Files:**
+- Create: `src/ascend_op_agent/workflow/performance.py`
+- Create: `tests/test_performance.py`
+
+**Approach:**
+
+*PerformanceEvaluator:*
+```python
+class PerformanceEvaluator:
+    def evaluate(self, operator, benchmark_cases):
+        # 使用torch_npu.profiler采集性能数据
+        # warmup=5, active=5
+        # 生成性能对比报告
+```
+
+*性能评测流程:*
+- 生成JSONL格式测试用例
+- 使用torch_npu.profiler进行profiling
+- 汇总op_statistic.csv指标
+- 输出Markdown格式性能对比报告
+
+**Patterns to follow:**
+- ascendc-operator-performance-eval skill规范
+
+**Test scenarios:**
+- profiler数据采集成功
+- 性能报告生成正确
+- 自定义算子vs标杆对比显示
+
+**Verification:**
+- `python -m pytest tests/test_performance.py -v` 通过
+
 ## System-Wide Impact
 
 ### Interaction Graph
@@ -625,7 +695,7 @@ skill publish <skill_name>  # → git push → PR创建
 
 ### Phase 1: 核心框架（Unit 1-2）
 - 项目脚手架
-- Agent核心引擎
+- Agent核心引擎（含SOUL.md）
 - **目标**: 本地模式基本对话
 
 ### Phase 2: 开发模式（Unit 3）
@@ -633,16 +703,17 @@ skill publish <skill_name>  # → git push → PR创建
 - 文件同步
 - **目标**: 远程开发可用
 
-### Phase 3: 工作流（Unit 6）
-- 六阶段工作流
-- **目标**: 完整算子开发流程
+### Phase 3: 工作流+性能（Unit 6, Unit 10）
+- 六阶段工作流（含Phase 0-4）
+- Phase 7性能评测
+- **目标**: 完整算子开发流程+性能报告
 
-### Phase 4: 集成能力（Unit 4-5, 7-8）
+### Phase 4: 可选功能（Unit 4-5, 7-8）
 - MCP集成
 - Skill仓库
 - 框架适配
 - 技能保存
-- **目标**: 完整功能可用
+- **目标**: 扩展功能可用
 
 ### Phase 5: 测试和优化（Unit 9）
 - 集成测试
@@ -662,6 +733,6 @@ skill publish <skill_name>  # → git push → PR创建
 ## Sources & References
 
 - **Origin document:** [docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements.md](../brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements.md)
-- Hermes Agent架构: [hermes-agent/.zread/wiki/](file:///Users/huangshilei/Documents/pythonprojects/hermes-agent/.zread/wiki/)
-- ascendc-operator-dev skill: `/tmp/agent-skills/skills/ascendc-operator-dev/SKILL.md`
+- Hermes Agent架构: [hermes-agent/.zread/wiki/](file:///Users/huangshilei/Documents/pythonprojects/hermes-agent/.zread/wiki/) (作为git submodule引入)
+- ascendc-operator-dev skill: 配置于 `~/.ascend_op_agent/agent-skills/` 或通过 `--skills-path` 指定
 - MCP SDK: https://github.com/modelcontextprotocol/python-sdk
