@@ -22,6 +22,18 @@ origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements
 
 本系统通过自动化工作流和技能复用提升开发效率。
 
+## 用户价值指标（量化）
+
+| 指标 | 当前状态 | 目标（使用Agent后） | 衡量方式 |
+|------|----------|---------------------|----------|
+| 开发周期 | 手动5-10天/算子 | 1-2天/算子 | 项目统计 |
+| 代码复用率 | ~20% | >60% | Skill使用次数 |
+| 编译通过率（首次） | ~40% | >75% | Phase4统计 |
+| 迁移效率（GPU→Ascend） | 手动2-3周 | 3-5天 | 项目统计 |
+| 累计经验损失 | 高（人员流动） | 低（Skill持久化） | 知识库规模 |
+
+## Success Criteria
+
 ## Requirements Trace
 
 | ID | 需求 | 来源 |
@@ -31,6 +43,7 @@ origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements
 | R3 | 方案设计阶段（用户确认） | KD1 |
 | R4 | 代码生成阶段 | KD3 |
 | R5 | 编译验证（自动修复最多3次） | KD3 |
+| R5.1 | 精度评估（≥30用例，必选） | KD8 |
 | R6 | 框架适配（可选） | KD5 |
 | R7 | 技能保存（可选） | KD4 |
 | R8 | MCP服务器集成 | KD6 |
@@ -43,7 +56,9 @@ origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements
 - Agent核心引擎（会话管理、Prompt组装、工具注册）
 - 本地开发模式
 - 远程开发模式（SSH）
-- 六阶段工作流（R1-R5，含R10性能评测）
+- 六阶段工作流（R1-R5）
+- Phase5 精度评估（≥30用例，必选）
+- Phase8 性能评测报告（必选）
 
 ### In Scope (Future)
 - R6 框架适配（PyTorch/TensorFlow）
@@ -95,6 +110,18 @@ origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements
 **决策**: API密钥通过环境变量获取，不硬编码
 **理由**: 安全性要求
 
+### KD-10: 敏感信息统一管理
+**决策**: 密码/token通过系统密钥链（keyring库）存储，环境变量中仅存引用
+**理由**: 防止凭据泄露
+
+### KD-11: SSH密码凭据保护
+**决策**: SSH密码不使用明文存储；支持keyring或提示用户每次输入
+**理由**: KD-10的具体化
+
+### KD-12: MCP认证token安全获取
+**决策**: HTTP bearer token从环境变量或keyring获取，不在配置文件明文
+**理由**: KD-10的具体化
+
 ### KD-10: Hermes Agent作为参考架构
 **决策**: 作为git submodule引入，不直接依赖运行时
 **理由**: 复用其架构设计模式
@@ -138,8 +165,10 @@ origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements
 │    ├── Phase2: 方案设计（用户确认）                          │
 │    ├── Phase3: 代码生成                                      │
 │    ├── Phase4: 编译验证                                      │
-│    ├── Phase5: 框架适配（可选）                              │
-│    └── Phase6: 技能保存（可选）                              │
+│    ├── Phase5: 精度评估（≥30用例，必选）                     │
+│    ├── Phase6: 框架适配（可选）                              │
+│    ├── Phase7: 技能保存（可选）                             │
+│    └── Phase8: 性能评测报告（必选）                         │
 ├─────────────────────────────────────────────────────────────┤
 │  集成层                                                      │
 │    ├── SSHManager: paramiko SSH + rsync                      │
@@ -153,6 +182,11 @@ origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements
 │    ├── ssh_ops: 远程命令/文件传输                            │
 │    ├── ascend_ops: CANN环境检测、编译                         │
 │    └── skill_ops: 技能CRUD                                   │
+├─────────────────────────────────────────────────────────────┤
+│  安全层 (内置)                                               │
+│    ├── CredentialManager: keyring集成，密码/token安全存储      │
+│    ├── SSHClaimStorage: SSH凭据管理，不明文存储                │
+│    └── TokenResolver: 环境变量/keyring获取MCP bearer token   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -210,6 +244,7 @@ origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements
 - Create: `src/ascend_op_agent/agent/prompt_builder.py`
 - Create: `src/ascend_op_agent/agent/tool_registry.py`
 - Create: `src/ascend_op_agent/agent/context.py`
+- Create: `src/ascend_op_agent/agent/memory.py`        # Layer 5 Persistent Memory
 - Create: `src/ascend_op_agent/agent/SOUL.md`  # Agent Identity定义
 - Create: `tests/test_agent.py`
 - Reference: `hermes-agent/` 作为git submodule引入
@@ -223,6 +258,7 @@ class AIAgent:
         self.tool_registry = ToolRegistry()
         self.prompt_builder = PromptBuilder()
         self.context = ContextEngine()
+        self.memory = PersistentMemory()  # Layer 5: 持久化记忆
         self.workflow = OperatorWorkflow(...)
 
     def run_conversation(self, user_input: str) -> str:
@@ -234,14 +270,78 @@ class AIAgent:
 2. Hermes Help Guidance
 3. Tool-aware Behavioral Guidance
 4. Custom System Message
-5. Persistent Memory
+5. Persistent Memory (SQLite持久化)
 6. Skills Index
 7. Context Files + Timestamp + Env
 
-*ToolRegistry自注册:*
+*ContextEngine 实现细节:*
 ```python
-def register(name, toolset, schema, handler, check_fn=None):
-    # 工具声明式注册，支持装饰器
+class ContextEngine:
+    def __init__(self, max_tokens: int = 128000):
+        self.compressor = TextCompressor()  # MMR重排序
+        self.cache = LRUCache(max_size=100)
+
+    def compress(self, context: list[Message]) -> list[Message]:
+        # 1. 按相关性分块
+        # 2. Max Marginal Relevance去重
+        # 3. 按时间衰减加权
+        # 4. 返回压缩后的上下文
+
+    def retrieve(self, query: str, k: int = 5) -> list[Chunk]:
+        # 向量检索 + FTS5混合检索
+```
+
+*PersistentMemory 实现细节:*
+```python
+class PersistentMemory:
+    def __init__(self, db_path: str):
+        self.conn = sqlite3.connect(db_path)
+        self.conn.execute("""
+            CREATE VIRTUAL TABLE memory USING fts5(
+                content, metadata, timestamp
+            )
+        """)
+
+    def store(self, key: str, value: str, metadata: dict):
+        # 存储到SQLite FTS5
+        self.conn.execute(
+            "INSERT INTO memory VALUES (?, ?, ?, ?)",
+            (value, json.dumps(metadata), time.time(), key)
+        )
+
+    def recall(self, key: str) -> str:
+        # 按key检索
+        return self.conn.execute(
+            "SELECT content FROM memory WHERE key=?", (key,)
+        ).fetchone()[0]
+
+    def search(self, query: str, k: int = 5) -> list[str]:
+        # FTS5全文检索
+        return self.conn.execute(
+            "SELECT content FROM memory WHERE memory MATCH ? LIMIT ?",
+            (query, k)
+        ).fetchall()
+```
+
+*LLM重试策略:*
+```python
+class LLMClient:
+    def __init__(self, config: LLMConfig):
+        self.max_retries = 3
+        self.backoff_factor = 2  # 指数退避
+        self.fallback_models = ["gpt-4", "gpt-3.5-turbo"]
+
+    def call(self, prompt: str, model: str = None) -> str:
+        for attempt in range(self.max_retries):
+            try:
+                return self._do_call(prompt, model)
+            except RateLimitError as e:
+                wait_time = self.backoff_factor ** attempt
+                time.sleep(wait_time)
+            except ServiceUnavailableError:
+                # 切换到fallback模型
+                model = self.fallback_models.pop(0)
+        raise MaxRetriesExceeded()
 ```
 
 **Patterns to follow:**
@@ -259,11 +359,11 @@ def register(name, toolset, schema, handler, check_fn=None):
 
 ---
 
-- [ ] **Unit 3: SSH开发模式**
+- [ ] **Unit 3: SSH开发模式 + 安全层**
 
-**Goal:** 实现本地和远程开发模式，支持SSH连接和文件同步
+**Goal:** 实现本地和远程开发模式，支持SSH连接和文件同步；实现凭据安全管理
 
-**Requirements:** R1, KD2
+**Requirements:** R1, KD2, KD10, KD11, KD12
 
 **Dependencies:** Unit 1
 
@@ -271,7 +371,11 @@ def register(name, toolset, schema, handler, check_fn=None):
 - Create: `src/ascend_op_agent/ssh/__init__.py`
 - Create: `src/ascend_op_agent/ssh/manager.py`
 - Create: `src/ascend_op_agent/ssh/sync.py`
+- Create: `src/ascend_op_agent/security/__init__.py`
+- Create: `src/ascend_op_agent/security/credential_manager.py`  # keyring集成
+- Create: `src/ascend_op_agent/security/token_resolver.py`     # 环境变量/keyring
 - Create: `tests/test_ssh.py`
+- Create: `tests/test_security.py`
 
 **Approach:**
 
@@ -293,6 +397,26 @@ class SSHManager:
 - 同步前校验文件hash
 - 冲突处理：覆盖或备份
 
+*敏感信息管理:*
+```python
+class CredentialManager:
+    def get_ssh_password(self, host):
+        # 从keyring获取，不存在则提示用户输入
+        return keyring.get_password(f"ascend_op_agent:ssh:{host}", username)
+
+    def set_ssh_password(self, host, username, password):
+        # 存储到系统keyring
+        keyring.set_password(f"ascend_op_agent:ssh:{host}", username, password)
+
+class TokenResolver:
+    def get_bearer_token(self, server_name):
+        # 优先从环境变量获取，其次keyring
+        token = os.getenv(f"OAUTH_TOKEN_{server_name.upper()}")
+        if not token:
+            token = keyring.get_password("ascend_op_agent:mcp", server_name)
+        return token
+```
+
 **Patterns to follow:**
 - 参考agent-skills/ascendc-operator-dev的远程开发模式
 
@@ -308,9 +432,9 @@ class SSHManager:
 
 - [ ] **Unit 4: MCP服务器集成**
 
-**Goal:** 实现MCP客户端，支持stdio和HTTP两种连接模式
+**Goal:** 实现MCP客户端，支持stdio和HTTP两种连接模式；实现服务器生命周期管理
 
-**Requirements:** R8, KD6
+**Requirements:** R8, KD6, KD12
 
 **Dependencies:** Unit 1
 
@@ -318,25 +442,58 @@ class SSHManager:
 - Create: `src/ascend_op_agent/mcp/__init__.py`
 - Create: `src/ascend_op_agent/mcp/client.py`
 - Create: `src/ascend_op_agent/mcp/server_config.py`
+- Create: `src/ascend_op_agent/mcp/lifecycle.py`    # 服务器启动/停止/健康检查
 - Create: `tests/test_mcp.py`
 
 **Approach:**
 
+*MCP生命周期管理:*
+```python
+class MCPLifecycleManager:
+    def __init__(self):
+        self.processes: dict[str, subprocess.Popen] = {}
+        self.health_checks: dict[str, float] = {}
+
+    def start_server(self, config: MCPConfig) -> bool:
+        if config.type == 'stdio':
+            proc = subprocess.Popen(
+                config.command.split(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            self.processes[config.name] = proc
+        # 启动后做健康检查
+
+    def stop_server(self, name: str):
+        if name in self.processes:
+            self.processes[name].terminate()
+            self.processes[name].wait(timeout=5)
+            del self.processes[name]
+
+    def health_check(self, name: str) -> bool:
+        # 定期检查服务器是否响应
+        # 超时则标记为不健康
+
+    def cleanup(self):
+        # 停止所有服务器
+        for proc in self.processes.values():
+            proc.terminate()
+```
+
 *MCPClient:*
 ```python
 class MCPClient:
-    def __init__(self, config: MCPConfig):
+    def __init__(self, config: MCPConfig, lifecycle: MCPLifecycleManager):
+        self.lifecycle = lifecycle
         self.transport = StdioTransport() if config.type == 'stdio' else HTTPTransport()
 
     def connect(self):
-        # 启动MCP服务器或连接HTTP端点
-
-    def call_tool(self, tool_name, args):
-        # 调用MCP工具
-
-    def list_tools(self):
-        # 获取可用工具列表
-```
+        # 获取bearer token
+        token = self.token_resolver.get_bearer_token(self.config.name)
+        if token:
+            self.transport.set_auth_header(f"Bearer {token}")
+        # 启动或连接MCP服务器
+        self.lifecycle.start_server(self.config)
 
 *配置解析:*
 ```yaml
@@ -348,7 +505,24 @@ mcp:
     - name: knowledge-retrieval
       type: http
       url: http://localhost:8080
-      auth: bearer  # optional
+      auth: bearer  # token从环境变量或keyring获取
+```
+
+*MCP认证机制:*
+```python
+class MCPClient:
+    def __init__(self, config: MCPConfig):
+        self.token_resolver = TokenResolver()
+
+    def connect(self):
+        # 获取bearer token
+        token = self.token_resolver.get_bearer_token(self.config.name)
+        if token:
+            self.transport.set_auth_header(f"Bearer {token}")
+        # 启动MCP服务器或连接HTTP端点
+
+    def call_tool(self, tool_name, args):
+        # 调用MCP工具
 ```
 
 **Patterns to follow:**
@@ -382,20 +556,43 @@ mcp:
 
 **Approach:**
 
-*SkillRepository:*
+*Skill检索算法:*
 ```python
-class SkillRepository:
-    def __init__(self, config: SkillsConfig):
-        self.cache_dir = config.cache_dir
-        self.index = SkillIndex()  # SQLite FTS5
+class SkillIndex:
+    def __init__(self, db_path: str):
+        self.conn = sqlite3.connect(db_path)
+        self.conn.execute("""
+            CREATE VIRTUAL TABLE skills USING fts5(
+                name, description, tags, content
+            )
+        """)
 
-    def sync(self, repo_name: str = None):
-        # git clone/pull 或 cp -r 本地路径
-        # 更新索引
+    def add_skill(self, skill: Skill):
+        self.conn.execute(
+            "INSERT INTO skills VALUES (?, ?, ?, ?)",
+            (skill.name, skill.description, ','.join(skill.tags), skill.content)
+        )
 
-    def search(self, query: str) -> List[Skill]:
-        # FTS5全文检索
+    def search(self, query: str, k: int = 5) -> list[Skill]:
+        # 混合检索策略:
+        # 1. 关键词精确匹配（权重0.4）
+        # 2. FTS5全文检索（权重0.3）
+        # 3. 标签匹配（权重0.3）
+        # 返回加权评分最高的k个结果
+
+        results = self.conn.execute("""
+            SELECT name, description, tags,
+                   bm25(skills) as score
+            FROM skills
+            WHERE skills MATCH ?
+            ORDER BY score
+            LIMIT ?
+        """, (query, k)).fetchall()
+        return [Skill(name=r[0], description=r[1], tags=r[2].split(','))
+                for r in results]
 ```
+
+*混合组织结构:*
 
 *混合组织结构:*
 ```
@@ -425,11 +622,11 @@ class SkillRepository:
 
 ---
 
-- [ ] **Unit 6: 工作流引擎（Phase 0-4）**
+- [ ] **Unit 6: 工作流引擎（Phase 0-5）**
 
-**Goal:** 实现六阶段工作流的前四阶段（初始化、需求分析、方案设计、代码生成、编译验证）
+**Goal:** 实现六阶段工作流（初始化、需求分析、方案设计、代码生成、编译验证、精度评估）
 
-**Requirements:** R1, R2, R3, R4, R5, KD3
+**Requirements:** R1, R2, R3, R4, R5, R5.1, KD3
 
 **Dependencies:** Unit 2, Unit 3
 
@@ -464,28 +661,125 @@ class OperatorWorkflow:
 
 *Phase0 初始化:*
 - 解析用户输入（算子名、描述、Shape/Dtype）
-- 检测参考代码（CUDA/CUTLASS/Triton）
+- 检测参考代码（CUDA/CUTLASS/Triton）→ 识别为GPU迁移场景
 - 环境初始化（本地/远程）
+
+*GPU迁移场景处理:*
+```python
+class OperatorWorkflow:
+    def detect_migration_scenario(self, user_input: str) -> bool:
+        # 检测是否有GPU参考代码
+        return any(keyword in user_input.lower()
+            for keyword in ['cuda', 'cutlass', 'triton', 'gpu', '参考'])
+
+    def get_migration_strategy(self, ref_code_path: str) -> MigrationStrategy:
+        if 'cuda' in ref_code_path or 'cutlass' in ref_code_path:
+            return MigrationStrategy.CUDA_TO_ASCENDC
+        elif 'triton' in ref_code_path:
+            return MigrationStrategy.TRITON_TO_ASCENDC
+        return MigrationStrategy.FROM_SCRATCH
+
+    def generate_architecture_mapping(self, ref_code) -> dict:
+        # CUDA/Triton → AscendC 架构映射
+        # 共享内存 → Global Memory
+        # Thread → Tiling
+        # std::vector → Tensor
+        return mapping
+```
 
 *Phase1 需求分析:*
 - 算子类型识别
-- 复杂度评估
-- 生成分析报告
+- 复杂度评估（GPU迁移复杂度评分）
+- 生成分析报告（含迁移可行性）
 
 *Phase2 方案设计:*
 - 内存布局选择
-- Tiling策略
-- GPU迁移场景的架构映射
+- Tiling策略（继承GPU的tiling策略）
+- GPU迁移场景的架构映射（自动生成）
+- 迁移方案评审（用户确认）
 
 *Phase3 代码生成:*
-- AscendC代码生成
+- AscendC代码生成（基于设计文档的KernelHost契约）
+- CATLASS代码生成（基于catlass/examples模板）
+- Triton代码生成（基于triton-kernel模板）
 - 测试代码生成
 - CMakeLists.txt生成
+
+*AscendC代码生成策略:*
+```python
+class AscendCCodeGen:
+    TEMPLATES = {
+        'elementwise': 'templates/ascendc_elementwise_kernel.cpp',
+        'matmul': 'templates/ascendc_matmul_kernel.cpp',
+        'reduction': 'templates/ascendc_reduction_kernel.cpp',
+    }
+
+    def generate(self, op_info: OpInfo) -> FileChanges:
+        # 1. 解析design.md获取算子规格
+        # 2. 根据算子类型选择模板
+        # 3. 填充模板变量（shape/dtype/tiling）
+        template_path = self.TEMPLATES[op_info.op_type]
+        return self.fill_template(template_path, op_info)
+```
+
+*CATLASS代码生成策略:*
+```python
+class CatlassCodeGen:
+    def find_similar_example(self, design: DesignDoc) -> Example:
+        # 基于算子类型+输入维度+dtype匹配最相似示例
+        return self.examples.best_match(design.op_type, design.input_shapes)
+
+    def generate(self, design: DesignDoc) -> FileChanges:
+        # 1. 从catlass/examples找到最相似的示例
+        # 2. 提取KernelBuilder/HostBuilder模式
+        # 3. 按design.md规格调整参数
+        example = self.find_similar_example(design)
+        return self.adapt(example, design)
+```
+
+*GPU迁移架构映射:*
+```python
+ARCHITECTURE_MAPPING = {
+    'cuda': {
+        'shared_memory': 'Global Memory',
+        'thread': 'Tiling',
+        'std::vector': 'Tensor',
+        'cudaMalloc': 'AllocTensor',
+    },
+    'triton': {
+        'tl.load': 'LoadTensor',
+        'tl.store': 'StoreTensor',
+        'triton.jit': 'AscendC Kernel',
+    }
+}
+```
 
 *Phase4 编译验证:*
 - 自动编译（最多3次修复）
 - 确定性修复：语法/拼写/缺失头文件/类型不匹配
 - 单测执行
+
+*Phase5 精度评估（必选）:*
+```python
+class PrecisionEvaluator:
+    def __init__(self, test_cases: int = 30):
+        self.min_test_cases = 30  # 最少30例
+
+    def evaluate(self, operator, design: DesignDoc) -> PrecisionReport:
+        # 1. 生成≥30个测试用例（shapes × dtypes × 边界）
+        # 2. 对比AscendC算子输出与numpy/参考实现
+        # 3. 计算误差指标：abs_err, rel_err, cos_sim
+        # 4. 生成精度报告
+        return PrecisionReport(passed=passed_cases, failed=failed_cases,
+                               report_path="test/precision_report.md")
+```
+
+*精度评估检查点:*
+- [ ] 测试用例数 ≥ 30
+- [ ] 覆盖多种shape（边界值、常规值）
+- [ ] 覆盖多种dtype（float16, float32, int8, int32）
+- [ ] 精度报告已生成（Markdown格式）
+- [ ] 聊天界面展示精度结果摘要
 
 **Patterns to follow:**
 - ascendc-operator-dev skill 的六阶段工作流
@@ -502,7 +796,7 @@ class OperatorWorkflow:
 
 ---
 
-- [ ] **Unit 7: 框架适配（Phase 5）**
+- [ ] **Unit 7: 框架适配（Phase 6）**
 
 **Goal:** 实现PyTorch/TensorFlow适配器生成
 
@@ -542,7 +836,7 @@ class TensorFlowAdapter:
 
 ---
 
-- [ ] **Unit 8: 技能保存（Phase 6）**
+- [ ] **Unit 8: 技能保存（Phase 7）**
 
 **Goal:** 实现技能保存和发布流程
 
@@ -623,7 +917,7 @@ skill publish <skill_name>  # → git push → PR创建
 
 ---
 
-- [ ] **Unit 10: 性能评测报告（Phase 7）**
+- [ ] **Unit 10: 性能评测报告（Phase 8）**
 
 **Goal:** 实现性能评测和报告生成
 
