@@ -122,9 +122,9 @@ origin: "docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirement
 **决策**: HTTP bearer token从环境变量或keyring获取，不在配置文件明文
 **理由**: KD-10的具体化
 
-### KD-13: Hermes Agent作为参考架构
-**决策**: 作为git submodule引入，不直接依赖运行时
-**理由**: 复用其架构设计模式
+### KD-13: 参考 Hermes Agent 架构独立实现
+**决策**: 完全独立实现核心模块，仅参考 Hermes Agent 的设计
+**理由**: 不引入外部依赖，保持项目独立性
 
 ## Open Questions
 
@@ -214,10 +214,10 @@ origin: "docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirement
 - pyproject.toml: click, rich, pydantic, pyyaml, sqlparse, fts5, paramiko, mcp
 - config.yaml.example: 包含所有配置项及注释
 - CLI使用click + rich构建，支持init/run/skill/mcp/sync命令
-- hermes-agent: 作为git submodule引入，路径 `external/hermes-agent`
+- 独立实现核心模块，参考 Hermes Agent 设计模式
 
 **Patterns to follow:**
-- 参考 hermes-agent/cli-config.yaml.example 配置格式
+- 参考 Hermes Agent 的 cli-config.yaml.example 配置格式（独立实现）
 
 **Test scenarios:**
 - CLI命令 --help 正常显示
@@ -247,7 +247,7 @@ origin: "docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirement
 - Create: `src/ascend_op_agent/agent/memory.py`        # Layer 5 Persistent Memory
 - Create: `src/ascend_op_agent/agent/SOUL.md`  # Agent Identity定义
 - Create: `tests/test_agent.py`
-- Reference: `hermes-agent/` 作为git submodule引入
+- 独立实现：参考 Hermes Agent 的 AIAgent、ToolRegistry、PromptBuilder 架构
 
 **Approach:**
 
@@ -372,8 +372,8 @@ class LLMClient:
 ```
 
 **Patterns to follow:**
-- hermes-agent/run_agent.py 的 AIAgent 类结构
-- hermes-agent/tools/registry.py 的自注册机制
+- 参考 Hermes Agent 的 AIAgent 类结构（7层 Prompt Assembly）
+- 参考 Hermes Agent 的 ToolRegistry 自注册机制（AST 扫描）
 
 **Test scenarios:**
 - AIAgent初始化成功
@@ -581,8 +581,8 @@ mcp:
 
 **Patterns to follow:**
 - mcp-sdk Python 客户端模式
-- hermes-agent/tools/mcp_tool.py 的 MCP 实现（含 StreamableHTTP + OAuth）
-- Hermes `_mcp_loop` daemon 线程模式
+- 参考 Hermes Agent 的 MCP 实现（含 StreamableHTTP + OAuth）
+- 参考 Hermes `_mcp_loop` daemon 线程模式
 
 **Test scenarios:**
 - stdio 模式 MCP 服务器启动
@@ -1116,6 +1116,6 @@ class PerformanceEvaluator:
 ## Sources & References
 
 - **Origin document:** [docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements.md](../brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements.md)
-- Hermes Agent架构: [hermes-agent/.zread/wiki/](file:///Users/huangshilei/Documents/pythonprojects/hermes-agent/.zread/wiki/) (作为git submodule引入)
+- **Hermes Agent 架构参考:** [hermes-agent/.zread/wiki/](file:///Users/huangshilei/Documents/pythonprojects/hermes-agent/.zread/wiki/) （仅参考，不引入）
 - ascendc-operator-dev skill: 配置于 `~/.ascend_op_agent/agent-skills/` 或通过 `--skills-path` 指定
 - MCP SDK: https://github.com/modelcontextprotocol/python-sdk
