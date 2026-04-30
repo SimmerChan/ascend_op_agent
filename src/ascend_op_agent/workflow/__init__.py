@@ -44,6 +44,7 @@ from ascend_op_agent.workflow.models import (
     MigrationStrategy,
     ArchitectureMapping,
 )
+from ascend_op_agent.workflow.skill_save import SkillSaver, OpResult, SkillDimension
 
 __all__ = [
     "OperatorWorkflow",
@@ -65,4 +66,7 @@ __all__ = [
     "PrecisionReport",
     "MigrationStrategy",
     "ArchitectureMapping",
+    "SkillSaver",
+    "OpResult",
+    "SkillDimension",
 ]
