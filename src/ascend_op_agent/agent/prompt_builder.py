@@ -1,0 +1,209 @@
+# Copyright 2026 SimmerChan
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""PromptBuilder - 7层Prompt组装器
+
+参考Hermes Agent的7层Prompt Assembly设计:
+1. Agent Identity (SOUL.md)
+2. Hermes Help Guidance
+3. Tool-aware Behavioral Guidance
+4. Custom System Message
+5. Persistent Memory (MemoryStore持久化)
+6. Skills Index
+7. Context Files + Timestamp + Env
+"""
+
+import os
+from pathlib import Path
+from typing import Optional
+
+from ascend_op_agent.agent.memory import MemoryStore
+
+
+class PromptBuilder:
+    """7层Prompt组装器"""
+
+    def __init__(self, soul_md_path: Optional[str] = None):
+        """
+        Args:
+            soul_md_path: SOUL.md文件路径，默认为agent目录下的SOUL.md
+        """
+        if soul_md_path is None:
+            self._soul_path = Path(__file__).parent / "SOUL.md"
+        else:
+            self._soul_path = Path(soul_md_path)
+
+    def build_system_prompt(
+        self,
+        workspace_path: str,
+        memory_store: MemoryStore,
+    ) -> str:
+        """构建完整的系统Prompt（7层组装）
+
+        Args:
+            workspace_path: 工作区路径
+            memory_store: 记忆存储
+
+        Returns:
+            组装后的完整系统Prompt
+        """
+        layers = []
+
+        # Layer 1: Agent Identity (SOUL.md)
+        layers.append(self._build_identity_layer())
+
+        # Layer 2: Hermes Help Guidance
+        layers.append(self._build_hermes_guidance())
+
+        # Layer 3: Tool-aware Behavioral Guidance
+        layers.append(self._build_tool_guidance())
+
+        # Layer 4: Custom System Message
+        layers.append(self._build_custom_message())
+
+        # Layer 5: Persistent Memory
+        layers.append(self._build_memory_layer(memory_store))
+
+        # Layer 6: Skills Index
+        layers.append(self._build_skills_layer())
+
+        # Layer 7: Context Files + Timestamp + Env
+        layers.append(self._build_context_layer(workspace_path))
+
+        return "\n\n".join(filter(None, layers))
+
+    def _build_identity_layer(self) -> str:
+        """Layer 1: Agent Identity"""
+        if self._soul_path.exists():
+            with open(self._soul_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        return ""
+
+    def _build_hermes_guidance(self) -> str:
+        """Layer 2: Hermes Help Guidance"""
+        return """## Hermes Help Guidance
+
+你是一个专业的昇腾算子开发助手。请遵循以下原则:
+
+1. **准确**: 提供准确的技术信息和代码
+2. **完整**: 确保解决方案包含所有必要部分
+3. **清晰**: 解释你的推理过程和决策依据
+4. **安全**: 遵循安全编码实践
+"""
+
+    def _build_tool_guidance(self) -> str:
+        """Layer 3: Tool-aware Behavioral Guidance"""
+        return """## Tool Usage
+
+当需要执行操作时，使用以下工具调用格式:
+
+<tool_call name="tool_name">{"arg1": "value1", "arg2": "value2"}</tool_call>
+
+可用工具:
+- file_ops: 文件操作（读取、写入、目录操作）
+- shell_ops: 执行Shell命令
+- ssh_ops: 远程命令/文件传输
+- ascend_ops: CANN环境检测、编译
+- skill_ops: 技能CRUD
+
+重要:
+- 工具调用后等待结果再继续
+- 错误时重试或尝试替代方案
+- 敏感操作需用户确认
+"""
+
+    def _build_custom_message(self) -> str:
+        """Layer 4: Custom System Message"""
+        return """## 昇腾算子开发规范
+
+### 场景支持
+1. 从0开发算子: 基于用户描述的算子逻辑进行开发
+2. GPU迁移算子: 从CUDA/CUTLASS/Triton迁移到AscendC
+
+### 开发模式
+1. 本地开发: 直接在本地环境开发
+2. 远程开发: 通过SSH连接远程服务器开发
+
+### 工作流阶段
+- Phase 0: 初始化（环境检测）
+- Phase 1: 需求分析（自动）
+- Phase 2: 方案设计（需用户确认）
+- Phase 3: 代码生成
+- Phase 4: 编译验证
+- Phase 5: 精度评估
+- Phase 6: 框架适配（可选）
+- Phase 7: 技能保存（可选）
+- Phase 8: 性能评测
+"""
+
+    def _build_memory_layer(self, memory_store: MemoryStore) -> str:
+        """Layer 5: Persistent Memory"""
+        memory_content = memory_store.format_for_system_prompt("memory")
+        if not memory_content:
+            return ""
+        return f"""## Persistent Memory
+
+[Memory]:\n{memory_content}
+"""
+
+    def _build_skills_layer(self) -> str:
+        """Layer 6: Skills Index"""
+        return """## Available Skills
+
+Skills存储在 ~/.ascend_op_agent/skills/ 目录
+每个Skill包含:
+- SKILL.md: Skill定义和描述
+- templates/: 代码模板
+- references/: 参考资料
+
+使用skill_ops工具搜索和加载相关Skill。
+"""
+
+    def _build_context_layer(self, workspace_path: str) -> str:
+        """Layer 7: Context Files + Timestamp + Env"""
+        parts = []
+
+        # Context文件（优先级互斥模式）
+        priority_files = ['.hermes.md', 'AGENTS.md', 'CLAUDE.md', '.cursorrules']
+        for filename in priority_files:
+            filepath = os.path.join(workspace_path, filename)
+            if os.path.exists(filepath):
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                # 安全扫描
+                content = self._sanitize(content)
+                parts.append(f"### {filename}\n{content}")
+                break  # 只加载最高优先级文件
+
+        # Timestamp
+        from datetime import datetime
+        parts.append(f"### Current Time\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # Environment
+        parts.append(f"### Working Directory\n{workspace_path}")
+
+        return "\n\n".join(parts)
+
+    def _sanitize(self, content: str) -> str:
+        """安全扫描：防止提示词注入"""
+        import re
+
+        # 不可见字符
+        invisible_patterns = [
+            r'\x00', r'\u200b', r'\u202b', r'\ufeff',
+        ]
+        for pattern in invisible_patterns:
+            content = re.sub(pattern, '', content)
+
+        return content
