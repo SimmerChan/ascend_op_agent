@@ -23,6 +23,12 @@ topic: ascend-op-agent-from-scratch-workflow
 | 算子复杂度 | 混合 | 简单+中等+复杂算子 |
 | 开发场景 | 两者并重 | 从0开发 + GPU迁移 |
 | 测试验证 | 自动化完整验证 | 编译+单测+性能报告全自动化 |
+| MCP服务器 | 配置支持 | 通过config.yaml配置，支持stdio和http类型 |
+| Skill仓库 | 官方+私有+本地 | 官方仓库官方维护，支持私有和本地仓库 |
+| Skill同步 | 手动同步 | 用户显式执行sync命令 |
+| 经验保存 | 混合维度 | 基础模板+bugfix+性能优化分别保存 |
+| 经验复用 | 自动注入 | Agent自动将相关经验注入开发流程 |
+| 社区发布 | PR审核 | 提交PR，官方审核后合并 |
 
 ---
 
@@ -245,15 +251,102 @@ Agent自动完成，无需用户干预。
 请选择 (yes/no):
 ```
 
-**R7.1** 如用户选择yes：
-- 生成技能卡片（DESCRIPTION.md + 模板代码）
-- 保存到本地技能库
-- 更新技能索引
+**R7.1** 技能生成（用户选择yes时）：
+- Agent分析本次开发的经验，提取：
+  - 算子基础模板（代码框架）
+  - Bugfix经验（如有）
+  - 性能优化经验（如有）
+- 按混合维度组织保存
 
-**R7.2** 如用户选择no（默认行为）：
+**R7.2** 技能保存结构（混合组织）：
+```
+skills/
+├── {backend}_{operator_name}/              # 算子基础模板
+│   ├── SKILL.md                           # 主模板（描述+使用方式）
+│   └── templates/                          # 代码模板
+├── {backend}_{operator_name}_bugfix/       # Bugfix经验
+│   ├── SKILL.md                           # Bugfix模式描述
+│   └── references/                         # 具体bugfix记录
+└── {backend}_{operator_name}_performance/ # 性能优化经验
+    ├── SKILL.md                           # 优化策略描述
+    └── references/                         # 性能调优记录
+```
+
+**R7.3** 技能发布到社区：
+- 用户执行`skill publish <skill_name>`提交到官方仓库
+- 提交后自动创建Pull Request
+- 官方审核团队审核PR（代码质量、文档完整性、安全性）
+- 审核通过后合并到官方仓库
+- 其他用户同步后自动获得
+
+**R7.4** 技能自动注入复用：
+- Agent在开发过程中分析上下文
+- 自动识别相关的已保存技能
+- 将相关经验（bugfix、性能优化）自动注入到开发流程
+- 无需用户干预
+
+**R7.5** 如用户选择no（默认行为）：
 - 不保存技能
 - 直接完成开发流程
 - 向用户展示最终报告
+
+### R8. MCP服务器集成
+
+Agent支持通过MCP（Model Context Protocol）连接外部服务器，扩展工具能力和知识检索能力。
+
+**R8.1** MCP服务器配置：
+- 在config.yaml中配置MCP服务器列表
+- 支持stdio和HTTP两种连接类型
+- 每个服务器包含：名称、类型、连接参数
+
+**R8.2** MCP服务器用途：
+- **工具扩展**: 连接外部工具服务（如代码搜索、CI/CD）
+- **知识检索**: 连接知识库MCP服务，增强算子知识检索
+
+**R8.3** MCP服务器管理：
+- 启动时自动连接已配置的MCP服务器
+- 动态注册MCP工具到Agent工具列表
+- 连接失败时记录警告，不阻塞主流程
+
+### R9. Skill仓库管理
+
+Agent支持配置多个Skill仓库，复用社区和团队的经验。
+
+**R9.1** Skill仓库配置：
+- 在config.yaml中配置仓库列表
+- 支持三种类型：
+  - `git`: 远程Git仓库（如gitcode.com、github.com）
+  - `local`: 本地文件系统路径
+- 每个仓库包含：名称、类型、URL/路径、是否启用
+
+**R9.2** 官方Skill仓库：
+- 昇腾官方维护的Skill仓库（https://gitcode.com/Ascend/agent-skills）
+- 包含AscendC、CATLASS、Triton等算子开发Skill
+- 官方审核，确保质量
+
+**R9.3** Skill仓库结构（参考agent-skills）：
+```
+skills/
+├── ascendc-*/          # AscendC算子相关
+│   ├── SKILL.md        # 主入口
+│   ├── references/     # 参考文档
+│   ├── scripts/        # 辅助脚本
+│   └── templates/      # 代码模板
+├── catlass-*/          # CATLASS算子相关
+├── triton-*/           # Triton算子相关
+└── megatron-*/        # Megatron相关
+```
+
+**R9.4** Skill同步：
+- 用户手动执行`sync`命令同步仓库
+- 支持指定仓库同步（`sync <repo_name>`）
+- 支持全量同步（`sync --all`）
+- 同步后Skill缓存到本地目录（默认`~/.ascend_op_agent/skills/`）
+
+**R9.5** Skill加载：
+- 启动时加载本地缓存的Skill
+- Skill按技术栈分类组织（ascendc/catlass/triton）
+- Agent根据任务类型自动推荐相关Skill
 
 ---
 
@@ -354,6 +447,50 @@ Agent自动完成，无需用户干预。
 **决策**: 框架适配在算子验证完成后作为可选步骤执行。
 **理由**: 很多场景只需算子本身，不需要框架集成。
 **流程**: 主流程（开发+验证）→ 用户选择 → 框架适配（如选择）
+
+### KD6. 混合开发模式支持
+
+**决策**: 支持本地开发和远程开发两种模式，通过配置文件选择。
+**理由**: 不同用户有不同的开发环境和偏好。
+**模式说明**:
+- **本地模式**: Agent部署在昇腾服务器上，用户SSH到服务器直接开发
+- **远程模式**: Agent在本地，代码在本地编辑，通过SSH同步到远程服务器编译测试
+
+### KD7. MCP服务器扩展
+
+**决策**: 支持通过配置文件连接外部MCP服务器，扩展工具和知识检索能力。
+**理由**: 复用社区已有的MCP工具和服务，加速开发。
+**配置方式**: config.yaml中配置MCP服务器列表（支持stdio和HTTP类型）
+**容错策略**: 连接失败不阻塞主流程，记录警告
+
+### KD8. Skill仓库生态
+
+**决策**: 支持配置多个Skill仓库（官方+私有+本地），复用社区经验。
+**理由**: 昇腾官方agent-skills仓库提供了丰富的Skill参考，减少重复工作。
+**仓库类型**: git远程仓库、本地路径
+**同步策略**: 手动同步（避免自动更新带来的不确定性）
+**缓存位置**: ~/.ascend_op_agent/skills/
+
+### KD9. 技能混合组织
+
+**决策**: 经验按混合维度组织——算子基础模板 + Bugfix + 性能优化分别保存。
+**理由**: 不同类型的经验有不同的复用场景，混合组织更灵活。
+**组织方式**:
+- `{backend}_{operator_name}/` — 算子基础模板
+- `{backend}_{operator_name}_bugfix/` — Bugfix经验
+- `{backend}_{operator_name}_performance/` — 性能优化经验
+
+### KD10. 技能自动注入复用
+
+**决策**: Agent在开发过程中自动将相关经验注入到开发流程。
+**理由**: 用户不需要手动管理技能，Agent智能感知并应用相关经验。
+**实现**: Agent分析上下文，自动识别相关技能，无用户干预
+
+### KD11. 技能社区发布
+
+**决策**: 用户通过PR提交技能到官方仓库，官方审核后合并。
+**理由**: 保证社区技能质量，避免低质量技能影响其他用户。
+**流程**: `skill publish` → PR创建 → 官方审核 → 合并发布
 
 ---
 
@@ -513,6 +650,36 @@ development:
     ssh_user: developer
     ssh_key_path: ~/.ssh/id_rsa
     remote_workspace: /workspace/operators
+
+# MCP服务器配置
+mcp:
+  servers:
+    - name: code-search
+      type: stdio  # 或 http
+      command: npx /path/to/server
+      # 或 http 模式
+      # url: http://localhost:3000
+    - name: knowledge-retrieval
+      type: http
+      url: http://localhost:8080
+
+# Skill仓库配置
+skills:
+  repositories:
+    - name: official
+      type: git
+      url: https://gitcode.com/Ascend/agent-skills
+      enabled: true
+    - name: team-private
+      type: git
+      url: https://github.com/team/private-skills
+      enabled: false
+    - name: local
+      type: local
+      path: /path/to/local/skills
+      enabled: false
+  # Skill缓存目录
+  cache_dir: ~/.ascend_op_agent/skills
 ```
 
 ---
