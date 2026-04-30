@@ -274,53 +274,80 @@ class AIAgent:
 6. Skills Index
 7. Context Files + Timestamp + Env
 
-*ContextEngine 实现细节:*
+*ContextEngine 实现细节 (参考 Hermes 优先级互斥模式):*
 ```python
 class ContextEngine:
-    def __init__(self, max_tokens: int = 128000):
-        self.compressor = TextCompressor()  # MMR重排序
-        self.cache = LRUCache(max_size=100)
+    """参考 Hermes build_context_files_prompt - 优先级互斥加载"""
+    PRIORITY_FILES = ['.hermes.md', 'AGENTS.md', 'CLAUDE.md', '.cursorrules']
 
-    def compress(self, context: list[Message]) -> list[Message]:
-        # 1. 按相关性分块
-        # 2. Max Marginal Relevance去重
-        # 3. 按时间衰减加权
-        # 4. 返回压缩后的上下文
+    def __init__(self, max_tokens: int = 128000):
+        self.max_tokens = max_tokens
+        self._context_cache = {}  # 缓存已加载的上下文
+
+    def build_context_prompt(self, workspace_path: str) -> str:
+        """只加载一个最高优先级文件（互斥模式）"""
+        for filename in self.PRIORITY_FILES:
+            filepath = os.path.join(workspace_path, filename)
+            if os.path.exists(filepath):
+                return self._load_and_scan(filepath)
+        return ""
+
+    def _load_and_scan(self, filepath: str) -> str:
+        """加载文件内容并做安全扫描（防止注入）"""
+        if filepath in self._context_cache:
+            return self._context_cache[filepath]
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        # Hermes 的 _scan_context_content() 防止注入
+        content = self._sanitize(content)
+        self._context_cache[filepath] = content
+        return content
+
+    def _sanitize(self, content: str) -> str:
+        """防止提示词注入 - 参考 Hermes 安全扫描"""
+        # 检测威胁模式 + 不可见 Unicode 字符
+        threat_patterns = [
+            r'\x00', r'\u200b', r'\u202b', r'\ufeff',  # 不可见字符
+            r'[\梯队]', r'软体',  # 中文威胁词
+        ]
+        for pattern in threat_patterns:
+            content = re.sub(pattern, '', content)
+        return content
 
     def retrieve(self, query: str, k: int = 5) -> list[Chunk]:
-        # 向量检索 + FTS5混合检索
+        # 向量检索 + FTS5 混合检索（用于 Skills 搜索）
+        pass
 ```
 
-*PersistentMemory 实现细节:*
+*PersistentMemory 实现细节 (参考 Hermes MemoryStore):*
 ```python
-class PersistentMemory:
-    def __init__(self, db_path: str):
-        self.conn = sqlite3.connect(db_path)
-        self.conn.execute("""
-            CREATE VIRTUAL TABLE memory USING fts5(
-                content, metadata, timestamp
-            )
-        """)
+class MemoryStore:
+    """参考 Hermes MemoryStore - 支持多 pool 和快照冻结"""
+    def __init__(self):
+        self._memory_pools = {
+            "memory": [],  # Agent 记忆
+            "user": [],    # 用户偏好
+        }
+        self._snapshot = None  # 会话级冻结快照
 
-    def store(self, key: str, value: str, metadata: dict):
-        # 存储到SQLite FTS5
-        self.conn.execute(
-            "INSERT INTO memory VALUES (?, ?, ?, ?)",
-            (value, json.dumps(metadata), time.time(), key)
-        )
+    def add(self, pool: str, content: str):
+        self._memory_pools[pool].append(content)
+        self._invalidate_snapshot()
 
-    def recall(self, key: str) -> str:
-        # 按key检索
-        return self.conn.execute(
-            "SELECT content FROM memory WHERE key=?", (key,)
-        ).fetchone()[0]
+    def format_for_system_prompt(self, pool: str) -> str:
+        """返回格式化后的记忆内容，用于 Layer 5"""
+        if not self._memory_pools[pool]:
+            return ""
+        return f"[{pool.upper()}]:\n" + "\n".join(self._memory_pools[pool])
 
-    def search(self, query: str, k: int = 5) -> list[str]:
-        # FTS5全文检索
-        return self.conn.execute(
-            "SELECT content FROM memory WHERE memory MATCH ? LIMIT ?",
-            (query, k)
-        ).fetchall()
+    def freeze_snapshot(self):
+        """缓存一致性：会话级冻结，避免写入破坏缓存"""
+        self._snapshot = {k: list(v) for k, v in self._memory_pools.items()}
+
+    def restore_snapshot(self):
+        """恢复冻结的快照"""
+        if self._snapshot:
+            self._memory_pools = {k: list(v) for k, v in self._snapshot.items()}
 ```
 
 *LLM重试策略:*
@@ -480,20 +507,55 @@ class MCPLifecycleManager:
             proc.terminate()
 ```
 
-*MCPClient:*
+*MCPClient (参考 Hermes 支持三种传输模式):*
 ```python
 class MCPClient:
     def __init__(self, config: MCPConfig, lifecycle: MCPLifecycleManager):
         self.lifecycle = lifecycle
-        self.transport = StdioTransport() if config.type == 'stdio' else HTTPTransport()
+        self.config = config
+        # 支持三种传输模式（参考 Hermes）
+        if config.type == 'stdio':
+            self.transport = StdioTransport()
+        elif config.type == 'http':
+            self.transport = HTTPTransport()
+        elif config.type == 'streamable-http':
+            self.transport = StreamableHTTPTransport()  # Hermes 支持
+        else:
+            raise ValueError(f"Unsupported MCP transport type: {config.type}")
 
     def connect(self):
-        # 获取bearer token
-        token = self.token_resolver.get_bearer_token(self.config.name)
+        # 获取 bearer token（支持 OAuth）
+        token = self.oauth_manager.get_auth_header()
         if token:
-            self.transport.set_auth_header(f"Bearer {token}")
-        # 启动或连接MCP服务器
+            self.transport.set_auth_header(token)
+        # 启动或连接 MCP 服务器
         self.lifecycle.start_server(self.config)
+
+*MCPOAuthManager (参考 Hermes OAuth 流程):*
+```python
+class MCPOAuthManager:
+    """参考 Hermes MCPOAuthManager - 支持 OAuth 2.0 客户端凭证流"""
+    def __init__(self, server_config: MCPConfig):
+        self.server_name = server_config.name
+        self.oauth_config = server_config.get('oauth', {})
+
+    def get_auth_header(self) -> Optional[str]:
+        """获取认证头，支持 OAuth bearer token"""
+        if self.oauth_config.get('type') == 'oauth':
+            # 处理 OAuth 流程
+            token = self._get_oauth_token()
+            return f"Bearer {token}"
+        # 回退到环境变量
+        token = os.getenv(f"OAUTH_TOKEN_{self.server_name.upper()}")
+        if token:
+            return f"Bearer {token}"
+        return None
+
+    def _get_oauth_token(self) -> str:
+        """OAuth 2.0 客户端凭证流"""
+        # 实现 OAuth 2.0 客户端凭证流
+        pass
+```
 
 *配置解析:*
 ```yaml
@@ -503,35 +565,29 @@ mcp:
       type: stdio
       command: npx /path/to/server
     - name: knowledge-retrieval
-      type: http
+      type: streamable-http  # 支持 streamable-http（参考 Hermes）
       url: http://localhost:8080
-      auth: bearer  # token从环境变量或keyring获取
-```
-
-*MCP认证机制:*
-```python
-class MCPClient:
-    def __init__(self, config: MCPConfig):
-        self.token_resolver = TokenResolver()
-
-    def connect(self):
-        # 获取bearer token
-        token = self.token_resolver.get_bearer_token(self.config.name)
-        if token:
-            self.transport.set_auth_header(f"Bearer {token}")
-        # 启动MCP服务器或连接HTTP端点
-
-    def call_tool(self, tool_name, args):
-        # 调用MCP工具
+      oauth:
+        type: oauth
+        client_id: "..."
+        client_secret: "..."
+        token_url: "https://auth.example.com/oauth/token"
+    - name: github
+      type: http
+      url: https://api.github.com/mcp
+      headers:
+        Authorization: "Bearer ${GITHUB_TOKEN}"  # 环境变量引用
 ```
 
 **Patterns to follow:**
-- mcp-sdk Python客户端模式
-- hermes-agent的MCP集成方式
+- mcp-sdk Python 客户端模式
+- hermes-agent/tools/mcp_tool.py 的 MCP 实现（含 StreamableHTTP + OAuth）
+- Hermes `_mcp_loop` daemon 线程模式
 
 **Test scenarios:**
-- stdio模式MCP服务器启动
-- HTTP模式MCP服务器连接
+- stdio 模式 MCP 服务器启动
+- streamable-http 模式 MCP 服务器连接
+- HTTP 模式 MCP 服务器连接（含 OAuth）
 - 连接失败时记录警告不阻塞
 
 **Verification:**
@@ -556,30 +612,34 @@ class MCPClient:
 
 **Approach:**
 
-*Skill检索算法:*
+*Skill检索算法 (参考 Hermes 两层缓存):*
 ```python
+from functools import lru_cache
+import json
+import os
+
 class SkillIndex:
-    def __init__(self, db_path: str):
+    """参考 Hermes 两层缓存: LRU(进程内) + 磁盘快照"""
+    MAX_LRU_CACHE = 8  # Hermes 最大 8 条
+    SNAPSHOT_FILENAME = ".skills_prompt_snapshot.json"
+
+    def __init__(self, db_path: str, cache_dir: str = None):
         self.conn = sqlite3.connect(db_path)
+        self.cache_dir = cache_dir or os.path.expanduser("~/.ascend_op_agent")
         self.conn.execute("""
             CREATE VIRTUAL TABLE skills USING fts5(
                 name, description, tags, content
             )
         """)
+        self._load_snapshot()
 
-    def add_skill(self, skill: Skill):
-        self.conn.execute(
-            "INSERT INTO skills VALUES (?, ?, ?, ?)",
-            (skill.name, skill.description, ','.join(skill.tags), skill.content)
-        )
+    @lru_cache(maxsize=MAX_LRU_CACHE)
+    def search_cached(self, query: str, k: int = 5) -> list[Skill]:
+        """LRU 缓存（进程内）"""
+        return self._do_search(query, k)
 
-    def search(self, query: str, k: int = 5) -> list[Skill]:
-        # 混合检索策略:
-        # 1. 关键词精确匹配（权重0.4）
-        # 2. FTS5全文检索（权重0.3）
-        # 3. 标签匹配（权重0.3）
-        # 返回加权评分最高的k个结果
-
+    def _do_search(self, query: str, k: int = 5) -> list[Skill]:
+        """实际搜索逻辑"""
         results = self.conn.execute("""
             SELECT name, description, tags,
                    bm25(skills) as score
@@ -590,6 +650,35 @@ class SkillIndex:
         """, (query, k)).fetchall()
         return [Skill(name=r[0], description=r[1], tags=r[2].split(','))
                 for r in results]
+
+    def _load_skill_snapshot(self) -> dict:
+        """加载磁盘快照（Hermes 快照机制）"""
+        snapshot_path = os.path.join(self.cache_dir, self.SNAPSHOT_FILENAME)
+        if os.path.exists(snapshot_path):
+            with open(snapshot_path, 'r') as f:
+                return json.load(f)
+        return {}
+
+    def _save_skill_snapshot(self):
+        """保存磁盘快照"""
+        snapshot_path = os.path.join(self.cache_dir, self.SNAPSHOT_FILENAME)
+        os.makedirs(os.path.dirname(snapshot_path), exist_ok=True)
+        # 保存 LRU 缓存内容到磁盘
+        snapshot = {
+            "lru_cache_keys": list(self.search_cached.cache_info().keys),
+            "timestamp": time.time()
+        }
+        with open(snapshot_path, 'w') as f:
+            json.dump(snapshot, f)
+
+    def add_skill(self, skill: Skill):
+        self.conn.execute(
+            "INSERT INTO skills VALUES (?, ?, ?, ?)",
+            (skill.name, skill.description, ','.join(skill.tags), skill.content)
+        )
+        # 清除 LRU 缓存并更新快照
+        self.search_cached.cache_clear()
+        self._save_skill_snapshot()
 ```
 
 *混合组织结构:*
