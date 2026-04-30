@@ -106,21 +106,21 @@ origin: "docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirement
 **决策**: Phase 7性能评测使用torch_npu.profiler对比基准
 **理由**: 确保算子性能达标
 
-### KD-9: LLM API通过环境变量配置
-**决策**: API密钥通过环境变量获取，不硬编码
-**理由**: 安全性要求
+### KD-9: LLM API和KEY通过配置文件配置
+**决策**: LLM API 地址和 KEY 通过配置文件配置（支持环境变量引用）
+**理由**: 简化配置流程，支持多模型切换
 
-### KD-10: 敏感信息统一管理
-**决策**: 密码/token通过系统密钥链（keyring库）存储，环境变量中仅存引用
-**理由**: 防止凭据泄露
+### KD-10: 敏感信息支持环境变量引用
+**决策**: 配置文件中的敏感信息支持 `${ENV_VAR}` 格式引用环境变量
+**理由**: 支持不同部署环境的配置切换
 
 ### KD-11: SSH密码凭据保护
-**决策**: SSH密码不使用明文存储；支持keyring或提示用户每次输入
-**理由**: KD-10的具体化
+**决策**: SSH密码支持配置文件或环境变量引用，可选 keyring 存储
+**理由**: 灵活配置，方便不同环境使用
 
-### KD-12: MCP认证token安全获取
-**决策**: HTTP bearer token从环境变量或keyring获取，不在配置文件明文
-**理由**: KD-10的具体化
+### KD-12: MCP认证token通过配置文件配置
+**决策**: MCP bearer token 通过配置文件配置，支持环境变量引用
+**理由**: 简化配置，统一管理认证信息
 
 ### KD-13: 参考 Hermes Agent 架构独立实现
 **决策**: 完全独立实现核心模块，仅参考 Hermes Agent 的设计
@@ -212,12 +212,91 @@ origin: "docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirement
 
 **Approach:**
 - pyproject.toml: click, rich, pydantic, pyyaml, sqlparse, fts5, paramiko, mcp
-- config.yaml.example: 包含所有配置项及注释
 - CLI使用click + rich构建，支持init/run/skill/mcp/sync命令
 - 独立实现核心模块，参考 Hermes Agent 设计模式
 
-**Patterns to follow:**
-- 参考 Hermes Agent 的 cli-config.yaml.example 配置格式（独立实现）
+*config.yaml.example 配置结构:*
+```yaml
+# LLM 配置
+llm:
+  provider: "openai"  # openai / anthropic / local
+  api_base: "https://api.openai.com/v1"  # 支持 ${ENV_VAR} 引用
+  api_key: "${OPENAI_API_KEY}"  # 环境变量引用
+  model: "gpt-4o"
+  max_retries: 3
+  timeout: 120
+
+# MCP 服务器配置
+mcp:
+  servers:
+    - name: code-search
+      type: stdio
+      command: npx /path/to/server
+    - name: github
+      type: http
+      url: https://api.github.com/mcp
+      token: "${GITHUB_TOKEN}"  # 环境变量引用
+    - name: custom
+      type: streamable-http
+      url: http://localhost:8080
+      token: "${CUSTOM_TOKEN}"
+
+# 外部 Skill 仓库配置（skill选择在session中动态完成）
+skill_repositories:
+  - name: ascend-community
+    url: https://gitcode.com/ascend/agent-skills
+  - name: custom-skills
+    url: https://gitcode.com/user/custom-skills
+# 注意: 不在配置文件中指定安装哪些skill,
+# 而是由 Agent 动态拉取仓库，分析可用 skill，在 session 中反馈给用户勾选
+
+# 远程开发环境配置
+remote:
+  host: "192.168.1.100"
+  user: "root"
+  port: 22
+  key_path: "~/.ssh/id_rsa"
+  password: "${SSH_PASSWORD}"  # 环境变量引用
+
+  # 镜像/容器配置（可选）
+  image_name: "ascend/pytorch:23.0"  # 可选
+  container_name: "agent-dev"  # 可选
+
+# 本地模式
+local:
+  workspace: "./workspace"
+  skills_path: "~/.ascend_op_agent/skills"
+
+# 日志配置
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+```
+
+*配置解析:*
+```python
+class Config:
+    """支持 ${ENV_VAR} 环境变量引用"""
+    def __init__(self, config_path: str):
+        with open(config_path, 'r') as f:
+            self._raw = yaml.safe_load(f)
+        self._resolve_env_vars()
+
+    def _resolve_env_vars(self):
+        """递归解析配置中的 ${ENV_VAR} 引用"""
+        def resolve(value):
+            if isinstance(value, str) and value.startswith('${') and value.endswith('}'):
+                return os.getenv(value[2:-1], '')
+            elif isinstance(value, dict):
+                return {k: resolve(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [resolve(v) for v in value]
+            return value
+        self._raw = resolve(self._raw)
+
+    def get(self, key: str, default=None):
+        return self._raw.get(key, default)
+```
 
 **Test scenarios:**
 - CLI命令 --help 正常显示
@@ -386,9 +465,9 @@ class LLMClient:
 
 ---
 
-- [ ] **Unit 3: SSH开发模式 + 安全层**
+- [ ] **Unit 3: SSH开发模式 + 安全层 + 远程环境配置**
 
-**Goal:** 实现本地和远程开发模式，支持SSH连接和文件同步；实现凭据安全管理
+**Goal:** 实现本地和远程开发模式，支持SSH连接和文件同步；实现凭据安全管理；支持远程环境（镜像/容器）配置
 
 **Requirements:** R1, KD2, KD10, KD11, KD12
 
@@ -398,9 +477,10 @@ class LLMClient:
 - Create: `src/ascend_op_agent/ssh/__init__.py`
 - Create: `src/ascend_op_agent/ssh/manager.py`
 - Create: `src/ascend_op_agent/ssh/sync.py`
+- Create: `src/ascend_op_agent/ssh/env_config.py`    # 远程环境配置（镜像/容器）
 - Create: `src/ascend_op_agent/security/__init__.py`
-- Create: `src/ascend_op_agent/security/credential_manager.py`  # keyring集成
-- Create: `src/ascend_op_agent/security/token_resolver.py`     # 环境变量/keyring
+- Create: `src/ascend_op_agent/security/credential_manager.py`  # 配置文件/环境变量
+- Create: `src/ascend_op_agent/security/token_resolver.py`     # 环境变量引用
 - Create: `tests/test_ssh.py`
 - Create: `tests/test_security.py`
 
@@ -409,6 +489,10 @@ class LLMClient:
 *SSHManager:*
 ```python
 class SSHManager:
+    def __init__(self, config: RemoteConfig):
+        self.config = config
+        self.env_validator = RemoteEnvValidator()
+
     def connect(self, host, user, key_path, password=None):
         # paramiko SSHClient，指数退避重连
 
@@ -419,29 +503,74 @@ class SSHManager:
         # rsync增量同步
 ```
 
+*远程环境配置:*
+```python
+class RemoteEnvConfig:
+    """远程开发环境配置"""
+    def __init__(self, config: dict):
+        self.host = config['host']
+        self.user = config['user']
+        self.port = config.get('port', 22)
+        self.key_path = config.get('key_path')
+        self.password = config.get('password')  # 支持 ${ENV_VAR} 引用
+
+        # 镜像/容器配置
+        self.image_name = config.get('image_name')      # 可选
+        self.container_name = config.get('container_name')  # 可选
+
+    def validate_environment(self) -> EnvironmentStatus:
+        """
+        环境验证逻辑:
+        - 无镜像无容器 → 宿主机环境
+        - 有镜像无容器 → 自主创建容器
+        - 有镜像有容器 → 容器内开发
+        返回状态并提示用户确认
+        """
+
+class RemoteEnvValidator:
+    def check_environment(self, config: RemoteEnvConfig) -> ValidationResult:
+        # 检查目标环境是否可用
+        # 返回环境信息供用户确认
+```
+
 *文件同步策略:*
 - 使用rsync --checksum进行增量同步
 - 同步前校验文件hash
 - 冲突处理：覆盖或备份
 
-*敏感信息管理:*
+*敏感信息管理 (支持配置文件 + 环境变量引用):*
 ```python
 class CredentialManager:
     def get_ssh_password(self, host):
-        # 从keyring获取，不存在则提示用户输入
-        return keyring.get_password(f"ascend_op_agent:ssh:{host}", username)
-
-    def set_ssh_password(self, host, username, password):
-        # 存储到系统keyring
-        keyring.set_password(f"ascend_op_agent:ssh:{host}", username, password)
+        # 支持 ${ENV_VAR} 格式的环境变量引用
+        password = self.config.get('password', '')
+        if password.startswith('${') and password.endswith('}'):
+            env_var = password[2:-1]
+            password = os.getenv(env_var)
+        return password
 
 class TokenResolver:
     def get_bearer_token(self, server_name):
-        # 优先从环境变量获取，其次keyring
-        token = os.getenv(f"OAUTH_TOKEN_{server_name.upper()}")
-        if not token:
-            token = keyring.get_password("ascend_op_agent:mcp", server_name)
+        # 支持 ${ENV_VAR} 格式的环境变量引用
+        token = self.config.get('token', '')
+        if token.startswith('${') and token.endswith('}'):
+            env_var = token[2:-1]
+            token = os.getenv(env_var)
         return token
+```
+
+*环境确认流程:*
+```python
+def confirm_development_environment(config: RemoteEnvConfig) -> bool:
+    """
+    开发前显式让用户确认环境
+    显示:
+    - 目标主机: host
+    - 环境类型: 宿主机 / 容器(新建) / 容器(已有)
+    - 容器名称: xxx (如有)
+    - 镜像名称: xxx (如有)
+    用户确认后才开始开发
+    """
 ```
 
 **Patterns to follow:**
@@ -597,7 +726,7 @@ mcp:
 
 - [ ] **Unit 5: Skill仓库管理**
 
-**Goal:** 实现Skill仓库同步和本地索引，支持git仓库和本地路径
+**Goal:** 实现Skill仓库同步和本地索引，支持git仓库和本地路径；支持仓库skill列表展示和用户勾选安装
 
 **Requirements:** R9, KD7
 
@@ -608,9 +737,117 @@ mcp:
 - Create: `src/ascend_op_agent/skills/repository.py`
 - Create: `src/ascend_op_agent/skills/index.py`
 - Create: `src/ascend_op_agent/skills/storage.py`
+- Create: `src/ascend_op_agent/skills/discovery.py`  # 仓库skill列表发现
+- Create: `src/ascend_op_agent/skills/interactive.py`  # 交互式多选（参考 Hermes curses_checklist）
 - Create: `tests/test_skills.py`
 
 **Approach:**
+
+*外部Skill仓库配置:*
+```yaml
+skill_repositories:
+  - name: ascend-community
+    url: https://gitcode.com/ascend/agent-skills
+  - name: custom-skills
+    url: https://gitcode.com/user/custom-skills
+# 注意: 不在配置文件中指定安装哪些skill,
+# 而是由 Agent 动态拉取仓库，分析可用 skill，反馈给用户勾选
+```
+
+*Skill仓库动态发现流程:*
+```python
+class SkillRepositoryDiscovery:
+    """发现仓库中的skill列表，在session中反馈给用户勾选"""
+    def __init__(self, cache_dir: str):
+        self.cache_dir = cache_dir
+
+    def fetch_skill_list(self, repo_url: str) -> list[SkillInfo]:
+        """
+        动态获取仓库中的所有skill列表
+        1. 克隆/更新仓库
+        2. 扫描所有 SKILL.md 文件
+        3. 提取 name, description, tags
+        返回可安装的 skill 列表（包含名称和作用）
+        """
+        repo_path = self.clone_or_update(repo_url)
+        skills = []
+        for root, dirs, files in os.walk(repo_path):
+            if 'SKILL.md' in files:
+                skill_info = self._parse_skill_info(os.path.join(root, 'SKILL.md'))
+                skills.append(skill_info)
+        return skills
+
+    def _parse_skill_info(self, skill_md_path: str) -> SkillInfo:
+        """
+        解析 SKILL.md 文件，提取:
+        - name: skill 名称
+        - description: skill 作用描述
+        - tags: 分类标签
+        """
+        with open(skill_md_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        # 解析 YAML frontmatter 获取 name/description
+        # 解析 Markdown 内容获取详细介绍
+        return SkillInfo(name=name, description=description, tags=tags)
+
+    def format_for_selection(self, skills: list[SkillInfo]) -> str:
+        """
+        格式化 skill 列表为交互式多选列表（参考 Hermes curses_checklist）
+        支持两种模式:
+        1. TUI 模式: 使用 ↑↓ 导航, SPACE 切换, ENTER 确认
+        2. 纯文本回退: 显示编号列表，用户输入编号切换选择
+
+        返回格式 (纯文本回退):
+        ```
+        可安装的 Skills (输入编号切换选择，按 Enter 确认):
+        [ ] [1] ascendc-elementwise - 元素级算子开发模板
+        [✓] [2] ascendc-matmul - 矩阵乘法算子开发模板 (已选择)
+        [ ] [3] catlass-template - CATLASS 算子开发模板
+        ...
+        按 Enter 确认安装所选 Skill
+        ```
+        """
+        lines = ["可安装的 Skills (输入编号切换选择，按 Enter 确认):\n"]
+        for i, skill in enumerate(skills, 1):
+            checkbox = "[✓]" if i in self._selected else "[ ]"
+            lines.append(f"{checkbox} [{i}] {skill.name} - {skill.description}")
+        lines.append("\n按 Enter 确认安装所选 Skill (ESC 取消)")
+        return "\n".join(lines)
+
+    def handle_input(self, key: str) -> Optional[list[int]]:
+        """
+        处理用户键盘输入（参考 Hermes 交互逻辑）
+        - 数字键 1-9: 切换对应 skill 的选择状态
+        - Enter: 确认选择，返回选中的 skill 索引列表
+        - ESC/q: 取消操作
+        - ↑/↓: 上下导航（TUI 模式）
+        - Space: 切换当前行选择（TUI 模式）
+        """
+        if key in ('Enter', '\n'):
+            return list(self._selected)
+        elif key in ('Escape', 'q', 'Q'):
+            return None  # 取消
+        elif key.isdigit():
+            idx = int(key) - 1
+            if 0 <= idx < len(self.skills):
+                if idx in self._selected:
+                    self._selected.remove(idx)
+                else:
+                    self._selected.add(idx)
+        return None  # 继续等待输入
+```
+
+*Skill安装流程:*
+```python
+def install_skills(repo_url: str, selected_indices: list[int]):
+    """
+    根据用户选择的序号安装 skill
+    1. 获取 skill 列表
+    2. 根据序号过滤
+    3. 复制到本地 skills 目录
+    4. 更新索引
+    """
+```
 
 *Skill检索算法 (参考 Hermes 两层缓存):*
 ```python
