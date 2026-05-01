@@ -17,15 +17,34 @@
 支持本地和远程开发模式，提供 SSH 连接和文件同步功能。
 """
 
-from ascend_op_agent.ssh.manager import SSHManager, SSHConnectionError
+from ascend_op_agent.ssh.manager import (
+    SSHManager,
+    SSHConnectionError,
+    SSHEnvironment,
+    CommandResult,
+    create_ssh_manager_from_config,
+)
 from ascend_op_agent.ssh.sync import FileSync, SyncDirection
 from ascend_op_agent.ssh.env_config import RemoteEnvConfig, RemoteEnvValidator
+from ascend_op_agent.ssh.base_environment import (
+    BaseEnvironment,
+    ProcessHandle,
+    ExecuteResult,
+    _ThreadedProcessHandle,
+)
 
 __all__ = [
     "SSHManager",
     "SSHConnectionError",
+    "SSHEnvironment",
+    "CommandResult",
+    "create_ssh_manager_from_config",
     "FileSync",
     "SyncDirection",
     "RemoteEnvConfig",
     "RemoteEnvValidator",
+    "BaseEnvironment",
+    "ProcessHandle",
+    "ExecuteResult",
+    "_ThreadedProcessHandle",
 ]
