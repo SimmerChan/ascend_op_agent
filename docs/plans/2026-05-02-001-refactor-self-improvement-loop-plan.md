@@ -44,7 +44,6 @@ origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements
 
 **Out of Scope**:
 - 多记忆后端插件化：将在 v2.0 评估（触发条件：MemorySystem 稳定运行 3 个月）
-- LLM 增强的跨会话召回：若未来需要，将通过外部 LLM MCP 服务集成，不在本系统内实现
 - 外部 MCP 服务器集成：已在 `mcp/lifecycle.py` 中实现，本计划不涉及
 
 ## Key Technical Decisions
@@ -165,14 +164,16 @@ memory:
 | Skill 检索 | `SkillIndex.hybrid_search(query, k)` | 检索可复用的 Skill |
 | 上下文补充 | `ContextEngine.retrieve(query, k)` | 为当前任务补充相关记忆 |
 | Phase1 历史借鉴 | `MemorySystem.retrieve_similar(query)` | 查找类似任务的解决经验 |
+| LLM 增强召回 | `LlmEnhancer.enhance(query, base_results)` | 跨类型推理和语义消歧 |
 
-**三层搜索流程**:
+**四层搜索架构**:
 1. **Phase 1 - FTS5 关键词匹配** (已有): `skills MATCH ?` → BM25 排序 → top-N 候选
 2. **Phase 2 - 向量相似度召回**: 对候选计算向量相似度 → top-K 重排
 3. **Phase 3 - 结果融合**: 加权融合 FTS 分数和向量分数 → 最终排序
+4. **Phase 4 - LLM 增强** (可选): 当前三层结果不足时，调用 LLM 进行跨类型推理
 - 默认权重: α=0.4 (FTS) + β=0.6 (向量)
-- 分数归一化: 将 FTS BM25 和向量相似度分别归一化到 [0,1]
-- 可通过配置调整权重比例
+- LLM 增强触发: 基础检索得分 < `llm_enhancer.trigger_threshold` (默认 0.6)
+- LLM 增强结果以高权重注入最终排序
 
 **Embedding 模型选型**:
 - 模型: `sentence-transformers/all-MiniLM-L6-v3` (384 维)
@@ -631,6 +632,60 @@ classDiagram
 
 ---
 
+### Phase 4.5: LLM 增强召回（可选扩展）
+
+> **说明**: 本阶段为可选扩展，在基础检索能力稳定后实现。直接使用 Agent 配置的 `LLMClient`，无需额外的 MCP 接口。
+
+- [ ] **Unit 4.3: LLM 增强召回实现**
+
+**Goal:** 通过 LLM 增强跨会话知识召回能力
+
+**Requirements:** R7.4 (技能自动注入复用 - 增强)
+
+**Dependencies:** Units 4.1, 4.2 (基础检索完成后)
+
+**Files:**
+- Create: `src/ascend_op_agent/memory/llm_enhancer.py`
+- Modify: `src/ascend_op_agent/agent/context.py`
+- Create: `tests/unit/memory/test_llm_enhancer.py`
+
+**Approach:**
+- 直接使用 Agent 配置的 `LLMClient`，不通过 MCP
+- 定义 `LlmEnhancer` 类：
+  ```python
+  class LlmEnhancer:
+      def __init__(self, llm_client: LLMClient, config: LlmEnhancerConfig)
+      async def enhance(self, query: str, base_results: list[Skill]) -> list[ExperienceHint]
+      async def summarize_sessions(sessions: list[Session]) -> str
+  ```
+- LLM 增强场景:
+  1. **跨类型推荐**: "开发 MatMul 时，提示 Attention 算子有类似 Pattern"
+  2. **复杂推理**: "分析多个失败会话，提取共性根因"
+  3. **语义消歧**: "判断 'gemm' 指的是矩阵乘还是通用矩阵运算"
+
+**触发条件** (配置):
+```yaml
+llm_enhancer:
+  enabled: false          # 设为 true 启用 LLM 增强
+  trigger_threshold: 0.6  # 基础检索得分低于此阈值时触发
+  model: gpt-4o          # 可选，覆盖 LLMClient 默认模型
+```
+
+**与现有 LLMClient 的关系**:
+- `LlmEnhancer` 依赖 `LLMClient`，共享 `config.llm` 配置
+- 无需额外的 MCP 接口，直接调用 LLM API
+
+**Test scenarios:**
+- LLM 调用正常（使用 Agent 配置的 API）
+- 检索结果不足时自动触发 LLM 增强
+- LLM API 不可用时降级到基础检索
+
+**Verification:**
+- 跨类型经验推荐准确率提升（需人工评估）
+- LLM 不可用时系统正常运行（降级）
+
+---
+
 ### Phase 5: 收尾与测试
 
 - [ ] **Unit 5.1: 端到端集成测试**
@@ -694,6 +749,10 @@ classDiagram
 - **Skill System**: 向量索引变化影响存储和检索接口
   - `SkillStorage` 配合 ChromaDB 同步存储向量
   - `SkillIndex.search()` 扩展为 `hybrid_search()` 入口
+- **LLM Enhancer**: 可选扩展，影响 `context.py` 和 `memory/system.py`
+  - `LlmEnhancer` 直接使用 Agent 的 `LLMClient`，无需 MCP 接口
+  - 基础检索得分不足时自动触发 LLM 增强
+  - LLM API 不可用时自动降级到基础检索
 - **Config**: 新增配置项:
   ```yaml
   skill_saver:
@@ -703,6 +762,10 @@ classDiagram
   memory:
     vector_db_path: ~/.ascend_op_agent/vector_db
     embedding_model: sentence-transformers/all-MiniLM-L6-v3
+  llm_enhancer:
+    enabled: false  # 设为 true 启用 LLM 增强
+    trigger_threshold: 0.6
+    model: gpt-4o  # 可选，覆盖 LLMClient 默认模型
   ```
 
 ## Risks & Dependencies
