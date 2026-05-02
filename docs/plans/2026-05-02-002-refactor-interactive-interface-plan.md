@@ -75,7 +75,7 @@ origin: "docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirement
 **替代考虑**: Python 作为主进程（但 Hermes 验证了 Node.js 前端为主的架构）
 
 ### KD-4: 保留原有 Python CLI 入口
-**决策**: `ascend-op-agent tui` 命令启动 Node.js 前端，前端再启动 Python 后端
+**决策**: `ascend-op-agent run` 命令启动 Node.js 前端，前端再启动 Python 后端
 **理由**: 用户使用习惯一致；渐进式迁移，原有 `run` 命令可保留
 **替代考虑**: 完全替换为 Node.js 入口（需要用户安装 Node.js）
 
@@ -724,16 +724,16 @@ export const App: React.FC = () => {
 
 ---
 
-- [ ] **Unit 6: Python CLI 入口集成**
+- [ ] **Unit 6: 重构 run 命令**
 
-**Goal:** 修改 Python CLI `tui` 命令以启动 Node.js 前端
+**Goal:** 重构现有 `run` 命令以启动 Node.js 前端，实现双进程架构
 
 **Requirements:** R-NEW1, R-NEW2, R-NEW3
 
 **Dependencies:** Unit 1, Unit 5
 
 **Files:**
-- Modify: `src/ascend_op_agent/cli.py` — 添加 `tui` 命令
+- Modify: `src/ascend_op_agent/cli.py` — 重构 `run` 命令启动 Node.js 前端
 - Create: `src/ascend_op_agent/frontend.py` — Node.js 前端启动器
 - Create: `tests/test_cli.py` — 更新测试
 
@@ -742,8 +742,8 @@ export const App: React.FC = () => {
 @main.command()
 @click.option("--local", is_flag=True, help="强制使用本地模式")
 @click.pass_context
-def tui(ctx: click.Context, local: bool):
-    """启动双进程 TUI 模式
+def run(ctx: click.Context, local: bool):
+    """启动 Agent 对话
 
     前端基于 Node.js + Ink 构建，后端是独立的 Python 进程。
     支持推理期间的响应式渲染和复杂审批交互。
@@ -752,7 +752,7 @@ def tui(ctx: click.Context, local: bool):
 
     # 检查 Node.js 是否可用
     if not shutil.which("node"):
-        console.print("[red]错误: TUI 模式需要 Node.js[/red]")
+        console.print("[red]错误: Agent 对话需要 Node.js[/red]")
         console.print("请安装 Node.js: https://nodejs.org/")
         return
 
@@ -784,7 +784,7 @@ def tui(ctx: click.Context, local: bool):
 ```
 
 **Config 传递机制**:
-- CLI (`tui` 命令) 读取 Python config 文件路径
+- CLI (`run` 命令) 读取 Python config 文件路径
 - 通过环境变量 `ASCEND_OP_AGENT_CONFIG` 传给 Node.js 前端
 - Node.js 前端通过环境变量 `ASCEND_OP_AGENT_CONFIG` 传给 Python 后端
 - Python 后端 `backend.py` 读取环境变量初始化 Config
@@ -796,14 +796,14 @@ def tui(ctx: click.Context, local: bool):
 - 渐进式迁移
 
 **Test scenarios:**
-- `ascend-op-agent tui` 成功启动
+- `ascend-op-agent run` 成功启动
 - Node.js 未安装时错误提示
 - 前端未构建时自动构建
 - Config 路径正确传递到后端
 - 后端能读取配置并初始化
 
 **Verification:**
-- `ascend-op-agent tui --help` 正常显示
+- `ascend-op-agent run --help` 正常显示
 - 集成测试：前端启动并与后端通信
 - Config 集成测试：后端正确读取配置
 
@@ -858,7 +858,7 @@ def tui(ctx: click.Context, local: bool):
 
 | 组件 | 影响 |
 |------|------|
-| CLI (`cli.py`) | 新增 `tui` 命令，原有 `run` 命令保留 |
+| CLI (`cli.py`) | 重构 `run` 命令启动 Node.js 前端 |
 | Agent Core | 添加异步接口（`_run_conversation_async`） |
 | Backend RPC | 新增 `backend/` 包，不影响现有 Agent 核心逻辑 |
 | Frontend | 新增 `frontend/` 目录，与现有代码隔离 |
@@ -918,9 +918,9 @@ def tui(ctx: click.Context, local: bool):
 - **目标**: 前端与后端可通信
 
 ### Phase 4: CLI 集成（Unit 6, 7）
-- Python CLI `tui` 命令
+- 重构 `run` 命令
 - 端到端集成测试
-- **目标**: `ascend-op-agent tui` 完整可用
+- **目标**: `ascend-op-agent run` 完整可用
 
 ### Phase 5: 文档（Unit 8）
 - 架构文档
@@ -932,8 +932,8 @@ def tui(ctx: click.Context, local: bool):
 | 文档 | 内容 |
 |------|------|
 | `docs/architecture.md` | 添加双进程架构章节 |
-| `docs/tui-guide.md` | TUI 模式使用指南、快捷键说明 |
-| `README.md` | 添加 `tui` 命令说明和 Node.js 依赖说明 |
+| `docs/tui-guide.md` | run 命令使用指南、快捷键说明 |
+| `README.md` | 添加 `run` 命令说明和 Node.js 依赖说明 |
 
 ## Sources & References
 
