@@ -27,7 +27,7 @@ date: 2026-05-03
 ## Requirements Trace
 
 - R1. embedding 模型名称可通过配置文件修改
-- R2. embedding 向量维度可配置（与模型匹配）
+- R2. embedding 向量维度由模型决定（all-MiniLM-L6-v3 输出 384 维），无需用户配置
 - R3. ChromaDB 持久化路径可通过配置文件修改
 - R4. 配置支持 `${ENV_VAR}` 环境变量引用格式
 - R5. 向后兼容：不提供配置时使用当前默认值
@@ -46,7 +46,7 @@ date: 2026-05-03
 |------|---------|------|
 | `config.py` | 有 `LLMConfig`，无 embedding 配置 | 参考 `LLMConfig` 的 Pydantic 模型模式 |
 | `skills/index.py` | 第52-53行硬编码 `EMBEDDING_MODEL` | 惰性加载模型，单例缓存 |
-| `episodic_memory.py` | 第198、252行硬编码模型名称 | 每次调用重新创建模型实例 |
+| `episodic_memory.py` | 第198、252行硬编码模型名称；使用 `[0.0] * 384` 硬编码 fallback | 每次调用重新创建模型实例 |
 | `vector_store.py` | 第34-35行重复定义，第57行硬编码路径 | `__init__` 接受 `persist_dir` 参数 |
 
 ### 配置系统现有模式
@@ -63,8 +63,8 @@ date: 2026-05-03
   - `Rationale`: `all-MiniLM-L6-v3` 输出固定 384 维，动态计算维度增加复杂度
 - **Decision 3**: `VectorStore` 的 `persist_dir` 默认值从配置读取，而非硬编码
   - `Rationale`: 与 `LocalConfig.skills_path` 保持一致的模式
-- **Decision 4**: 保留 `EMBEDDING_DIM` 常量用于零向量 fallback
-  - `Rationale`: fallback 时需要已知维度，配置化后仍需此常量
+- **Decision 4**: VectorStore 的 `embedding_dimension` 仅用于零向量查询的默认维度，实际维度由各使用方管理
+  - `Rationale`: VectorStore 是纯存储层，不持有 embedding 模型；`get_embedding_dimension()` 返回配置的维度作为默认参考值
 
 ## Open Questions
 
@@ -76,7 +76,11 @@ date: 2026-05-03
 ### Deferred to Implementation
 
 - **问**: 是否需要验证配置的模型名称是否有效？
-  - **答**: 首次加载时由 `sentence_transformers` 库验证，失败时记录 warning
+  - **答**: 首次加载时由 `sentence_transformers` 库验证，失败时记录 warning 并降级
+- **问**: 如何处理配置维度与实际模型输出维度不匹配的情况？
+  - **答**: 首次成功加载模型后，记录实际维度；若与配置不符，记录 warning 建议用户修正配置
+- **问**: `get_embedding_dimension()` 方法的调用方是谁？
+  - **答**: 预留供外部调用或未来扩展使用，当前实现作为维度信息暴露的 API
 
 ## Implementation Units
 
@@ -92,7 +96,7 @@ date: 2026-05-03
 - Modify: `src/ascend_op_agent/config.py`
 
 **Approach:**
-- 新增 `EmbeddingConfig` Pydantic 模型，包含 `model` 和 `dimension` 字段
+- 新增 `EmbeddingConfig` Pydantic 模型，包含 `model` 字段（维度由模型决定，不暴露给用户配置）
 - 新增 `VectorStoreConfig` Pydantic 模型，包含 `persist_dir` 字段
 - 在 `Config` 类中添加这两个配置域
 - 保持向后兼容：默认值与当前硬编码值一致
@@ -107,7 +111,7 @@ date: 2026-05-03
 - 默认值与现有硬编码值一致
 
 **Verification:**
-- 运行 `python -c "from ascend_op_agent.config import Config; print(Config().embedding.model)"` 输出 `"sentence-transformers/all-MiniLM-L6-v3"`
+- 运行 `python -c "from ascend_op_agent.config import Config, EmbeddingConfig; print(Config().embedding.model)"` 输出 `"sentence-transformers/all-MiniLM-L6-v3"`
 - 运行 `python -c "from ascend_op_agent.config import Config; print(Config().vector_store.persist_dir)"` 输出包含 `vector_db` 的路径
 
 ---
@@ -154,7 +158,7 @@ date: 2026-05-03
 - `__init__` 新增 `embedding_model_name` 和 `embedding_dimension` 参数
 - 从 `Config` 读取默认值
 - 移除模块级 `EMBEDDING_MODEL` 和 `EMBEDDING_DIM` 常量
-- 保留 `EMBEDDING_DIM` 作为 fallback 零向量的维度常量（从参数获取）
+- 存储 `self._embedding_dim` 实例属性，供 fallback 零向量生成使用（默认值 384）
 
 **Patterns to follow:**
 - 参考 `vector_store_dir` 参数的注入方式（第69行）
@@ -182,8 +186,10 @@ date: 2026-05-03
 - Modify: `src/ascend_op_agent/memory/episodic_memory.py`
 
 **Approach:**
-- `__init__` 新增 `embedding_model_name` 参数
-- 存储模型名称供 `_store_episode` 和 `search_similar_episodes` 使用
+- `__init__` 新增 `embedding_model_name` 参数，存储 `self._embedding_model_name`；新增 `embedding_dimension` 参数，存储 `self._embedding_dimension`（默认384）
+- 实现惰性加载模型实例（参考 skills/index.py 第105-113行模式）：首次使用时创建 `self._embedding_model` 并缓存
+- `_store_episode` 和 `search_similar_episodes` 复用缓存的模型实例，而非每次重新创建
+- **所有零向量 fallback 使用 `self._embedding_dimension` 而非硬编码 384**：包括 `_store_episode` (203行)、`get_episode` (274行)、`list_episodes` (308行)
 - 移除第198行和第252行的硬编码模型名称
 
 **Patterns to follow:**
@@ -192,10 +198,12 @@ date: 2026-05-03
 **Test scenarios:**
 - 使用默认模型名称
 - 使用自定义模型名称
+- 使用自定义 embedding_dimension（256）进行零向量 fallback 时返回正确维度
 
 **Verification:**
 - `EpisodicMemory()` 使用默认 embedding 模型
 - 自定义模型名称可被正确传递和使用
+- `EpisodicMemory(embedding_dimension=256)` 的零向量 fallback 使用维度 256
 
 ---
 
@@ -211,9 +219,11 @@ date: 2026-05-03
 - Modify: `src/ascend_op_agent/memory/vector_store.py`
 
 **Approach:**
-- `__init__` 参数 `persist_dir` 保持不变（已有配置注入模式）
+- `__init__` 签名：`def __init__(self, persist_dir=None, embedding_dimension=384, collection_skills=DEFAULT_COLLECTION_SKILLS, collection_memories=DEFAULT_COLLECTION_MEMORIES)`
+- `persist_dir` 参数保持不变（已有配置注入模式），默认从 `Config().vector_store.persist_dir` 读取
 - 移除模块级 `EMBEDDING_MODEL` 和 `EMBEDDING_DIM` 常量
-- 添加 `embedding_dimension` 参数，存储备用维度常量
+- 存储 `embedding_dimension` 为实例属性 `self._embedding_dimension`，作为零向量查询的默认维度参考
+- 暴露 `get_embedding_dimension()` 方法，返回 `self._embedding_dimension`
 - ChromaDB 持久化目录默认路径改为从配置读取
 
 **Patterns to follow:**
@@ -227,6 +237,7 @@ date: 2026-05-03
 **Verification:**
 - `VectorStore()` 使用配置中的默认 `persist_dir`
 - `VectorStore(persist_dir="/custom/path")` 使用指定路径
+- `VectorStore(embedding_dimension=512).get_embedding_dimension()` 返回 512
 
 ---
 
@@ -252,19 +263,25 @@ date: 2026-05-03
 **Test scenarios:**
 - `test_embedding_config_defaults`: 验证默认配置值
 - `test_embedding_config_from_yaml`: 验证从 YAML 加载配置
-- `test_embedding_model_env_var`: 验证环境变量引用
-- `test_skill_index_with_custom_embedding`: 验证 SkillIndex 使用自定义配置
-- `test_episodic_memory_with_custom_embedding`: 验证 EpisodicMemory 使用自定义配置
+- `test_embedding_config_env_var_override`: 验证环境变量引用可覆盖配置值
+- `test_embedding_model_not_found`: 验证无效模型名称时记录 warning 并正确降级
+- `test_embedding_dimension_mismatch`: 验证配置维度与实际模型维度不匹配时记录 warning
+- `test_skill_index_with_custom_embedding`: 验证 SkillIndex 使用 `embedding_model_name` 参数注入
+- `test_episodic_memory_with_custom_embedding`: 验证 EpisodicMemory 使用 `embedding_model_name` 和 `embedding_dimension` 参数注入
 - `test_vector_store_with_custom_path`: 验证 VectorStore 使用自定义路径
+- `test_vector_store_embedding_dimension`: 验证 VectorStore 可通过 `get_embedding_dimension()` 返回配置的维度
+- `test_vector_store_persist_failure`: 验证 ChromaDB 持久化失败时记录 warning 并降级（内存模式）
+- `test_vector_store_reset_and_reindex`: 验证 `reset()` 可清除旧数据并支持重建索引
 
 **Verification:**
 - 所有测试通过
 
 ## System-Wide Impact
 
-- **Error propagation**: 配置错误时（无效模型）记录 warning，不阻断主流程
-- **State lifecycle risks**: 无持久状态变更
-- **API surface parity**: `VectorStore.__init__` 参数签名改变（`embedding_dimension` 新增）
+- **Error propagation**: 配置错误时（无效模型）记录 warning，不阻断主流程；维度不匹配时记录 warning 建议修正；ChromaDB 持久化失败时降级为内存模式
+- **State lifecycle risks**: 无持久状态变更；现有向量数据在切换模型后需重建索引；`reset()` 可清除旧数据
+- **API surface parity**: `VectorStore.__init__` 参数签名新增 `embedding_dimension=384` 参数（保持向后兼容）；新增 `get_embedding_dimension()` 方法
+- **Call site impact**: `episodic_memory.py:86` 的 `VectorStore()` 调用保持兼容（默认参数）
 
 ## Risks & Dependencies
 
@@ -272,11 +289,20 @@ date: 2026-05-03
   - **Mitigation**: 保持默认参数兼容，新增参数有默认值
 - **Risk**: 配置的模型不存在
   - **Mitigation**: `sentence_transformers` 库会抛出异常，被捕获后记录 warning 并降级
+- **Risk**: 切换 embedding 模型后，现有向量数据维度不匹配
+  - **Mitigation**: 文档说明需清除旧向量数据并重建索引；实现时记录 warning 提示用户
+- **Risk**: 配置的维度与实际模型输出维度不匹配
+  - **Mitigation**: 首次成功加载后验证维度一致性，不匹配时记录 warning
+- **Risk**: EpisodicMemory 惰性加载缓存在并发访问时的线程安全问题
+  - **Mitigation**: 使用 `threading.Lock` 保护模型实例化；或在单线程环境下使用（确认应用架构为单线程主循环）
+- **Risk**: ChromaDB 持久化失败（磁盘满、权限错误、路径不可写）
+  - **Mitigation**: 降级为内存模式运行，记录 warning 提示用户
 
 ## Documentation / Operational Notes
 
-- 需要更新 `docs/configuration.md`（如果存在）说明新增配置项
+- 需要更新 `docs/config.md`（如果存在）说明新增 `embedding` 和 `vector_store` 配置项，包括维度由模型决定的说明
 - 无需修改部署脚本或启动命令
+- 切换 embedding 模型后，用户需手动清除旧向量数据（`VectorStore.reset()`）并重建索引
 
 ## Sources & References
 
