@@ -1,7 +1,7 @@
 ---
 title: "refactor: Ascend Op Agent 交互界面双进程架构重构（Node.js + Ink）"
 type: refactor
-status: active
+status: completed
 date: 2026-05-02
 origin: "docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements.md"
 ---
