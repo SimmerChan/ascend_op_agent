@@ -42,3 +42,73 @@ Agent核心层
 5. Persistent Memory (SQLite)
 6. Skills Index
 7. Context Files
+
+## 双进程架构（TUI 模式）
+
+Ascend Op Agent 支持 Hermes Agent 风格的双进程 TUI 交互界面：
+
+```mermaid
+graph TB
+    subgraph TUI["TUI Frontend (Node.js + Ink)"]
+        A[用户界面渲染] --> B[输入处理]
+        B --> C[状态展示]
+    end
+
+    subgraph Backend["Agent Backend (Python) - Child Process"]
+        D[JSON-RPC 解析] --> E[Agent 推理引擎]
+        E --> F[工具调用]
+        F --> G[审批交互]
+        G --> D
+    end
+
+    A --> |"stdin/stdout JSON-RPC"| D
+    C --> |"渲染更新"| A
+
+    style TUI fill:#e1f5fe
+    style Backend fill:#fff3e0
+```
+
+### 架构特点
+
+- **TUI Frontend (Node.js + Ink)**
+  - 始终保持响应式渲染
+  - 处理用户输入和状态展示
+  - 通过 stdin/stdout 与后端通信
+
+- **Agent Backend (Python) - Child Process**
+  - Agent 推理、工具调用、审批交互
+  - 在后台线程池执行，不阻塞前端
+  - 使用 JSON-RPC 2.0 协议通信
+
+### 通信协议
+
+```json
+// 请求示例
+{"jsonrpc": "2.0", "method": "invoke_tool", "params": {"name": "bash", "args": {...}}, "id": 1}
+
+ // 响应示例
+{"jsonrpc": "2.0", "result": {"output": "..."}, "id": 1}
+```
+
+### 启动流程
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant TUI as TUI Frontend
+    participant Agent as Agent Backend
+    participant LLM as LLM API
+
+    User->>TUI: 启动命令
+    TUI->>Agent: 启动子进程
+    Agent->>LLM: 初始化连接
+    LLM-->>Agent: 连接成功
+    Agent-->>TUI: 就绪
+    TUI->>User: 显示交互界面
+    User->>TUI: 输入请求
+    TUI->>Agent: JSON-RPC 请求
+    Agent->>LLM: 推理请求
+    LLM-->>Agent: 推理结果
+    Agent-->>TUI: JSON-RPC 响应
+    TUI->>User: 更新显示
+```

@@ -12,4 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Integration tests package"""
+"""Backend RPC service package"""
+
+from .rpc.server import JSONRPCServer
+from .rpc.agent_service import AgentAsyncWrapper, AgentResponse
+
+__all__ = ["JSONRPCServer", "AgentAsyncWrapper", "AgentResponse"]

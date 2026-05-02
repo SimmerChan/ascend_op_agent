@@ -22,6 +22,9 @@
 - sync: 同步远程文件
 """
 
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -110,60 +113,50 @@ def init(ctx: click.Context, workspace: str, remote: bool) -> None:
 
 @main.command()
 @click.option(
-    "--session",
-    type=str,
-    help="会话名称"
-)
-@click.option(
     "--local",
     is_flag=True,
     help="强制使用本地模式"
 )
 @click.pass_context
-def run(ctx: click.Context, session: Optional[str], local: bool) -> None:
-    """运行 Agent 对话
+def run(ctx: click.Context, local: bool) -> None:
+    """启动 Agent 对话
 
-    启动交互式会话进行算子开发。
+    前端基于 Node.js + Ink 构建，后端是独立的 Python 进程。
+    支持推理期间的响应式渲染和复杂审批交互。
     """
     config: Config = ctx.obj["config"]
 
-    # 检查远程配置
-    if config.remote and not local:
-        env_type = config.remote.get_environment_type()
-        console.print(Panel(
-            f"[yellow]即将在远程环境开发[/yellow]\n\n"
-            f"环境类型: {env_type}\n"
-            f"主机: {config.remote.host}\n"
-            f"用户: {config.remote.user}",
-            title="远程环境确认"
-        ))
+    # 检查 Node.js 是否可用
+    if not shutil.which("node"):
+        console.print("[red]错误: Agent 对话需要 Node.js[/red]")
+        console.print("请安装 Node.js: https://nodejs.org/")
+        return
 
-        if config.remote.requires_confirmation():
-            confirm = click.confirm("是否确认在此环境继续开发？")
-            if not confirm:
-                console.print("[yellow]已取消操作[/yellow]")
-                return
+    # 获取前端路径
+    frontend_path = Path(__file__).parent.parent / "frontend"
+    dist_path = frontend_path / "dist"
 
-    console.print("[bold]Ascend Op Agent[/bold] - 算子开发会话")
-    console.print("输入 'exit' 或 'quit' 退出会话\n")
+    # 检查前端是否已构建
+    if not dist_path.exists():
+        console.print("[yellow]前端未构建，正在构建...[/yellow]")
+        subprocess.run(["npm", "install"], cwd=frontend_path, check=True)
+        subprocess.run(["npm", "run", "build"], cwd=frontend_path, check=True)
 
-    # 简单的交互式循环（后续会替换为真正的 Agent）
-    while True:
-        try:
-            user_input = console.input("[bold blue]>>>[/bold blue] ")
-        except (KeyboardInterrupt, EOFError):
-            console.print("\n[yellow]退出会话[/yellow]")
-            break
+    # 构建环境变量，传递配置路径
+    env = {
+        **os.environ,
+        "ASCEND_OP_AGENT_CONFIG": str(config.config_path),
+        "PYTHONUNBUFFERED": "1",
+    }
 
-        if user_input.strip().lower() in ("exit", "quit", "q"):
-            console.print("[yellow]退出会话[/yellow]")
-            break
-
-        if not user_input.strip():
-            continue
-
-        # TODO: 调用 Agent 处理输入
-        console.print(f"[dim]暂不支持: {user_input}[/dim]")
+    # 启动 Node.js 前端
+    try:
+        subprocess.run(
+            ["node", str(dist_path / "index.js")],
+            env=env,
+        )
+    except Exception as e:
+        console.print(f"[red]前端启动失败: {e}[/red]")
 
 
 @main.command()

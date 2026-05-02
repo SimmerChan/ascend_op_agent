@@ -30,6 +30,16 @@ cp config.yaml.example config.yaml
 ascend-op-agent run --mode local
 ```
 
+## TUI 交互模式
+
+Ascend Op Agent 支持双进程 TUI 交互界面（需要 Node.js >= 16）：
+
+```bash
+ascend-op-agent run
+```
+
+详细使用指南请参考 [TUI 使用指南](docs/tui-guide.md)。
+
 ## 目录结构
 
 ```
