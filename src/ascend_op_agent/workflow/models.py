@@ -334,6 +334,92 @@ class PrecisionReport:
 
 
 @dataclass
+class PerformanceMetric:
+    """单个性能指标"""
+    case_name: str
+    latency_ms: float  # 延迟(毫秒)
+    throughput_gflops: float  # 吞吐(GFLOPS)
+    memory_mb: float  # 内存占用(MB)
+
+
+@dataclass
+class PerformanceReport:
+    """性能评估报告"""
+    operator_name: str
+    total_cases: int
+
+    # 性能指标详情
+    metrics: list[PerformanceMetric] = field(default_factory=list)
+
+    # 汇总指标
+    avg_latency_ms: Optional[float] = None
+    avg_throughput_gflops: Optional[float] = None
+    avg_memory_mb: Optional[float] = None
+
+    # 报告路径
+    report_path: str = "test/performance_report.md"
+
+    # 是否满足要求
+    meets_requirement: bool = False
+
+    def calculate_summary(self) -> None:
+        """计算汇总指标"""
+        if not self.metrics:
+            return
+
+        latencies = [m.latency_ms for m in self.metrics]
+        throughputs = [m.throughput_gflops for m in self.metrics]
+        memories = [m.memory_mb for m in self.metrics]
+
+        self.avg_latency_ms = sum(latencies) / len(latencies) if latencies else None
+        self.avg_throughput_gflops = sum(throughputs) / len(throughputs) if throughputs else None
+        self.avg_memory_mb = sum(memories) / len(memories) if memories else None
+
+        # 检查是否满足要求：平均吞吐量 > 100 GFLOPS
+        self.meets_requirement = (
+            self.total_cases >= 10 and
+            self.avg_throughput_gflops is not None and
+            self.avg_throughput_gflops > 100
+        )
+
+    def to_markdown(self) -> str:
+        """转换为Markdown格式"""
+        self.calculate_summary()
+
+        lines = [
+            f"# Performance Report: {self.operator_name}",
+            "",
+            f"**Total Cases**: {self.total_cases}",
+            "",
+        ]
+
+        if self.avg_latency_ms is not None:
+            lines.append(f"**Avg Latency**: {self.avg_latency_ms:.2f} ms")
+        if self.avg_throughput_gflops is not None:
+            lines.append(f"**Avg Throughput**: {self.avg_throughput_gflops:.2f} GFLOPS")
+        if self.avg_memory_mb is not None:
+            lines.append(f"**Avg Memory**: {self.avg_memory_mb:.2f} MB")
+
+        lines.append("")
+        lines.append(f"**Meets Requirement**: {'Yes' if self.meets_requirement else 'No'}")
+        lines.append("")
+
+        # 详细结果表
+        lines.append("## Performance Metrics")
+        lines.append("")
+        lines.append("| # | Case | Latency (ms) | Throughput (GFLOPS) | Memory (MB) |")
+        lines.append("|---|------|--------------|---------------------|-------------|")
+
+        for i, metric in enumerate(self.metrics, 1):
+            lines.append(
+                f"| {i} | {metric.case_name} | {metric.latency_ms:.2f} | "
+                f"{metric.throughput_gflops:.2f} | {metric.memory_mb:.2f} |"
+            )
+
+        return "\n".join(lines)
+
+
+@dataclass
 class PhaseResult:
     """阶段执行结果"""
     phase_name: str

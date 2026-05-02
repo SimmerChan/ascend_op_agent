@@ -1,9 +1,12 @@
 ---
 title: refactor: 自改进闭环能力重构
 type: refactor
-status: active
+status: completed
 date: 2026-05-02
+completed: 2026-05-02
 origin: docs/brainstorms/2026-04-29-ascend-op-from-scratch-workflow-requirements.md
+notes:
+  - Unit 4.3 (LLM 增强召回) completed - optional expansion, defaults to disabled
 ---
 
 # 自改进闭环能力重构计划

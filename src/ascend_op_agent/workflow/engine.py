@@ -27,6 +27,8 @@ from ascend_op_agent.workflow.phases import (
     Phase3CodeGen,
     Phase4Verify,
     Phase5Precision,
+    Phase7SkillSave,
+    Phase8Performance,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,11 +56,17 @@ class OperatorWorkflow:
     def __init__(
         self,
         enable_phase5_precision: bool = True,
+        enable_phase7_skill_save: bool = True,
+        auto_save_skills: bool = False,
+        enable_phase8_performance: bool = True,
         max_compile_fix_attempts: int = 3,
     ):
         """
         Args:
             enable_phase5_precision: 是否启用Phase5精度评估（必选）
+            enable_phase7_skill_save: 是否启用Phase7技能保存
+            auto_save_skills: 是否自动保存技能（无需用户确认）
+            enable_phase8_performance: 是否启用Phase8性能评测
             max_compile_fix_attempts: 最大编译修复次数
         """
         self.phases: list[Phase] = [
@@ -71,6 +79,12 @@ class OperatorWorkflow:
 
         if enable_phase5_precision:
             self.phases.append(Phase5Precision())
+
+        if enable_phase7_skill_save:
+            self.phases.append(Phase7SkillSave(auto_save=auto_save_skills))
+
+        if enable_phase8_performance:
+            self.phases.append(Phase8Performance())
 
         self.max_compile_fix_attempts = max_compile_fix_attempts
         self._current_phase_index = 0
@@ -206,12 +220,18 @@ class WorkflowRunner:
 
 def create_workflow(
     enable_phase5: bool = True,
+    enable_phase7: bool = True,
+    enable_phase8: bool = True,
+    auto_save_skills: bool = False,
     max_compile_fixes: int = 3,
 ) -> OperatorWorkflow:
     """创建工作流实例的工厂函数
 
     Args:
         enable_phase5: 是否启用Phase5精度评估
+        enable_phase7: 是否启用Phase7技能保存
+        enable_phase8: 是否启用Phase8性能评测
+        auto_save_skills: 是否自动保存技能
         max_compile_fixes: 最大编译修复次数
 
     Returns:
@@ -219,5 +239,8 @@ def create_workflow(
     """
     return OperatorWorkflow(
         enable_phase5_precision=enable_phase5,
+        enable_phase7_skill_save=enable_phase7,
+        enable_phase8_performance=enable_phase8,
+        auto_save_skills=auto_save_skills,
         max_compile_fix_attempts=max_compile_fixes,
     )

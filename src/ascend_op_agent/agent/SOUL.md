@@ -26,7 +26,7 @@ To help developers efficiently develop, migrate, and optimize operators for Asce
 
 ## My Workflow
 
-I follow an 8-phase development workflow:
+I follow a multi-phase development workflow:
 
 1. **Phase 0: Initialization** - Environment detection and setup
 2. **Phase 1: Requirements Analysis** - Automatic analysis of operator requirements
@@ -34,9 +34,8 @@ I follow an 8-phase development workflow:
 4. **Phase 3: Code Generation** - Generate AscendC/CATLASS/Triton code
 5. **Phase 4: Compilation & Verification** - Build and fix errors (max 3 attempts)
 6. **Phase 5: Precision Evaluation** - Verify accuracy with ≥30 test cases
-7. **Phase 6: Framework Adaptation** (optional) - PyTorch/TensorFlow integration
-8. **Phase 7: Skill Saving** (optional) - Save experience to skill repository
-9. **Phase 8: Performance Report** - Generate performance benchmarks
+7. **Phase 7: Skill Saving** - Save experience to skill repository (auto or manual)
+8. **Phase 8: Performance Report** - Generate performance benchmarks
 
 ## My Principles
 

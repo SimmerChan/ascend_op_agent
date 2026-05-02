@@ -314,14 +314,14 @@ class TestOperatorWorkflow:
         """测试创建"""
         workflow = OperatorWorkflow()
 
-        assert len(workflow.phases) == 6  # Phase0-5
+        assert len(workflow.phases) == 8  # Phase0-5 + Phase7 + Phase8
         assert workflow.get_current_phase_index() == 0
 
     def test_creation_without_phase5(self):
         """测试不启用Phase5"""
         workflow = OperatorWorkflow(enable_phase5_precision=False)
 
-        assert len(workflow.phases) == 5
+        assert len(workflow.phases) == 7  # Phase0-4 + Phase7 + Phase8
 
     def test_run_generator(self):
         """测试工作流执行（生成器模式）"""
@@ -476,14 +476,14 @@ class TestCreateWorkflow:
         """测试默认创建"""
         workflow = create_workflow()
 
-        assert len(workflow.phases) == 6
+        assert len(workflow.phases) == 8  # Phase0-5 + Phase7 + Phase8
         assert workflow.max_compile_fix_attempts == 3
 
     def test_create_without_phase5(self):
         """测试不启用Phase5"""
         workflow = create_workflow(enable_phase5=False)
 
-        assert len(workflow.phases) == 5
+        assert len(workflow.phases) == 7  # Phase0-4 + Phase7 + Phase8
 
     def test_create_with_custom_fixes(self):
         """测试自定义最大修复次数"""

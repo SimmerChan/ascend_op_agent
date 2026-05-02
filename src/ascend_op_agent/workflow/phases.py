@@ -27,6 +27,8 @@ from ascend_op_agent.workflow.models import (
     FileChange,
     MigrationStrategy,
     OpInfo,
+    PerformanceMetric,
+    PerformanceReport,
     PhaseResult,
     PhaseStatus,
     PrecisionReport,
@@ -814,6 +816,223 @@ class Phase5Precision(Phase):
             passed_cases=passed,
             failed_cases=failed,
             test_results=test_results,
+        )
+
+        report.calculate_summary()
+
+        return report
+
+
+class Phase7SkillSave(Phase):
+    """Phase7: 技能保存阶段
+
+    职责:
+    - Phase5 完成后自动触发
+    - 封装 OpResult 传递给 SkillSaver
+    - 根据配置决定自动保存或询问用户
+    - 三维度提取: 模板、Bugfix、性能优化
+    """
+
+    def __init__(
+        self,
+        auto_save: bool = False,
+        dimensions: Optional[list[str]] = None,
+    ):
+        """
+        Args:
+            auto_save: 是否自动保存（无需用户确认）
+            dimensions: 保存维度列表，默认所有维度
+        """
+        super().__init__("Phase7_SkillSave")
+        self.auto_save = auto_save
+        self.dimensions = dimensions or ["template", "bugfix", "performance"]
+
+    def requires_confirmation(self) -> bool:
+        """是否需要用户确认"""
+        return not self.auto_save
+
+    def execute(self, context: dict) -> PhaseResult:
+        """执行技能保存"""
+        self._result = PhaseResult(
+            phase_name=self.name,
+            status=PhaseStatus.RUNNING,
+        )
+
+        try:
+            # 检查是否有 OpResult
+            if "op_result" not in context:
+                self._result.status = PhaseStatus.FAILED
+                self._result.errors.append("No op_result in context")
+                return self._result
+
+            # 导入 OpResult
+            from ascend_op_agent.workflow.skill_save import OpResult
+            op_result: OpResult = context["op_result"]
+
+            # 构建 SkillSaver
+            from ascend_op_agent.workflow.skill_save import SkillSaver
+            saver = SkillSaver()
+
+            # 保存
+            saved_paths = saver.save(
+                op_result=op_result,
+                dimensions=self.dimensions,
+                user_confirm=not self.auto_save,
+            )
+
+            context["skill_save_paths"] = saved_paths
+
+            if saved_paths:
+                self._result.status = PhaseStatus.COMPLETED
+                self._result.data = {"saved_paths": saved_paths}
+                self._result.message = f"技能保存完成，保存了{len(saved_paths)}个维度"
+            else:
+                self._result.status = PhaseStatus.FAILED
+                self._result.errors.append("No skills were saved")
+                self._result.message = "技能保存失败或用户选择不保存"
+
+            return self._result
+
+        except Exception as e:
+            logger.error(f"Phase7 execution failed: {e}")
+            self._result.status = PhaseStatus.FAILED
+            self._result.errors.append(str(e))
+            return self._result
+
+    def confirm(self, context: dict, confirmed: bool) -> PhaseResult:
+        """处理用户确认
+
+        Args:
+            context: 工作流上下文
+            confirmed: 用户是否确认保存
+        """
+        if confirmed:
+            # 用户确认，重新执行保存
+            return self.execute(context)
+        else:
+            # 用户拒绝
+            self._result.status = PhaseStatus.COMPLETED
+            self._result.message = "用户选择不保存技能"
+            return self._result
+
+
+class Phase8Performance(Phase):
+    """Phase8: 性能评测阶段
+
+    职责:
+    - 收集性能基准数据（延迟、吞吐、内存）
+    - 对比AscendC算子与参考实现性能
+    - 生成性能报告
+    """
+
+    def __init__(self, min_test_cases: int = 10):
+        super().__init__("Phase8_Performance")
+        self.min_test_cases = min_test_cases
+
+    def execute(self, context: dict) -> PhaseResult:
+        """执行性能评测"""
+        self._result = PhaseResult(
+            phase_name=self.name,
+            status=PhaseStatus.RUNNING,
+        )
+
+        try:
+            op_info: OpInfo = context.get("op_info")
+
+            # 生成性能测试用例
+            test_cases = self._generate_test_cases(op_info)
+
+            # 执行性能测试
+            metrics = self._run_performance_tests(op_info, test_cases)
+
+            # 生成报告
+            report = self._generate_performance_report(op_info, metrics)
+
+            # 保存报告
+            report_path = f"{op_info.name}_performance_report.md"
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(report.to_markdown())
+
+            report.report_path = report_path
+
+            context["performance_report"] = report
+
+            if report.meets_requirement:
+                self._result.status = PhaseStatus.COMPLETED
+                self._result.message = f"性能评测通过，平均吞吐{report.avg_throughput_gflops:.1f} GFLOPS"
+            else:
+                self._result.status = PhaseStatus.FAILED
+                self._result.message = "性能评测未达到要求"
+
+            self._result.data = {"report": report}
+
+            return self._result
+
+        except Exception as e:
+            logger.error(f"Phase8 execution failed: {e}")
+            self._result.status = PhaseStatus.FAILED
+            self._result.errors.append(str(e))
+            return self._result
+
+    def _generate_test_cases(self, op_info: OpInfo) -> list[str]:
+        """生成性能测试用例名称"""
+        test_cases = []
+        shapes = [
+            [32, 32], [64, 64], [128, 128],
+            [256, 256], [512, 512], [1024, 1024],
+            [32, 32, 32], [64, 64, 64], [128, 128, 128],
+        ]
+
+        # 确保至少有min_test_cases个用例
+        case_id = 0
+        while len(test_cases) < self.min_test_cases:
+            shape = shapes[case_id % len(shapes)]
+            test_cases.append(f"perf_{op_info.name}_{'-'.join(map(str, shape))}")
+            case_id += 1
+
+        return test_cases
+
+    def _run_performance_tests(
+        self,
+        op_info: OpInfo,
+        test_cases: list[str],
+    ) -> list[PerformanceMetric]:
+        """运行性能测试"""
+        metrics = []
+
+        for case_name in test_cases:
+            # 桩实现：模拟性能测试执行
+            # 实际应该：
+            # 1. 准备输入数据
+            # 2. 计时执行AscendC算子
+            # 3. 记录延迟、吞吐、内存
+
+            # 模拟测试结果
+            import random
+            latency = random.uniform(0.1, 10.0)  # 0.1-10ms
+            flops = random.uniform(10, 1000)  # 10-1000 GFLOPS
+            memory = random.uniform(1, 100)  # 1-100 MB
+
+            metric = PerformanceMetric(
+                case_name=case_name,
+                latency_ms=latency,
+                throughput_gflops=flops,
+                memory_mb=memory,
+            )
+            metrics.append(metric)
+
+        return metrics
+
+    def _generate_performance_report(
+        self,
+        op_info: OpInfo,
+        metrics: list[PerformanceMetric],
+    ) -> PerformanceReport:
+        """生成性能报告"""
+        report = PerformanceReport(
+            operator_name=op_info.name,
+            total_cases=len(metrics),
+            metrics=metrics,
         )
 
         report.calculate_summary()

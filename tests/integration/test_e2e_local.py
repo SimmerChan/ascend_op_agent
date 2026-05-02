@@ -84,7 +84,7 @@ class TestE2ELocalWorkflow:
         """测试禁用Phase5时的工作流"""
         workflow = create_workflow(enable_phase5=False)
 
-        assert len(workflow.phases) == 5  # 没有Phase5
+        assert len(workflow.phases) == 7  # Phase0-4 + Phase7 + Phase8（没有Phase5）
 
         user_input = "实现一个elementwise算子"
 
