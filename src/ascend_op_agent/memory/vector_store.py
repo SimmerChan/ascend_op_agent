@@ -31,8 +31,6 @@ logger = logging.getLogger(__name__)
 # ChromaDB 配置
 DEFAULT_COLLECTION_SKILLS = "skills"
 DEFAULT_COLLECTION_MEMORIES = "memories"
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v3"
-EMBEDDING_DIM = 384
 
 
 class VectorStore:
@@ -44,18 +42,23 @@ class VectorStore:
     def __init__(
         self,
         persist_dir: Optional[str] = None,
+        embedding_dimension: int = 384,
         collection_skills: str = DEFAULT_COLLECTION_SKILLS,
         collection_memories: str = DEFAULT_COLLECTION_MEMORIES,
     ):
         """
         Args:
-            persist_dir: ChromaDB 持久化目录，默认 ~/.ascend_op_agent/vector_db
+            persist_dir: ChromaDB 持久化目录，默认从配置读取
+            embedding_dimension: Embedding 向量维度，默认 384
             collection_skills: Skill 向量的 collection 名称
             collection_memories: 记忆向量的 collection 名称
         """
         if persist_dir is None:
-            persist_dir = os.path.expanduser("~/.ascend_op_agent/vector_db")
+            from ascend_op_agent.config import load_config
+            cfg = load_config()
+            persist_dir = cfg.vector_store.persist_dir
 
+        self._embedding_dimension = embedding_dimension
         self.persist_dir = Path(persist_dir)
         self.persist_dir.mkdir(parents=True, exist_ok=True)
 
@@ -72,6 +75,10 @@ class VectorStore:
 
         # 确保 collection 存在
         self._ensure_collections()
+
+    def get_embedding_dimension(self) -> int:
+        """获取 embedding 向量维度"""
+        return self._embedding_dimension
 
     def _ensure_collections(self) -> None:
         """确保必要的 collection 存在"""

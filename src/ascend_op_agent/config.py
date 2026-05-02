@@ -89,6 +89,16 @@ class LocalConfig(BaseModel):
     skills_path: str = "~/.ascend_op_agent/skills"
 
 
+class EmbeddingConfig(BaseModel):
+    """Embedding 模型配置"""
+    model: str = "sentence-transformers/all-MiniLM-L6-v3"
+
+
+class VectorStoreConfig(BaseModel):
+    """向量存储配置"""
+    persist_dir: str = "~/.ascend_op_agent/vector_db"
+
+
 class LoggingConfig(BaseModel):
     """日志配置"""
     level: str = "INFO"
@@ -103,6 +113,8 @@ class Config(BaseModel):
     skill_repositories: list[SkillRepositoryConfig] = Field(default_factory=list)
     remote: Optional[RemoteConfig] = None
     local: LocalConfig = Field(default_factory=LocalConfig)
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     @classmethod

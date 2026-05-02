@@ -48,10 +48,6 @@ SNAPSHOT_VERSION = 1
 # 快照文件名
 SNAPSHOT_FILENAME = ".skills_prompt_snapshot.json"
 
-# Embedding 模型配置
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v3"
-EMBEDDING_DIM = 384
-
 
 class SkillIndex:
     """Skill索引和检索
@@ -67,13 +63,23 @@ class SkillIndex:
         db_path: Optional[str] = None,
         cache_dir: Optional[str] = None,
         vector_store_dir: Optional[str] = None,
+        embedding_model_name: Optional[str] = None,
+        embedding_dimension: int = 384,
     ):
         """
         Args:
             db_path: SQLite数据库路径
             cache_dir: 缓存目录（用于存储快照）
             vector_store_dir: VectorStore持久化目录
+            embedding_model_name: Embedding模型名称
+            embedding_dimension: Embedding向量维度
         """
+        from ascend_op_agent.config import load_config
+
+        cfg = load_config()
+        self._embedding_model_name = embedding_model_name or cfg.embedding.model
+        self._embedding_dim = embedding_dimension
+
         self.cache_dir = Path(
             cache_dir or os.path.expanduser("~/.ascend_op_agent")
         )
@@ -99,7 +105,6 @@ class SkillIndex:
         # 延迟初始化embedding模型（避免测试环境网络问题）
         # 如果模型加载失败，向量功能将被禁用但FTS5功能保留
         self._embedding_model = None
-        self._embedding_model_name = EMBEDDING_MODEL
 
     @property
     def embedding_model(self) -> Optional[SentenceTransformer]:

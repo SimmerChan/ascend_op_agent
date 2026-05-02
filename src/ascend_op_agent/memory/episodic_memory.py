@@ -75,6 +75,8 @@ class EpisodicMemory:
         message_threshold: int = DEFAULT_MESSAGE_THRESHOLD,
         token_threshold: int = DEFAULT_TOKEN_THRESHOLD,
         summarize_episodes: bool = False,
+        embedding_model_name: Optional[str] = None,
+        embedding_dimension: int = 384,
     ):
         """
         Args:
@@ -82,15 +84,36 @@ class EpisodicMemory:
             message_threshold: 触发摘要的消息数阈值
             token_threshold: 触发摘要的token阈值
             summarize_episodes: 是否启用摘要提取
+            embedding_model_name: embedding模型名称
+            embedding_dimension: embedding向量维度
         """
+        from ascend_op_agent.config import load_config
+        cfg = load_config()
+
         self._vector_store = vector_store or VectorStore()
         self._message_threshold = message_threshold
         self._token_threshold = token_threshold
         self._summarize_episodes = summarize_episodes
 
+        self._embedding_model_name = embedding_model_name or cfg.embedding.model
+        self._embedding_dimension = embedding_dimension
+        self._embedding_model = None  # 惰性加载
+
         # 当前会话
         self._current_episode: Optional[Episode] = None
         self._episode_counter = 0
+
+    @property
+    def _model(self):
+        """惰性加载embedding模型"""
+        if self._embedding_model is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+                self._embedding_model = SentenceTransformer(self._embedding_model_name)
+            except Exception as e:
+                logger.warning(f"Failed to load embedding model: {e}")
+                return None
+        return self._embedding_model
 
     def start_episode(self, episode_id: Optional[str] = None) -> str:
         """开始新会话片段
@@ -193,14 +216,15 @@ class EpisodicMemory:
         content = self._episode_to_content(episode)
 
         # 生成向量
-        try:
-            from sentence_transformers import SentenceTransformer
-            model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v3")
-            embedding = model.encode(content).tolist()
-        except Exception as e:
-            logger.warning(f"Failed to encode episode: {e}")
-            # 使用零向量作为fallback
-            embedding = [0.0] * 384
+        model = self._model
+        if model is not None:
+            try:
+                embedding = model.encode(content).tolist()
+            except Exception as e:
+                logger.warning(f"Failed to encode episode: {e}")
+                embedding = [0.0] * self._embedding_dimension
+        else:
+            embedding = [0.0] * self._embedding_dimension
 
         # 存储到ChromaDB
         metadata = {
@@ -247,9 +271,11 @@ class EpisodicMemory:
         Returns:
             相似会话列表
         """
+        model = self._model
+        if model is None:
+            return []
+
         try:
-            from sentence_transformers import SentenceTransformer
-            model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v3")
             query_embedding = model.encode(query).tolist()
         except Exception as e:
             logger.warning(f"Failed to encode query: {e}")
@@ -271,7 +297,7 @@ class EpisodicMemory:
         """
         # 从向量数据库获取
         results = self._vector_store.search_memory_vectors(
-            query_embedding=[0.0] * 384,  # 零向量
+            query_embedding=[0.0] * self._embedding_dimension,  # 零向量
             k=100,
         )
 
@@ -305,7 +331,7 @@ class EpisodicMemory:
             会话片段信息列表
         """
         results = self._vector_store.search_memory_vectors(
-            query_embedding=[0.0] * 384,
+            query_embedding=[0.0] * self._embedding_dimension,
             k=limit,
         )
 
