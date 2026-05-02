@@ -32,6 +32,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
+from sentence_transformers import SentenceTransformer
+
 from ascend_op_agent.skills.models import Skill, SkillInfo
 from ascend_op_agent.skills.repository import SkillRepository
 
@@ -45,6 +47,10 @@ SNAPSHOT_VERSION = 1
 
 # 快照文件名
 SNAPSHOT_FILENAME = ".skills_prompt_snapshot.json"
+
+# Embedding 模型配置
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v3"
+EMBEDDING_DIM = 384
 
 
 class SkillIndex:
@@ -60,11 +66,13 @@ class SkillIndex:
         self,
         db_path: Optional[str] = None,
         cache_dir: Optional[str] = None,
+        vector_store_dir: Optional[str] = None,
     ):
         """
         Args:
             db_path: SQLite数据库路径
             cache_dir: 缓存目录（用于存储快照）
+            vector_store_dir: VectorStore持久化目录
         """
         self.cache_dir = Path(
             cache_dir or os.path.expanduser("~/.ascend_op_agent")
@@ -83,6 +91,26 @@ class SkillIndex:
         # LRU缓存
         self._lru_cache: OrderedDict[str, list[Skill]] = OrderedDict()
         self._cache_lock = threading.Lock()
+
+        # 初始化向量存储
+        from ascend_op_agent.memory.vector_store import VectorStore
+        self._vector_store = VectorStore(persist_dir=vector_store_dir)
+
+        # 延迟初始化embedding模型（避免测试环境网络问题）
+        # 如果模型加载失败，向量功能将被禁用但FTS5功能保留
+        self._embedding_model = None
+        self._embedding_model_name = EMBEDDING_MODEL
+
+    @property
+    def embedding_model(self) -> Optional[SentenceTransformer]:
+        """惰性加载embedding模型"""
+        if self._embedding_model is None:
+            try:
+                self._embedding_model = SentenceTransformer(self._embedding_model_name)
+            except Exception as e:
+                logger.warning(f"Failed to load embedding model: {e}")
+                return None
+        return self._embedding_model
 
     def _init_db(self) -> None:
         """初始化SQLite数据库"""
@@ -109,6 +137,7 @@ class SkillIndex:
         Args:
             skill: Skill对象
         """
+        # 先写入SQLite FTS5（这是主要索引）
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
@@ -132,6 +161,20 @@ class SkillIndex:
         conn.commit()
         conn.close()
 
+        # 尝试写入ChromaDB向量（失败不影响主流程）
+        try:
+            if self.embedding_model is not None:
+                embedding = self.embedding_model.encode(skill.content).tolist()
+                vector_id = f"skill_{skill.name}"
+                metadata = {
+                    "name": skill.name,
+                    "description": skill.description,
+                    "tags": ",".join(skill.tags) if skill.tags else "",
+                }
+                self._vector_store.add_skill_vector(vector_id, embedding, metadata)
+        except Exception as e:
+            logger.warning(f"Failed to add skill vector to ChromaDB: {e}")
+
         # 清除LRU缓存
         self._clear_lru_cache()
 
@@ -144,6 +187,14 @@ class SkillIndex:
         Args:
             name: Skill名称
         """
+        # 从ChromaDB删除向量
+        vector_id = f"skill_{name}"
+        try:
+            self._vector_store.delete_skill_vector(vector_id)
+        except Exception as e:
+            logger.warning(f"Failed to delete skill vector from ChromaDB: {e}")
+
+        # 从SQLite FTS5删除
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
@@ -262,6 +313,108 @@ class SkillIndex:
 
         finally:
             conn.close()
+
+    def search_by_vector(
+        self,
+        query_embedding: list[float],
+        k: int = 5,
+        filter_metadata: Optional[dict[str, Any]] = None,
+    ) -> list[Skill]:
+        """基于向量相似度搜索Skill
+
+        Args:
+            query_embedding: 查询向量
+            k: 返回数量
+            filter_metadata: 元数据过滤条件
+
+        Returns:
+            匹配的Skill列表，按相似度排序
+        """
+        results = self._vector_store.search_skill_vectors(
+            query_embedding=query_embedding,
+            k=k,
+            filter_metadata=filter_metadata,
+        )
+
+        skills = []
+        for result in results:
+            # 从SQLite FTS5获取完整Skill信息
+            skill = self._get_skill_by_name(result["id"].replace("skill_", ""))
+            if skill:
+                skills.append(skill)
+
+        return skills
+
+    def _get_skill_by_name(self, name: str) -> Optional[Skill]:
+        """根据名称从FTS5获取Skill完整信息"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                "SELECT name, description, tags, content FROM skills WHERE name = ?",
+                (name,),
+            )
+            row = cursor.fetchone()
+
+            if row:
+                return Skill(
+                    name=row[0],
+                    description=row[1],
+                    content=row[3],
+                    tags=row[2].split(",") if row[2] else [],
+                )
+            return None
+        finally:
+            conn.close()
+
+    def hybrid_search(
+        self,
+        query: str,
+        k: int = 5,
+        alpha: float = 0.4,
+    ) -> list[Skill]:
+        """混合检索：FTS5 + 向量
+
+        Args:
+            query: 搜索query
+            k: 返回数量
+            alpha: FTS5权重 (0-1)，向量权重为 (1-alpha)
+
+        Returns:
+            混合排序后的Skill列表
+        """
+        # FTS5搜索
+        fts_results = self._do_search(query, k * 2)
+
+        # 如果embedding模型不可用，回退到纯FTS5
+        if self.embedding_model is None:
+            return fts_results[:k]
+
+        # 向量搜索
+        try:
+            query_embedding = self.embedding_model.encode(query).tolist()
+            vector_results = self.search_by_vector(query_embedding, k * 2)
+        except Exception as e:
+            logger.warning(f"Vector search failed, falling back to FTS5: {e}")
+            return fts_results[:k]
+
+        # 融合排序
+        fts_scores = {s.name: 1.0 / (i + 1) for i, s in enumerate(fts_results)}
+        vector_scores = {s.name: 1.0 / (i + 1) for i, s in enumerate(vector_results)}
+
+        all_skills = {s.name: s for s in fts_results + vector_results}
+
+        fused_scores = []
+        for name, skill in all_skills.items():
+            fts_s = fts_scores.get(name, 0)
+            vec_s = vector_scores.get(name, 0)
+            score = alpha * fts_s + (1 - alpha) * vec_s
+            fused_scores.append((score, name, skill))
+
+        fused_scores.sort(key=lambda x: x[0], reverse=True)
+
+        return [s[2] for s in fused_scores[:k]]
 
     @lru_cache(maxsize=MAX_LRU_CACHE)
     def search_cached(self, query: str, k: int = 5) -> tuple[str, ...]:
