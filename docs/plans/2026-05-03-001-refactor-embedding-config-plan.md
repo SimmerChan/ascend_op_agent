@@ -1,7 +1,7 @@
 ---
 title: refactor: 将 Embedding 模型和存储路径配置化
 type: refactor
-status: active
+status: completed
 date: 2026-05-03
 ---
 
