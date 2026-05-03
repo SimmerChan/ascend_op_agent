@@ -127,7 +127,7 @@ graph LR
 
 **Goal:** 创建 `src/ascend_op_agent/acp/` 目录结构和基础文件
 
-**Requirements:** R1
+**Requirements:** R1, R4
 
 **Dependencies:** None
 
@@ -151,7 +151,7 @@ graph LR
 - 适配器实例化成功
 
 **Verification:**
-- `python -c "from ascend_op_agent.acp import ACPAdapter"` 无错误
+- `python -c "from ascend_op_agent.acp import ACPAdapter; a = ACPAdapter()"` 无错误
 
 ---
 
@@ -164,7 +164,7 @@ graph LR
 **Dependencies:** Unit 1
 
 **Files:**
-- Create: `src/ascend_op_agent/acp/protocol.py`
+- Modify: `src/ascend_op_agent/acp/protocol.py`
 - Modify: `src/ascend_op_agent/acp/__init__.py`
 - Test: `tests/unit/acp/test_protocol.py`
 
@@ -172,6 +172,8 @@ graph LR
 - 扩展现有 JSON-RPC 协议以支持 ACP 方法
 - 实现 `initialize`、`agent.run`、`tools/list`、`tools/call` 等核心方法
 - 编辑器能力协商（capabilities handshake）
+- 方法名白名单验证，拒绝未知方法
+- 参数 schema 验证，防止畸形输入
 
 **Technical design:**
 ```python
@@ -201,7 +203,7 @@ class ACPProtocol:
 - `tools/call` 方法正确路由工具调用
 
 **Verification:**
-- 单元测试覆盖所有 ACP 方法
+- 单元测试覆盖全部 6 个 ACP 方法（initialize, agent.run, tools/list, tools/call, agent.compose, notifications/status）
 
 ---
 
@@ -221,6 +223,8 @@ class ACPProtocol:
 - Session 管理器跟踪每个编辑器连接的状态
 - 维护与 AIAgent 的会话上下文
 - 处理会话生命周期（创建、更新、销毁）
+- 会话超时默认 30 分钟，可配置
+- 超时后自动清理会话并释放资源
 
 **Patterns to follow:**
 - `src/ascend_op_agent/backend/rpc/agent_service.py` - Agent 封装模式
@@ -236,7 +240,7 @@ class ACPProtocol:
 
 ---
 
-- [ ] **Unit 4: 实现工具调用路由**
+- [ ] **Unit 4: 实现工具调用路由 (R3)**
 
 **Goal:** 将编辑器工具调用路由到 Agent 工具系统
 
