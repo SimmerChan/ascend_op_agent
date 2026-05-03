@@ -208,14 +208,75 @@ def skill(ctx: click.Context, action: str, repo_url: Optional[str]) -> None:
 
     elif action == "install":
         if not repo_url:
-            console.print("[red]错误: 需要提供仓库 URL[/red]")
-            console.print("用法: ascend-op-agent skill install <repo_url>")
-            return
+            # 无 URL 时，检查是否有已配置的仓库
+            if not config.skill_repositories:
+                console.print("[red]错误: 需要提供仓库 URL[/red]")
+                console.print("请先添加仓库: ascend-op-agent skill add <repo_url>")
+                console.print("或直接指定仓库 URL 安装")
+                console.print("用法: ascend-op-agent skill install <repo_url>")
+                return
+            else:
+                # 有已配置仓库，提示用户选择
+                console.print("[bold]已配置的仓库:[/bold]")
+                for i, repo in enumerate(config.skill_repositories, 1):
+                    console.print(f"  [{i}] {repo.name} ({repo.url})")
+                console.print()
+                selected = input("请输入仓库编号或 URL: ").strip()
+                if not selected:
+                    console.print("[yellow]取消安装[/yellow]")
+                    return
+                # 尝试解析为编号
+                if selected.isdigit() and 1 <= int(selected) <= len(config.skill_repositories):
+                    repo_url = config.skill_repositories[int(selected) - 1].url
+                else:
+                    repo_url = selected  # 用户可能直接输入了 URL
 
         console.print(f"[bold]正在获取仓库中的 Skills...[/bold] {repo_url}")
 
-        # TODO: 实现 SkillRepositoryDiscovery.fetch_skill_list()
-        console.print("[dim]Skill 安装功能即将到来...[/dim]")
+        try:
+            from ascend_op_agent.skills.repository import SkillRepositoryDiscovery
+            from ascend_op_agent.skills.interactive import InteractiveSelector
+            from ascend_op_agent.skills.installer import SkillInstaller
+            from ascend_op_agent.skills.index import SkillIndex
+            from ascend_op_agent.skills.storage import SkillStorage
+
+            discovery = SkillRepositoryDiscovery()
+            repo_path = discovery.clone_or_update(repo_url)
+            skills = discovery.fetch_skill_list(repo_url)
+
+            if not skills:
+                console.print("[yellow]仓库中未找到任何 Skill[/yellow]")
+                return
+
+            console.print(f"\n[bold]找到 {len(skills)} 个 Skill，请选择要安装的:[/bold]")
+            selector = InteractiveSelector(skills, title="选择要安装的 Skills")
+            selected_indices = selector.select()
+
+            if selected_indices is None:
+                console.print("[yellow]取消安装[/yellow]")
+                return
+
+            if not selected_indices:
+                console.print("[yellow]未选择任何 Skill[/yellow]")
+                return
+
+            selected_skills = [skills[i] for i in selected_indices]
+
+            # 安装选中的 skills
+            installer = SkillInstaller(storage=SkillStorage())
+            index = SkillIndex()
+            results = installer.install_skills(selected_skills, repo_path, index)
+
+            # 打印结果
+            console.print("\n[bold]安装结果:[/bold]")
+            success_count = sum(1 for v in results.values() if v)
+            for name, success in results.items():
+                status = "[green]✓[/green]" if success else "[red]✗[/red]"
+                console.print(f"  {status} {name}")
+            console.print(f"\n成功安装 {success_count}/{len(results)} 个 Skill")
+
+        except Exception as e:
+            console.print(f"[red]安装失败: {e}[/red]")
 
     elif action == "remove":
         if not repo_url:

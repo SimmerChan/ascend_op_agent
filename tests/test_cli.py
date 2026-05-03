@@ -152,6 +152,43 @@ class TestSkillCommand:
         finally:
             os.unlink(config_path)
 
+    def test_skill_install_no_url_no_repos(self):
+        """测试 install 无 URL 且无已配置仓库时报错"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump({"skill_repositories": []}, f)
+            config_path = f.name
+
+        try:
+            runner = CliRunner()
+            result = runner.invoke(main, ["-c", config_path, "skill", "install"])
+            assert result.exit_code == 0
+            assert "需要提供仓库 URL" in result.output
+            assert "请先添加仓库" in result.output
+        finally:
+            os.unlink(config_path)
+
+    def test_skill_install_no_url_with_repos(self):
+        """测试 install 无 URL 但有已配置仓库时显示仓库列表"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.dump(
+                {
+                    "skill_repositories": [
+                        {"name": "test-repo", "url": "https://gitcode.com/test/repo"}
+                    ]
+                },
+                f,
+            )
+            config_path = f.name
+
+        try:
+            runner = CliRunner()
+            result = runner.invoke(main, ["-c", config_path, "skill", "install"], input="\n")
+            assert result.exit_code == 0
+            assert "test-repo" in result.output
+            assert "取消安装" in result.output
+        finally:
+            os.unlink(config_path)
+
 
 class TestMCPCommand:
     """mcp 命令测试"""

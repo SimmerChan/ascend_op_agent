@@ -61,7 +61,7 @@
 
 ## Implementation Units
 
-- [ ] **Unit 1: 补全 CLI install 命令**
+- [x] **Unit 1: 补全 CLI install 命令**
 
 **Goal:** 实现 `skill install` 命令主体逻辑
 
@@ -99,7 +99,7 @@
 
 ---
 
-- [ ] **Unit 2: 实现 Skill 安装逻辑**
+- [x] **Unit 2: 实现 Skill 安装逻辑**
 
 **Goal:** 将远程 Skill 复制到本地并重建索引
 
@@ -177,7 +177,7 @@ class SkillInstaller:
 
 ---
 
-- [ ] **Unit 3: 集成测试**
+- [x] **Unit 3: 集成测试**
 
 **Goal:** 验证完整安装流程
 
