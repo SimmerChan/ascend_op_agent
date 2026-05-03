@@ -123,7 +123,7 @@ graph LR
 
 ## Implementation Units
 
-- [ ] **Unit 1: 创建 ACP 适配器模块结构**
+- [x] **Unit 1: 创建 ACP 适配器模块结构**
 
 **Goal:** 创建 `src/ascend_op_agent/acp/` 目录结构和基础文件
 
@@ -155,7 +155,7 @@ graph LR
 
 ---
 
-- [ ] **Unit 2: 实现 ACP 协议处理器**
+- [x] **Unit 2: 实现 ACP 协议处理器**
 
 **Goal:** 实现 ACP 协议解析和消息路由
 
@@ -207,7 +207,7 @@ class ACPProtocol:
 
 ---
 
-- [ ] **Unit 3: 实现会话管理器**
+- [x] **Unit 3: 实现会话管理器**
 
 **Goal:** 管理 ACP 会话状态，包括编辑器会话和 Agent 上下文
 
@@ -271,7 +271,7 @@ class ACPProtocol:
 
 ---
 
-- [ ] **Unit 5: CLI 命令集成**
+- [x] **Unit 5: CLI 命令集成**
 
 **Goal:** 添加 `ascend-op-agent acp` 命令启动 ACP 服务
 

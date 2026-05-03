@@ -346,6 +346,55 @@ def mcp(ctx: click.Context, action: str, server_name: Optional[str]) -> None:
 
 
 @main.command()
+@click.pass_context
+def acp(ctx: click.Context) -> None:
+    """ACP 编辑器集成模式
+
+    通过 stdio 与编辑器（如 VS Code、Zed、JetBrains）通信，
+    使 Ascend Op Agent 可以作为编辑器的 AI 后端运行。
+
+    EXAMPLES:
+        ascend-op-agent acp
+    """
+    import asyncio
+
+    from ascend_op_agent.acp.adapter import ACPAdapter
+    from ascend_op_agent.agent.core import AIAgent
+    from ascend_op_agent.agent.context import ContextEngine
+    from ascend_op_agent.agent.memory import MemoryStore
+    from ascend_op_agent.agent.prompt_builder import PromptBuilder
+    from ascend_op_agent.agent.tool_registry import ToolRegistry
+    from ascend_op_agent.config import Config
+
+    config: Config = ctx.obj["config"]
+
+    # 初始化 Agent 组件
+    tool_registry = ToolRegistry()
+    prompt_builder = PromptBuilder()
+    context_engine = ContextEngine()
+    memory_store = MemoryStore()
+
+    agent = AIAgent(
+        config=config,
+        tool_registry=tool_registry,
+        prompt_builder=prompt_builder,
+        context_engine=context_engine,
+        memory_store=memory_store,
+    )
+
+    # 创建 ACP 适配器
+    adapter = ACPAdapter(
+        agent_runner=agent.run_conversation,
+        tool_registry=tool_registry,
+        session_timeout=30 * 60,  # 30 分钟
+    )
+
+    # 运行 ACP 适配器
+    console.print("[bold green]ACP 模式已启动，等待编辑器连接...[/bold green]")
+    asyncio.run(adapter.run())
+
+
+@main.command()
 @click.argument("direction", type=click.Choice(["push", "pull"]))
 @click.option("--files", "-f", multiple=True, help="指定要同步的文件或目录")
 @click.pass_context
