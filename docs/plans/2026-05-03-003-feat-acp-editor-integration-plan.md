@@ -240,7 +240,7 @@ class ACPProtocol:
 
 ---
 
-- [ ] **Unit 4: 实现工具调用路由 (R3)**
+- [x] **Unit 4: 实现工具调用路由 (R3)**
 
 **Goal:** 将编辑器工具调用路由到 Agent 工具系统
 
@@ -301,7 +301,7 @@ class ACPProtocol:
 
 ---
 
-- [ ] **Unit 6: 集成测试**
+- [x] **Unit 6: 集成测试**
 
 **Goal:** 创建完整的 ACP 适配器集成测试
 
