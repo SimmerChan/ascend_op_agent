@@ -152,7 +152,8 @@ def run(ctx: click.Context, local: bool) -> None:
     # 启动 Node.js 前端
     try:
         subprocess.run(
-            ["node", str(dist_path / "index.js")],
+            ["node", "dist/index.js"],
+            cwd=frontend_path,  # 从 frontend 目录运行
             env=env,
         )
     except Exception as e:
