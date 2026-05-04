@@ -20,13 +20,52 @@
 pip install -e .
 ```
 
+## 配置
+
+Ascend Op Agent 使用双文件配置架构：
+
+| 文件 | 用途 | 版本控制 |
+|------|------|----------|
+| `config.yaml` | 行为配置（LLM模型、MCP服务器等） | ✅ 可提交 |
+| `~/.ascend_op_agent/.env` | 敏感凭据（API密钥、Token等） | ❌ 不提交 |
+
+### 初始化配置
+
+```bash
+# 1. 复制配置文件
+mkdir -p ~/.ascend_op_agent
+cp config.yaml.example ~/.ascend_op_agent/config.yaml
+
+# 2. 创建环境变量文件
+cp .env.example ~/.ascend_op_agent/.env
+chmod 600 ~/.ascend_op_agent/.env  # 设置受限权限
+
+# 3. 编辑 .env 填入你的 API 密钥
+vim ~/.ascend_op_agent/.env
+```
+
+### 环境变量语法
+
+配置文件中支持两种环境变量引用语法：
+
+```yaml
+# ${VAR} - 环境变量不存在时替换为空
+api_key: "${OPENAI_API_KEY}"
+
+# ${VAR:-default} - 环境变量不存在时使用默认值
+model: "${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v3}"
+```
+
+### 配置加载优先级
+
+1. `.env` 文件中的值（最高优先级）
+2. `config.yaml` 中的环境变量引用
+3. `${VAR:-default}` 中的默认值（最低优先级）
+
 ## 快速开始
 
 ```bash
-# 初始化配置
-cp config.yaml.example config.yaml
-
-# 运行Agent
+# 运行Agent（确保已配置 .env 文件）
 ascend-op-agent run --mode local
 ```
 

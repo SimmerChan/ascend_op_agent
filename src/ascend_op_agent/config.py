@@ -14,7 +14,8 @@
 
 """配置管理模块
 
-支持 ${ENV_VAR} 格式的环境变量引用解析。
+支持 ${ENV_VAR} 和 ${ENV_VAR:-default} 格式的环境变量引用解析。
+采用双文件架构：config.yaml（行为配置）+ .env（敏感凭据）。
 """
 
 import os
@@ -23,17 +24,26 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 import yaml
-from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class LLMConfig(BaseModel):
     """LLM 配置"""
     provider: str = "openai"
     api_base: str = "https://api.openai.com/v1"
-    api_key: str = ""
+    api_key: str = Field(default="", description="API密钥（敏感）")
     model: str = "gpt-4o"
     max_retries: int = 3
     timeout: int = 120
+
+    @field_validator("provider")
+    @classmethod
+    def validate_provider(cls, v: str) -> str:
+        """验证 LLM provider"""
+        if not v or not v.strip():
+            raise ValueError("LLM provider 不能为空")
+        return v.strip().lower()
 
 
 class MCPServerConfig(BaseModel):
@@ -65,7 +75,7 @@ class RemoteConfig(BaseModel):
     user: str
     port: int = 22
     key_path: Optional[str] = None
-    password: Optional[str] = None
+    password: Optional[str] = None  # 敏感字段
     image_name: Optional[str] = None  # 可选，无此配置则在宿主机环境
     container_name: Optional[str] = None  # 可选，无此配置则自动创建容器
 
@@ -105,6 +115,15 @@ class LoggingConfig(BaseModel):
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     file: Optional[str] = None
 
+    @field_validator("level")
+    @classmethod
+    def validate_level(cls, v: str) -> str:
+        """验证日志级别"""
+        valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if v.upper() not in valid_levels:
+            raise ValueError(f"无效的日志级别: {v}，支持的选项: {valid_levels}")
+        return v.upper()
+
 
 class Config(BaseModel):
     """主配置类"""
@@ -119,7 +138,18 @@ class Config(BaseModel):
 
     @classmethod
     def from_file(cls, path: Union[str, Path]) -> "Config":
-        """从文件加载配置"""
+        """从文件加载配置
+
+        Args:
+            path: 配置文件路径
+
+        Returns:
+            Config 对象
+
+        Raises:
+            FileNotFoundError: 配置文件不存在
+            ValueError: 配置文件格式错误
+        """
         path = Path(path).expanduser()
         if not path.exists():
             raise FileNotFoundError(f"配置文件不存在: {path}")
@@ -134,14 +164,40 @@ class Config(BaseModel):
 
     @classmethod
     def _resolve_env_vars(cls, obj: Any) -> Any:
-        """递归解析配置中的 ${ENV_VAR} 引用"""
+        """递归解析配置中的 ${ENV_VAR} 和 ${ENV_VAR:-default} 引用
+
+        解析顺序（优先级从高到低）：
+        1. .env 文件中的值（通过 load_dotenv 加载到环境变量）
+        2. 系统环境变量
+        3. 默认值（${VAR:-default} 中的 default 部分）
+
+        解析规则：
+        - ${VAR} - 环境变量不存在时替换为空字符串
+        - ${VAR:-default} - 环境变量不存在时使用 default 作为默认值
+        """
         if isinstance(obj, str):
-            # 匹配 ${ENV_VAR} 格式
-            pattern = r"\$\{([^}]+)\}"
+            # 匹配 ${ENV_VAR} 或 ${ENV_VAR:-default} 格式
+            # 支持 ${VAR:-default} 默认值语法
+            pattern = r"\$\{([^}:-]+)(?::-([^}]*))?\}"
             matches = re.findall(pattern, obj)
-            for env_var in matches:
-                env_value = os.getenv(env_var, "")
-                obj = obj.replace(f"${{{env_var}}}", env_value)
+
+            for env_var, default_value in matches:
+                env_value = os.getenv(env_var)
+
+                if env_value:
+                    # 环境变量存在，使用其值
+                    # 替换两种形式：${VAR} 和 ${VAR:-default}
+                    obj = obj.replace(f"${{{env_var}}}", env_value)
+                    obj = obj.replace(f"${{{env_var}:-{default_value}}}", env_value)
+                elif default_value:
+                    # 环境变量不存在，但有默认值（${VAR:-default} 形式）
+                    # 只替换 ${VAR:-default} 形式
+                    obj = obj.replace(f"${{{env_var}:-{default_value}}}", default_value)
+                else:
+                    # 环境变量不存在且无默认值（${VAR} 形式）
+                    # 只替换 ${VAR} 形式，${VAR:-default} 保持不变
+                    obj = obj.replace(f"${{{env_var}}}", "")
+
             return obj
         elif isinstance(obj, dict):
             return {k: cls._resolve_env_vars(v) for k, v in obj.items()}
@@ -163,8 +219,24 @@ class Config(BaseModel):
             yaml.dump(self.model_dump(), f, default_flow_style=False, allow_unicode=True)
 
 
+def _load_env_file() -> None:
+    """加载 .env 文件到环境变量
+
+    .env 文件路径: ~/.ascend_op_agent/.env
+    如果文件不存在，静默忽略。
+    """
+    env_path = Path("~/.ascend_op_agent/.env").expanduser()
+    if env_path.exists():
+        load_dotenv(env_path)
+
+
 def load_config(config_path: Optional[Union[str, Path]] = None) -> Config:
     """加载配置的便捷函数
+
+    加载顺序：
+    1. 加载 ~/.ascend_op_agent/.env 文件到环境变量（自动进行）
+    2. 解析 config.yaml（支持 ${ENV_VAR} 和 ${ENV_VAR:-default} 语法）
+    3. 环境变量值覆盖 YAML 中的引用
 
     Args:
         config_path: 配置文件路径，默认为 ~/.ascend_op_agent/config.yaml
@@ -172,6 +244,9 @@ def load_config(config_path: Optional[Union[str, Path]] = None) -> Config:
     Returns:
         Config 对象
     """
+    # 自动加载 .env 文件
+    _load_env_file()
+
     if config_path is None:
         config_path = Config.default_config_path()
     else:

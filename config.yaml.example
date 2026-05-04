@@ -1,5 +1,8 @@
 # Ascend Op Agent 配置文件示例
 # 复制此文件为 config.yaml 并填入实际值
+#
+# 重要: 敏感凭据（如 API keys、tokens、passwords）应放在 ~/.ascend_op_agent/.env 文件中
+# 支持 ${ENV_VAR} 和 ${ENV_VAR:-default} 环境变量引用语法
 
 # ============================================================
 # LLM 配置
@@ -7,9 +10,9 @@
 llm:
   # LLM 提供商: openai / anthropic / local
   provider: "openai"
-  # API 地址，支持 ${ENV_VAR} 环境变量引用
+  # API 地址
   api_base: "https://api.openai.com/v1"
-  # API 密钥，使用环境变量引用
+  # API 密钥（敏感）: 在 .env 文件中设置 OPENAI_API_KEY
   api_key: "${OPENAI_API_KEY}"
   # 模型名称
   model: "gpt-4o"
@@ -33,7 +36,8 @@ mcp:
     - name: "github"
       type: "http"
       url: "https://api.github.com/mcp"
-      token: "${GITHUB_TOKEN}"  # 环境变量引用
+      # Token（敏感）: 在 .env 文件中设置 GITHUB_TOKEN
+      token: "${GITHUB_TOKEN}"
 
     # streamable-http 模式 MCP 服务器
     - name: "custom"
@@ -60,7 +64,7 @@ remote:
   user: "root"
   port: 22
   key_path: "~/.ssh/id_rsa"
-  password: "${SSH_PASSWORD}"  # 环境变量引用
+  # Password（敏感）: 在 .env 文件中设置 SSH_PASSWORD
 
   # 镜像/容器配置（可选）
   # - 无镜像无容器: 在宿主机环境开发
@@ -83,6 +87,7 @@ local:
 # ============================================================
 embedding:
   # Embedding 模型名称，支持 sentence-transformers 系列模型
+  # 支持 ${ENV_VAR:-default} 默认值语法
   model: "${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v3}"
 
 # ============================================================
@@ -90,4 +95,5 @@ embedding:
 # ============================================================
 vector_store:
   # ChromaDB 持久化目录
+  # 支持 ${ENV_VAR:-default} 默认值语法
   persist_dir: "${VECTOR_STORE_DIR:-~/.ascend_op_agent/vector_db}"
