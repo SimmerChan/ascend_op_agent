@@ -14,15 +14,19 @@
 4. **无优先级机制**: `.env` 文件不能覆盖 YAML 配置，用户无法便捷地临时覆盖配置
 5. **缺乏配置验证**: 配置加载时无 schema 验证
 
+**设计约束**:
+- **C1**: 保持向后兼容，现有 `${ENV_VAR}` 用法不变
+- **C2**: `.env` 文件加载对现有调用透明，自动进行
+
 ## Requirements Trace
 
 - R1. 实现双文件架构：`config.yaml`（行为配置）+ `.env`（敏感凭据）
 - R2. 创建 `.env.example` 模板，列出所有支持的敏感配置项
 - R3. 支持 `${ENV_VAR:-default}` 格式的默认值
 - R4. `.env` 中的值优先级高于 `config.yaml`
-- R5. 保持向后兼容：现有 `${ENV_VAR}` 用法不变
+- R5. 保持向后兼容：现有 `${ENV_VAR}` 用法不变 ← C1
 - R6. 添加配置验证机制
-- R7. 配置加载时自动读取 `.env` 文件
+- R7. 配置加载时自动读取 `.env` 文件 ← C2
 
 ## Scope Boundaries
 
@@ -31,6 +35,8 @@
 - 新增 `.env.example` 模板文件
 - 更新 `config.yaml.example` 行为配置示例
 - 配置验证逻辑
+- 扩展 `tests/test_config.py` 覆盖新功能
+- 更新 README.md 说明新配置架构
 
 **不包含**:
 - 安全凭据的加密存储（future work）
@@ -72,7 +78,7 @@
 
 ```mermaid
 graph LR
-    A[config.yaml] -->|YAML 行为配置| C[Config.from_file]
+    A[config.yaml] -->|YAML 行为配置| C["Modified:\nConfig.from_file"]
     B[.env] -->|敏感凭据| C
     C --> D{解析 env refs}
     D -->|${VAR:-default}| E[默认值]
@@ -82,9 +88,9 @@ graph LR
 ```
 
 **配置加载优先级** (高到低):
-1. `.env` 文件中的值
-2. `config.yaml` 中的 `${ENV_VAR}` 引用 → 系统环境变量
-3. `${ENV_VAR:-default}` 的默认值
+1. `.env` 文件中的值（优先级最高）
+2. `config.yaml` 中的 `${ENV_VAR}` 引用（查找 `.env` 或系统环境变量）
+3. `${ENV_VAR:-default}` 的默认值（最低优先级）
 
 ## Implementation Units
 
@@ -124,17 +130,18 @@ graph LR
 
 **Goal:** 实现双文件架构，支持 `.env` 加载和 `${ENV_VAR:-default}` 语法
 
-**Dependencies:** Unit 1
+**Dependencies:** None（可独立于 Unit 1、Unit 2 并行开发）
 
 **Files:**
 - Modify: `src/ascend_op_agent/config.py`
-- Create: `src/ascend_op_agent/_dotenv.py` (`.env` 解析器)
 
 **Approach:**
-1. 创建 `_DotenvLoader` 类处理 `.env` 加载
+1. 使用 `python-dotenv` 库的 `load_dotenv()` 函数加载 `.env` 文件到环境变量
 2. 扩展 `_resolve_env_vars()` 支持 `${VAR:-default}` 语法
+   - 正则表达式从 `\$\{([^}]+)\}` 改为 `\$\{([^}:-]+)(?::-([^}]*))?\}` 以支持 `:-` 默认值语法
 3. 实现 `.env` 值覆盖 `config.yaml` 的优先级机制
 4. 添加配置验证装饰器
+5. 在 `config.py` 顶部添加: `from dotenv import load_dotenv`
 
 **Patterns to follow:**
 - Hermes Agent `_load_env()` 模式
@@ -147,6 +154,9 @@ graph LR
 - `.env` 值覆盖 YAML 配置
 - 缺失 `.env` 不影响加载
 
+**Verification:**
+- Unit 3 的所有 Test scenarios 验证通过即视为完成
+
 ---
 
 - [ ] **Unit 4: 更新 `load_config()` 函数**
@@ -154,6 +164,9 @@ graph LR
 **Goal:** 在 `load_config()` 中集成 `.env` 加载逻辑
 
 **Dependencies:** Unit 3
+
+**新增依赖:**
+- `python-dotenv` 库（需添加到 `pyproject.toml` 或 `requirements.txt`）
 
 **Files:**
 - Modify: `src/ascend_op_agent/config.py`
@@ -164,8 +177,7 @@ graph LR
 - 使用 `python-dotenv` 库解析 `.env` 文件
 
 **Verification:**
-- `load_config()` 在无 `.env` 时正常返回默认配置
-- `load_config()` 在有 `.env` 时优先使用 `.env` 中的值
+- `load_config()` 在有 `.env` 时正确解析并优先使用其中的值
 
 ---
 
@@ -177,7 +189,7 @@ graph LR
 
 **Files:**
 - Modify: `src/ascend_op_agent/config.py`
-- Create: `tests/unit/test_config_validation.py`
+- Create: `tests/test_config_validation.py`（与现有 `tests/test_config.py` 保持同一目录结构）
 
 **Approach:**
 - 为 `api_key`、`password` 等敏感字段添加 `Field` 验证
@@ -185,7 +197,7 @@ graph LR
 - 提供有意义的错误信息
 
 **Test scenarios:**
-- `api_key` 为空时警告但不阻止
+- `api_key` 为空时抛出 `ValidationError`
 - `provider` 为非法值时抛出验证错误
 - 嵌套配置验证正常工作
 
@@ -250,8 +262,10 @@ graph LR
 ## Documentation / Operational Notes
 
 1. 用户需要创建 `~/.ascend_op_agent/.env` 文件
-2. `config.yaml` 中的敏感信息占位符应更新为 `${ENV_VAR}` 引用
-3. 升级路径：现有用户可继续使用 `${ENV_VAR}` 语法，新架构自动加载 `.env`
+2. 创建 `.env` 文件后需设置受限权限: `chmod 600 ~/.ascend_op_agent/.env`，防止其他本地用户读取敏感凭据
+3. 将 `~/.ascend_op_agent/.env` 添加到项目 `.gitignore` 文件，防止意外提交
+4. `config.yaml` 中的敏感信息占位符应更新为 `${ENV_VAR}` 引用
+5. 升级路径：现有用户可继续使用 `${ENV_VAR}` 语法，新架构自动加载 `.env`
 
 ## Sources & References
 
