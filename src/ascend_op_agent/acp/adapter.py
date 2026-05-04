@@ -54,8 +54,14 @@ class ACPAdapter:
         self._agent_runner = agent_runner
         self._tool_registry = tool_registry
         self._running = False
-        self._output_lock: asyncio.Lock = asyncio.Lock()
+        self._output_lock: Optional[asyncio.Lock] = None
         self._current_session: Optional[ACPSession] = None
+
+    def _ensure_lock(self) -> asyncio.Lock:
+        """确保 output lock 已初始化"""
+        if self._output_lock is None:
+            self._output_lock = asyncio.Lock()
+        return self._output_lock
 
     async def send_notification(self, method: str, params: Optional[dict[str, Any]] = None) -> None:
         """发送通知到编辑器
@@ -67,7 +73,7 @@ class ACPAdapter:
         if not self._running:
             return
         message = self._protocol.build_notification(method, params)
-        async with self._output_lock:
+        async with self._ensure_lock():
             print(message, flush=True)
 
     async def handle_message(self, raw_message: str) -> None:
@@ -105,7 +111,7 @@ class ACPAdapter:
                 self._protocol._protocol.METHOD_NOT_FOUND_CODE,
                 f"Method not found: {method}"
             )
-            async with self._output_lock:
+            async with self._ensure_lock():
                 print(response, flush=True)
             return
 
@@ -116,7 +122,7 @@ class ACPAdapter:
                 self._protocol._protocol.INVALID_PARAMS_CODE,
                 f"Invalid params for method: {method}"
             )
-            async with self._output_lock:
+            async with self._ensure_lock():
                 print(response, flush=True)
             return
 
@@ -135,7 +141,7 @@ class ACPAdapter:
 
             if result is not None:
                 response = self._protocol.build_success_response(request.id, result)
-                async with self._output_lock:
+                async with self._ensure_lock():
                     print(response, flush=True)
         except Exception as e:
             logger.error(f"Error handling {method}: {e}")
@@ -144,7 +150,7 @@ class ACPAdapter:
                 self._protocol._protocol.INTERNAL_ERROR_CODE,
                 str(e)
             )
-            async with self._output_lock:
+            async with self._ensure_lock():
                 print(response, flush=True)
 
     async def _handle_initialize(self, params: Optional[dict[str, Any]], req_id: Any) -> dict[str, Any]:
