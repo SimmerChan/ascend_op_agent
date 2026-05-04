@@ -132,8 +132,8 @@ def run(ctx: click.Context, local: bool) -> None:
         console.print("请安装 Node.js: https://nodejs.org/")
         return
 
-    # 获取前端路径
-    frontend_path = Path(__file__).parent.parent / "frontend"
+    # 获取前端路径 (项目根目录下的 frontend)
+    frontend_path = Path(__file__).parent.parent.parent / "frontend"
     dist_path = frontend_path / "dist"
 
     # 检查前端是否已构建
