@@ -136,6 +136,9 @@ class Config(BaseModel):
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
+    # 配置文件路径（仅在从文件加载时设置）
+    config_path: Optional[Path] = Field(default=None, exclude=True)
+
     @classmethod
     def from_file(cls, path: Union[str, Path]) -> "Config":
         """从文件加载配置
@@ -160,7 +163,9 @@ class Config(BaseModel):
         # 解析环境变量引用
         resolved_config = cls._resolve_env_vars(raw_config)
 
-        return cls(**resolved_config)
+        config = cls(**resolved_config)
+        config.config_path = path
+        return config
 
     @classmethod
     def _resolve_env_vars(cls, obj: Any) -> Any:
@@ -254,6 +259,8 @@ def load_config(config_path: Optional[Union[str, Path]] = None) -> Config:
 
     if not config_path.exists():
         # 如果默认配置文件不存在，返回默认配置
-        return Config()
+        config = Config()
+        config.config_path = config_path
+        return config
 
     return Config.from_file(config_path)
