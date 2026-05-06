@@ -43,6 +43,7 @@ class AnthropicAdapter(BaseLLMAdapter):
     def __init__(self, config: Any):
         super().__init__(config)
         self.api_key = getattr(config, 'api_key', '')
+        self.api_base = getattr(config, 'api_base', None)
         self.model = getattr(config, 'model', 'claude-sonnet-4-6-20250514')
         self.max_retries = getattr(config, 'max_retries', 3)
         self.timeout = getattr(config, 'timeout', 120)
@@ -58,7 +59,10 @@ class AnthropicAdapter(BaseLLMAdapter):
     def _get_client(self):
         """Get or create Anthropic client"""
         if self._client is None:
-            self._client = anthropic.Anthropic(api_key=self.api_key, timeout=self.timeout)
+            client_kwargs = {"api_key": self.api_key, "timeout": self.timeout}
+            if self.api_base:
+                client_kwargs["base_url"] = self.api_base
+            self._client = anthropic.Anthropic(**client_kwargs)
         return self._client
 
     def complete(
@@ -96,7 +100,10 @@ class AnthropicAdapter(BaseLLMAdapter):
                     system=system_prompt,
                     messages=messages,
                 )
-                return response.content[0].text
+                for block in response.content:
+                    if block.type == "text":
+                        return block.text
+                raise Exception("No text block in response")
 
             except anthropic.RateLimitError:
                 wait_time = (attempt + 1) * 2
