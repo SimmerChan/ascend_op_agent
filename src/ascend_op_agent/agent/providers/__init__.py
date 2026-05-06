@@ -17,5 +17,17 @@
 from ascend_op_agent.agent.providers.base import BaseLLMAdapter
 from ascend_op_agent.agent.providers.openai_adapter import OpenAIAdapter
 from ascend_op_agent.agent.providers.anthropic_adapter import AnthropicAdapter
+from ascend_op_agent.agent.providers.gemini_adapter import GeminiAdapter
+from ascend_op_agent.agent.providers.openrouter_adapter import OpenRouterAdapter
+from ascend_op_agent.agent.providers.azure_adapter import AzureOpenAIAdapter
+from ascend_op_agent.agent.providers.ollama_adapter import OllamaAdapter
 
-__all__ = ["BaseLLMAdapter", "OpenAIAdapter", "AnthropicAdapter"]
+__all__ = [
+    "BaseLLMAdapter",
+    "OpenAIAdapter",
+    "AnthropicAdapter",
+    "GeminiAdapter",
+    "OpenRouterAdapter",
+    "AzureOpenAIAdapter",
+    "OllamaAdapter",
+]

@@ -27,6 +27,10 @@ from ascend_op_agent.agent.prompt_builder import PromptBuilder
 from ascend_op_agent.agent.providers import (
     OpenAIAdapter,
     AnthropicAdapter,
+    GeminiAdapter,
+    OpenRouterAdapter,
+    AzureOpenAIAdapter,
+    OllamaAdapter,
     BaseLLMAdapter,
 )
 from ascend_op_agent.agent.tool_registry import ToolRegistry
@@ -175,6 +179,10 @@ class LLMClient:
     _ADAPTERS = {
         "openai": OpenAIAdapter,
         "anthropic": AnthropicAdapter,
+        "gemini": GeminiAdapter,
+        "openrouter": OpenRouterAdapter,
+        "azure": AzureOpenAIAdapter,
+        "ollama": OllamaAdapter,
     }
 
     def __init__(self, llm_config):
