@@ -109,6 +109,27 @@ llm:
 
 Anthropic API 使用 `api_base: "https://api.anthropic.com"`，默认已配置，无需修改。
 
+### Anthropic API 兼容格式（第三方网关）
+
+如果你使用兼容 Anthropic API 格式的第三方服务（如 Cloudflare AI Gateway、Novita AI、Replicate 等），可以使用 `api_base` 配置：
+
+```yaml
+llm:
+  provider: "anthropic"
+  api_key: "your-third-party-api-key"
+  api_base: "https://api.anthropic.com/v1"  # 第三方服务的 Anthropic 兼容端点
+  model: "claude-sonnet-4-6-20250514"
+  max_retries: 3
+  timeout: 120
+```
+
+### 获取 Anthropic API Key
+
+1. 访问 [console.anthropic.com](https://console.anthropic.com)
+2. 注册账户（Claude 提供免费额度）
+3. 在 API Keys 页面创建密钥
+4. 格式：`sk-ant-...`
+
 ## Google Gemini Provider
 
 ### 完整配置项
