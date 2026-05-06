@@ -26,6 +26,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -328,8 +329,30 @@ def mcp(ctx: click.Context, action: str, server_name: Optional[str]) -> None:
             return
 
         console.print(f"[bold]启动 MCP 服务器:[/bold] {server_name}")
-        # TODO: 实现 MCPLifecycleManager.start_server()
-        console.print("[dim]MCP 服务器启动功能即将到来...[/dim]")
+
+        from ascend_op_agent.mcp.lifecycle import MCPLifecycleManager
+
+        # Find the server config
+        server_config = None
+        for srv in config.mcp.servers:
+            if srv.name == server_name:
+                server_config = srv
+                break
+
+        if not server_config:
+            console.print(f"[red]错误: 未找到服务器 '{server_name}'[/red]")
+            console.print("使用 'ascend-op-agent mcp list' 查看已配置的服务器")
+            return
+
+        try:
+            manager = MCPLifecycleManager()
+            success = manager.start_server(server_config)
+            if success:
+                console.print(f"[green]✓[/green] 服务器 '{server_name}' 已启动")
+            else:
+                console.print(f"[red]✗[/red] 服务器 '{server_name}' 启动失败")
+        except Exception as e:
+            console.print(f"[red]启动失败: {e}[/red]")
 
     elif action == "stop":
         if not server_name:
@@ -337,13 +360,39 @@ def mcp(ctx: click.Context, action: str, server_name: Optional[str]) -> None:
             return
 
         console.print(f"[bold]停止 MCP 服务器:[/bold] {server_name}")
-        # TODO: 实现 MCPLifecycleManager.stop_server()
-        console.print("[dim]MCP 服务器停止功能即将到来...[/dim]")
+
+        from ascend_op_agent.mcp.lifecycle import MCPLifecycleManager
+
+        try:
+            manager = MCPLifecycleManager()
+            manager.stop_server(server_name)
+            console.print(f"[green]✓[/green] 服务器 '{server_name}' 已停止")
+        except Exception as e:
+            console.print(f"[red]停止失败: {e}[/red]")
 
     elif action == "status":
         console.print("[bold]MCP 服务器状态:[/bold]")
-        # TODO: 实现状态检查
-        console.print("[dim]MCP 服务器状态功能即将到来...[/dim]")
+
+        from ascend_op_agent.mcp.lifecycle import MCPLifecycleManager
+        from rich.table import Table
+
+        table = Table(show_header=True)
+        table.add_column("名称")
+        table.add_column("状态")
+        table.add_column("最后检查")
+
+        manager = MCPLifecycleManager()
+
+        if not config.mcp.servers:
+            console.print("  [dim]暂无配置的服务器[/dim]")
+        else:
+            for server in config.mcp.servers:
+                status = manager.get_server_status(server.name)
+                running = "运行中" if status["running"] else "已停止"
+                last_check = time.strftime("%H:%M:%S", time.localtime(status["last_check"])) if status["last_check"] > 0 else "N/A"
+                table.add_row(server.name, running, last_check)
+
+            console.print(table)
 
 
 @main.command()
@@ -419,13 +468,100 @@ def sync(ctx: click.Context, direction: str, files: tuple[str, ...]) -> None:
 
     if direction == "push":
         console.print("[bold]同步本地文件到远程...[/bold]")
-        # TODO: 实现 SSHManager.sync_files()
-        console.print("[dim]文件同步功能即将到来...[/dim]")
+
+        if not files:
+            console.print("[red]错误: 需要指定要同步的文件或目录[/red]")
+            console.print("用法: ascend-op-agent sync push -f <file_or_dir>")
+            return
+
+        try:
+            from ascend_op_agent.ssh.manager import SSHEnvironment
+            from ascend_op_agent.ssh.sync import FileSync, SyncDirection
+
+            remote_config = config.remote
+            ssh_env = SSHEnvironment(
+                host=remote_config.host,
+                user=remote_config.user,
+                port=remote_config.port,
+                key_path=remote_config.key_path,
+                password=remote_config.password,
+            )
+
+            ssh_env.connect()
+
+            # 创建 FileSync 实例
+            def get_files():
+                return [(f, f"/tmp/{Path(f).name}") for f in files]
+
+            file_sync = FileSync(ssh_env, default_remote_path="/tmp")
+
+            # 执行同步
+            for local_path in files:
+                if not Path(local_path).exists():
+                    console.print(f"[red]错误: 文件不存在: {local_path}[/red]")
+                    continue
+
+                result = file_sync.sync(
+                    local_path=local_path,
+                    remote_path=f"/tmp/{Path(local_path).name}",
+                    direction=SyncDirection.PUSH,
+                )
+
+                if result.success:
+                    console.print(f"[green]✓[/green] 已同步: {local_path}")
+                    console.print(f"  文件数: {result.files_synced}")
+                else:
+                    console.print(f"[red]✗[/red] 同步失败: {result.message}")
+
+            ssh_env.cleanup()
+
+        except Exception as e:
+            console.print(f"[red]同步失败: {e}[/red]")
 
     elif direction == "pull":
         console.print("[bold]从远程同步文件到本地...[/bold]")
-        # TODO: 实现 SSHManager.sync_files()
-        console.print("[dim]文件同步功能即将到来...[/dim]")
+
+        if not files:
+            console.print("[red]错误: 需要指定要同步的文件或目录[/red]")
+            console.print("用法: ascend-op-agent sync pull -f <file_or_dir>")
+            return
+
+        try:
+            from ascend_op_agent.ssh.manager import SSHEnvironment
+            from ascend_op_agent.ssh.sync import FileSync, SyncDirection
+
+            remote_config = config.remote
+            ssh_env = SSHEnvironment(
+                host=remote_config.host,
+                user=remote_config.user,
+                port=remote_config.port,
+                key_path=remote_config.key_path,
+                password=remote_config.password,
+            )
+
+            ssh_env.connect()
+
+            file_sync = FileSync(ssh_env, default_remote_path="/tmp")
+
+            for remote_path in files:
+                local_name = Path(remote_path).name
+                local_path = str(Path.cwd() / local_name)
+
+                result = file_sync.sync(
+                    local_path=local_path,
+                    remote_path=remote_path,
+                    direction=SyncDirection.PULL,
+                )
+
+                if result.success:
+                    console.print(f"[green]✓[/green] 已同步: {remote_path} -> {local_path}")
+                else:
+                    console.print(f"[red]✗[/red] 同步失败: {result.message}")
+
+            ssh_env.cleanup()
+
+        except Exception as e:
+            console.print(f"[red]同步失败: {e}[/red]")
 
 
 if __name__ == "__main__":

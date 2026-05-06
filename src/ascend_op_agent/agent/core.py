@@ -17,14 +17,22 @@
 负责会话管理、迭代控制和工具调用。
 """
 
+import logging
 import time
 from typing import Any, Optional
 
 from ascend_op_agent.agent.context import ContextEngine
 from ascend_op_agent.agent.memory import MemoryStore
 from ascend_op_agent.agent.prompt_builder import PromptBuilder
+from ascend_op_agent.agent.providers import (
+    OpenAIAdapter,
+    AnthropicAdapter,
+    BaseLLMAdapter,
+)
 from ascend_op_agent.agent.tool_registry import ToolRegistry
 from ascend_op_agent.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 class AIAgent:
@@ -162,7 +170,12 @@ class AIAgent:
 
 
 class LLMClient:
-    """LLM客户端，支持重试和fallback"""
+    """LLM client with multi-provider support"""
+
+    _ADAPTERS = {
+        "openai": OpenAIAdapter,
+        "anthropic": AnthropicAdapter,
+    }
 
     def __init__(self, llm_config):
         self.config = llm_config
@@ -170,18 +183,34 @@ class LLMClient:
         self.backoff_factor = 2
         self.timeout = getattr(llm_config, 'timeout', 120)
 
+        # Create adapter based on provider
+        provider = getattr(llm_config, 'provider', 'openai').lower()
+        adapter_class = self._ADAPTERS.get(provider)
+
+        if adapter_class is None:
+            raise ValueError(
+                f"Unsupported LLM provider: {provider}. "
+                f"Supported providers: {list(self._ADAPTERS.keys())}"
+            )
+
+        self._adapter: BaseLLMAdapter = adapter_class(llm_config)
+        logger.info(f"LLM client initialized with provider: {provider}")
+
     def call(
         self,
         system_prompt: str,
         conversation_history: list[dict[str, str]],
     ) -> str:
-        """调用LLM
+        """Call the LLM using the configured provider adapter
 
-        实际实现会调用OpenAI/Anthropic API，此处为桩函数
+        Args:
+            system_prompt: System prompt for the conversation
+            conversation_history: List of message dicts with 'role' and 'content'
+
+        Returns:
+            LLM response text
         """
-        # TODO: 实现实际的LLM调用
-        # 当前返回桩响应
-        return "TODO: 实现LLM调用"
+        return self._adapter.complete(system_prompt, conversation_history)
 
 
 class RateLimitError(Exception):

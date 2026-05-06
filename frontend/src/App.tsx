@@ -60,11 +60,15 @@ export const App: React.FC = () => {
 
     // 处理 RPC 响应结果
     if (lastResponse.result) {
-      const result = lastResponse.result as { status?: string; data?: ConfirmData };
+      const result = lastResponse.result as { status?: string; response?: string; data?: ConfirmData };
       if (result.status === 'waiting_confirmation' && result.data) {
         setConfirmData(result.data);
         setState('waiting_confirm');
       } else if (result.status === 'completed') {
+        // 显示 Agent 的回复
+        if (result.response) {
+          setMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] Agent: ${result.response}`]);
+        }
         setState('completed');
       } else if (result.status === 'error') {
         setState('error');

@@ -54,11 +54,6 @@ export const useRPC = (backendModule: string = 'ascend_op_agent.backend'): UseRP
 
     backendRef.current = backend;
 
-    // 确保 stdin 处于阻塞模式
-    if (backend.stdin && !backend.stdin.destroyed) {
-      backend.stdin.cork();
-    }
-
     backend.stdout.on('data', (data: Buffer) => {
       const lines = data.toString().split('\n').filter(Boolean);
       for (const line of lines) {
@@ -69,7 +64,9 @@ export const useRPC = (backendModule: string = 'ascend_op_agent.backend'): UseRP
           if (msg.method === 'backend.ready') {
             setIsConnected(true);
           }
-        } catch {}
+        } catch (e) {
+          console.error('[RPC parse error]', e, 'line:', line);
+        }
       }
     });
 

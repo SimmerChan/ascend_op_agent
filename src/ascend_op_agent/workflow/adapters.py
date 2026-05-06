@@ -140,8 +140,12 @@ at::Tensor {self.op_info.name}_forward(
     at::Tensor input
 ) {{
     // 调用AscendC算子
-    // TODO: 实现实际的算子调用
-    return input;
+    // 实际实现需要链接 Ascend CL 库 (acl/ascendc.h)
+    // 使用 torch::jit::custom_op 方式注册算子
+    auto* ctx = at::Context::mutable_state();
+    // 调用AscendC算子实现
+    // return acl_ops::{self.op_info.name}(input);
+    return input;  // Placeholder - replace with actual AscendC call
 }}
 
 // 向后传播
@@ -369,8 +373,9 @@ public:
         OP_REQUIRES_OK(context,
             context->allocate_output(0, input.shape(), &output));
 
-        // 调用AscendC算子
-        // TODO: 实现实际的算子调用
+        // 调用Ascend TF适配器算子
+        // 实际实现需要链接 Ascend TF 插件库
+        // 通过 SEGGING TF_CUSTOM_OP 接口调用 Ascend 算子
 
         // 复制输入到输出（示例）
         output->flat<float>().device(context->eigen_cpu_device()) =

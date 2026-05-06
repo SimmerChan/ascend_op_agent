@@ -190,9 +190,33 @@ class RemoteEnvValidator:
         if hasattr(self.ssh_manager, "ensure_connected"):
             self.ssh_manager.ensure_connected()
 
-        # TODO: 实际检查环境是否可用
-        # 目前返回配置中的信息
-        return config.to_environment_info()
+        # 执行实际的连接测试
+        try:
+            if hasattr(self.ssh_manager, "exec_command"):
+                # SSHManager style
+                result = self.ssh_manager.exec_command("echo test", timeout=10)
+                if not result.success:
+                    logger.warning(f"SSH connection test failed: {result.stderr}")
+            elif hasattr(self.ssh_manager, "run_bash"):
+                # SSHEnvironment style
+                handle = self.ssh_manager.run_bash("echo test", timeout=10)
+                ret = handle.wait(timeout=15)
+                if ret != 0:
+                    logger.warning(f"SSH connection test failed: stderr={handle.stderr}")
+
+            # 如果配置了容器，检查容器状态
+            if config.container_name:
+                container_status = self.check_container_status(config.container_name)
+                logger.info(f"Container status: {container_status}")
+
+            return config.to_environment_info()
+
+        except Exception as e:
+            logger.error(f"Environment check failed: {e}")
+            # 即使检查失败，仍然返回配置信息，但标记状态
+            info = config.to_environment_info()
+            info.description = f"{info.description} (检查失败: {e})"
+            return info
 
     def check_container_status(self, container_name: str) -> dict:
         """检查容器状态
