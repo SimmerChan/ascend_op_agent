@@ -85,6 +85,8 @@ export const App: React.FC = () => {
     setMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] User: ${input}`]);
     send('agent.run', { user_input: input });
     setState('running');
+    // Clear input after submission to prevent stale value showing in completed state
+    setInput('');
   };
 
   const handleConfirm = (choice: string) => {
@@ -100,14 +102,14 @@ export const App: React.FC = () => {
   };
 
   const handleNewConversation = () => {
-    // Prevent any in-flight submissions
-    setState('idle');
-    // Then reset backend
-    reset();
+    // Immediately clear all UI state to prevent stale input display
     setInput('');
     setMessages([]);
     setProgress({ phase: 0, percent: 0 });
     setConfirmData(null);
+    setState('idle');
+    // Then reset backend
+    reset();
   };
 
   if (!isConnected) {
