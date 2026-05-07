@@ -93,7 +93,7 @@ async def _handle_session_reset() -> dict:
         return {"status": "error", "message": "Agent not initialized"}
 
     _agent_wrapper.agent.reset_conversation()
-    return {"status": "completed"}
+    return {"status": "reset_completed"}
 
 
 def _setup_agent(config_path: str | None = None) -> None:

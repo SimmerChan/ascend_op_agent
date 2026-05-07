@@ -64,6 +64,8 @@ export const App: React.FC = () => {
       if (result.status === 'waiting_confirmation' && result.data) {
         setConfirmData(result.data);
         setState('waiting_confirm');
+      } else if (result.status === 'reset_completed') {
+        // Reset completed, UI will transition to idle via handleNewConversation
       } else if (result.status === 'completed') {
         // 显示 Agent 的回复
         if (result.response) {
@@ -78,6 +80,8 @@ export const App: React.FC = () => {
 
   const handleSubmit = () => {
     if (!input.trim()) return;
+    // Only allow submit from idle or error state (after reset)
+    if (state !== 'idle' && state !== 'error') return;
     setMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] User: ${input}`]);
     send('agent.run', { user_input: input });
     setState('running');
@@ -96,12 +100,14 @@ export const App: React.FC = () => {
   };
 
   const handleNewConversation = () => {
+    // Prevent any in-flight submissions
+    setState('idle');
+    // Then reset backend
     reset();
     setInput('');
     setMessages([]);
     setProgress({ phase: 0, percent: 0 });
     setConfirmData(null);
-    setState('idle');
   };
 
   if (!isConnected) {
