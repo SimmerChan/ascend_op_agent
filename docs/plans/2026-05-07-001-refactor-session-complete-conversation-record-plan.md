@@ -10,7 +10,7 @@ deepened: 2026-05-07
 
 ## Summary
 
-将当前仅存储 `user/assistant` 消息对的 `_conversation_history` 重构为完整的会话记录系统，完整捕获用户输入、LLM 原始输入（system prompt + conversation history）、LLM 原始输出、工具调用请求/响应，并通过 RPC 方法暴露会话查询能力。
+将当前仅存储 `user/assistant` 消息对的 `_conversation_history` 重构为完整的会话记录系统，完整捕获用户输入、LLM 原始输入（system prompt + conversation history）、LLM 文本响应、工具调用请求/响应，并通过 RPC 方法暴露会话查询能力。数据结构包含完整元数据（时间戳、模型信息、迭代次数等），支持后续对话可视化和分析。
 
 ## Problem Frame
 
@@ -29,7 +29,7 @@ deepened: 2026-05-07
 ## Requirements
 
 ### Data Model
-- R1. Session 数据结构包含：session_id、用户输入、LLM 输入（system_prompt + history）、LLM 输出（文本响应）、工具调用列表
+- R1. Session 数据结构包含：session_id、用户输入、LLM 输入（system_prompt + history）、LLM 输出（文本响应）、工具调用列表；以及完整元数据（created_at、model、provider、iteration_count、duration_ms），支持后续可视化
 
 ### Persistence & Recovery
 - R2. 会话记录持久化到 ChromaDB + JSON 文件备份，支持会话重启后恢复
@@ -138,17 +138,28 @@ deepened: 2026-05-07
   **Approach:**
   - 定义 `ToolCallRecord` 存储工具调用（name, arguments, result）
   - 定义 `LLMRecord` 存储 LLM 输入输出（system_prompt, messages, raw_output）
-  - 定义 `ConversationRecord` 存储完整会话记录
+  - 定义 `ConversationRecord` 存储完整会话记录，包含元数据字段：
+    - `created_at`: float，时间戳
+    - `model`: str，LLM 模型名称
+    - `provider`: str，LLM 提供商（openai/anthropic/gemini 等）
+    - `iteration_count`: int，单轮对话中的迭代次数
+    - `duration_ms`: float，对话耗时（毫秒）
+  - 提供 `to_dict()` 和 `from_dict()` 序列化方法
+  - 提供 `to_visualization_format()` 方法，输出可视化友好的格式
 
   **Patterns to follow:**
   - 参考 `memory/episodic_memory.py` 的 `ConversationTurn` 和 `Episode` dataclass 设计
 
   **Test scenarios:**
   - Happy path: 创建完整的 ConversationRecord 并序列化/反序列化
+  - Happy path: 验证元数据字段（created_at, model, provider, iteration_count, duration_ms）正确保存
   - Edge case: 空消息列表、空工具调用列表
+  - Edge case: `to_visualization_format()` 输出正确的可绘制数据结构
 
   **Verification:**
   - ConversationRecord 可正确 JSON 序列化
+  - 元数据字段在序列化/反序列化后保持一致
+  - 可视化格式包含时间线、工具调用链等可视化所需字段
 
 - U2. **创建 SessionRecordManager**
 
@@ -208,7 +219,12 @@ deepened: 2026-05-07
   ```python
   # core.py 修改
   def run_conversation(self, user_input: str) -> str:
-      self._session_manager.start_record(user_input)
+      start_time = time.time()
+      self._session_manager.start_record(
+          user_input,
+          model=self.config.llm.model,
+          provider=self.config.llm.provider,
+      )
 
       self._conversation_history.append({"role": "user", "content": user_input})
       # ... 现有逻辑 ...
@@ -228,6 +244,13 @@ deepened: 2026-05-07
               arguments=args,
               result=tool_result,
           )
+
+      # 记录迭代次数和耗时
+      duration_ms = (time.time() - start_time) * 1000
+      self._session_manager.finalize_record(
+          iteration_count=self._current_iteration,
+          duration_ms=duration_ms,
+      )
   ```
 
   **Patterns to follow:**
