@@ -5,6 +5,7 @@ status: active
 date: 2026-05-08
 origin: docs/plans/2026-05-07-001-refactor-session-complete-conversation-record-plan.md
 deepened: 2026-05-08
+p0_fixed: 2026-05-08
 ---
 
 # Session 完整对话记录重构 (参照 Claude Code 设计)
@@ -55,10 +56,11 @@ deepened: 2026-05-08
 - R4. 采用 JSONL Append-only 格式，避免文件锁和覆盖丢失
 - R5. 批量写入缓冲（100ms FLUSH_INTERVAL_MS），大文件分块（MAX_CHUNK_BYTES）
 - R6. 会话记录持久化到 `~/.ascend_op_agent/sessions/<session_id>.jsonl`
+- R10. 配置项 `session.max_history`（最大保存会话数）和 `session.flush_interval_ms`（刷新间隔）
 
 ### Query Interface
 - R7. 提供 RPC 方法 `session.get_history` 查询完整会话记录
-- R8. 支持按 session_id 读取指定会话或获取最近 N 条
+- R8. 支持按 session_id 读取指定会话或获取最近 N 条（N 默认返回全部，可选 `limit` 参数限制）
 
 ### Backward Compatibility
 - R9. 现有 `reset_conversation()` 行为保持不变（仅重置内存状态）
@@ -104,15 +106,29 @@ deepened: 2026-05-08
 
 1. **JSONL Append-only 格式**：参照 Claude Code `sessionStorage.ts`，每行一个 Entry，append-only 特性适合高频写入，避免文件锁竞争，支持大文件分块写入。
 
-2. **批量写入缓冲**：100ms `FLUSH_INTERVAL_MS` 聚合写入，减少 I/O 次数。缓冲在 `shutdown()` 时确保清空。
+2. **异步写入通过线程池**：后端使用 asyncio，SessionRecordManager 的写入操作通过 `concurrent.futures.ThreadPoolExecutor` 在后台线程执行，避免阻塞事件循环。写入队列持有 JSONL 字符串（已序列化），线程池消费队列并写入文件。
 
-3. **每条 Entry 独立时间戳**：每个 LLM 调用、工具调用都有独立 timestamp，支持精确时间线渲染和耗时分析。
+3. **批量写入缓冲**：100ms `FLUSH_INTERVAL_MS` 聚合写入，减少 I/O 次数。缓冲在 `shutdown()` 时确保清空。
 
-4. **Token 用量追踪**：`LLMRecord` 包含 `input_tokens`、`output_tokens` 估算字段（V1 使用字符数/4 估算，V2 集成精确统计）。
+4. **每条 Entry 独立时间戳**：每个 LLM 调用、工具调用都有独立 timestamp，支持精确时间线渲染和耗时分析。
 
-5. **新建 `SessionRecordManager` 而非复用 `EpisodicMemory`**：后者设计用于向量相似性检索，不适合 Append-only JSONL 写入模式。SessionRecordManager 专注于审计级完整记录。
+5. **Token 用量追踪**：`LLMRecord` 包含 `input_tokens`、`output_tokens` 估算字段（V1 使用字符数/4 估算，V2 集成精确统计）。注意：字符数/4 对非拉丁语系（中/日/韩）不准确，V2 应使用语言感知估算或从 LLM Adapter 获取精确值。
 
-6. **向后兼容 `reset_conversation()`**：重置仅清空内存中的 `_conversation_history`，不删除持久化 JSONL 文件。
+6. **新建 `SessionRecordManager` 而非复用 `EpisodicMemory`**：
+   - **职责冲突**：`EpisodicMemory` 的 `_result_to_episode()` 会丢弃完整 turns，仅保留摘要，不满足 R1 的"完整记录"要求
+   - **写入模式不同**：`EpisodicMemory` 假设一次性批量写入（如会话结束时），而 SessionRecordManager 需要实时 append
+   - **V2 可集成**：`SessionRecordManager` 持久化的 JSONL 文件可作为 `EpisodicMemory.search_similar_episodes()` 的输入，实现互补而非耦合
+
+7. **JSONL Append-only 的权衡**：
+   - **优势**：适合高频写入、无文件锁竞争、每行独立可跳过损坏行
+   - **劣势**：难以原地修正（需追加 correction record 或重写）、无随机访问（需 scan 全文）、无 compaction（文件持续增长）
+   - **缓解**：V2 实现 CompactSummary 压缩历史；V2 实现消息链后可支持 correction record
+
+8. **向后兼容 `reset_conversation()`**：重置仅清空内存中的 `_conversation_history`，不删除持久化 JSONL 文件。Session ID 生命周期贯穿 AIAgent 实例。
+
+9. **shutdown() 通过 Backend Lifecycle 管理**：backend.py 的 main() 使用 try/finally 确保 shutdown() 在退出前被调用。
+
+10. **Session ID 生命周期**：Session ID 贯穿 AIAgent 实例生命周期，`reset_conversation()` 不创建新 session_id，所有对话积累在同一个 JSONL 文件中。每个 AIAgent 实例对应一个 `<session_id>.jsonl` 文件。
 
 ## Open Questions
 
@@ -121,6 +137,8 @@ deepened: 2026-05-08
 - Q: 是否需要修改 LLM Adapter 接口？A: 否，V1 使用字符数/4 估算 token，V2 可扩展为精确统计。
 - Q: JSONL vs JSON 文件？A: 采用 JSONL Append-only，参照 Claude Code 设计，更适合高频写入场景。
 - Q: ChromaDB 是否还需要？A: V1 简化设计，暂不引入 ChromaDB，仅使用 JSONL 持久化。向量检索在 V2 集成 EpisodicMemory。
+- Q: asyncio 后端如何调用同步写入？A: 使用 `concurrent.futures.ThreadPoolExecutor` + `queue.Queue`，写入在后台线程执行，不阻塞事件循环。
+- Q: shutdown() 如何确保被调用？A: backend.py 的 `main()` 使用 `try/finally`，并注册 SIGTERM/SIGINT signal handler。
 
 ### Deferred to Implementation
 
@@ -205,9 +223,9 @@ deepened: 2026-05-08
   - JSONL 行可正确反序列化为 Entry
   - 可视化格式包含时间线数据
 
-- U2. **创建 SessionRecordManager（JSONL Append-only）**
+- U2. **创建 SessionRecordManager（JSONL Append-only + 线程池异步写入）**
 
-  **Goal:** 管理 Append-only JSONL 写入，支持批量缓冲
+  **Goal:** 管理 Append-only JSONL 写入，支持批量缓冲和线程池异步写入
 
   **Requirements:** R1, R2, R4, R5, R6
 
@@ -220,34 +238,40 @@ deepened: 2026-05-08
 
   **Approach:**
   - SessionRecordManager 管理 Append-only JSONL 文件写入
-  - `FLUSH_INTERVAL_MS = 100` 批量聚合
-  - `MAX_CHUNK_BYTES = 100 * 1024 * 1024` 大文件分块
-  - `append_entry()` 添加 Entry 到内存缓冲
-  - `_drain_write_queue()` 批量写入文件
-  - `shutdown()` 确保缓冲清空并关闭文件
-  - 会话目录: `~/.ascend_op_agent/sessions/`
+  - 使用 `concurrent.futures.ThreadPoolExecutor` 在后台线程执行写入，避免阻塞 asyncio 事件循环
+  - `append_entry()` 将已序列化的 JSON 字符串放入写入队列（`queue.Queue`）
+  - 线程池消费队列，执行 `_drain_write_queue()` 批量写入文件
+  - `FLUSH_INTERVAL_MS = 100` 批量聚合（可配置）
+  - `MAX_CHUNK_BYTES = 100 * 1024 * 1024` 大文件分块（写入时检查，达到阈值则关闭当前文件并创建新文件）
+  - 分块文件命名: `<session_id>.jsonl.001`, `<session_id>.jsonl.002`...
+  - `shutdown()` 通过 `concurrent.futures.Future` 等待所有写入完成，确保数据不丢失
+  - 会话目录: `~/.ascend_op_agent/sessions/`（`__init__` 时自动创建）
   - 每个 session 一个 JSONL 文件: `<session_id>.jsonl`
+  - `__init__` 接收可选的 `session_manager` 参数：如果传入 `None` 或未传入，SessionRecordManager 为 `None`，`append_entry()` 为空操作（no-op），不影响主流程
 
   **Patterns to follow:**
   - 参考 Claude Code `src/utils/sessionStorage.ts` 的 `Project` 类
-  - 使用 `aiofiles` 或线程池实现异步写入（可选，V1 同步）
+  - 使用 `concurrent.futures.ThreadPoolExecutor` + `queue.Queue` 实现线程安全队列
 
   **Test scenarios:**
   - Happy path: 多次 `append_entry()` 后验证 JSONL 文件行数
   - Happy path: `shutdown()` 后验证所有缓冲已写入
+  - Happy path: `session_manager=None` 时 `append_entry()` 不抛出异常
   - Edge case: 多轮对话的 Entry 交错写入
-  - Error path: 写入失败时抛出异常而非静默丢失
+  - Edge path: 写入失败时抛出异常而非静默丢失
+  - Integration: 异步后端多次调用不阻塞
 
   **Verification:**
   - JSONL 文件每行是一个独立的有效 JSON 对象
   - 批量写入验证：10 次 append 后文件应有 10 行（或按 flush 策略）
   - `shutdown()` 后内存缓冲为空
+  - asyncio 后端调用 `run_conversation()` 不会因写入而阻塞
 
 - U3. **集成 SessionRecordManager 到 AIAgent**
 
   **Goal:** 在 AIAgent.run_conversation 中嵌入记录逻辑
 
-  **Requirements:** R1, R2, R3
+  **Requirements:** R1, R2, R3, R9
 
   **Dependencies:** U2
 
@@ -264,9 +288,18 @@ deepened: 2026-05-08
   **Technical design:**
   ```python
   # core.py 修改
+  def __init__(self, ..., session_manager=None):
+      # ... existing init ...
+      self._session_manager = session_manager  # 可为 None
+
+  def _safe_append(self, entry):
+      """安全追加 entry，session_manager 为 None 时不抛异常"""
+      if self._session_manager is not None:
+          self._session_manager.append_entry(entry)
+
   def run_conversation(self, user_input: str) -> str:
       session_id = self._get_or_create_session_id()
-      self._session_manager.append_entry(UserEntry(
+      self._safe_append(UserEntry(
           id=str(uuid.uuid4()),
           timestamp=time.time(),
           session_id=session_id,
@@ -276,7 +309,7 @@ deepened: 2026-05-08
       # ... 现有逻辑 (LLM 调用) ...
 
       # 记录 LLM 输出
-      self._session_manager.append_entry(LLMEntry(
+      self._safe_append(LLMEntry(
           id=str(uuid.uuid4()),
           timestamp=time.time(),
           session_id=session_id,
@@ -290,7 +323,7 @@ deepened: 2026-05-08
       # 工具调用记录
       if self._is_tool_call(response):
           # ... 执行逻辑 ...
-          self._session_manager.append_entry(ToolEntry(
+          self._safe_append(ToolEntry(
               id=str(uuid.uuid4()),
               timestamp=time.time(),
               session_id=session_id,
@@ -301,6 +334,8 @@ deepened: 2026-05-08
           ))
   ```
 
+  **Note:** `_safe_append()` 确保 `session_manager=None` 时不影响主流程。
+
   **Patterns to follow:**
   - 最小化对现有 `run_conversation` 逻辑的侵入
 
@@ -308,14 +343,16 @@ deepened: 2026-05-08
   - Happy path: 完整对话流程（无工具调用）生成 2 条 Entry
   - Happy path: 包含工具调用的对话生成正确数量 Entry
   - Edge case: 多轮工具调用的 Entry 顺序正确
+  - Edge path: `session_manager=None` 时 `run_conversation()` 正常完成不抛异常
 
   **Verification:**
   - JSONL 文件包含所有 Entry
   - 现有功能不受影响
+  - `session_manager=None` 不影响返回值
 
-- U4. **添加 session.get_history RPC 方法**
+- U4. **添加 session.get_history RPC 方法和 shutdown handler**
 
-  **Goal:** 暴露会话查询接口给前端
+  **Goal:** 暴露会话查询接口给前端，并确保 shutdown 时缓冲清空
 
   **Requirements:** R7, R8
 
@@ -329,6 +366,20 @@ deepened: 2026-05-08
   - 注册 `session.get_history` RPC 方法
   - 读取 JSONL 文件并返回 Entry 列表
   - 支持按 session_id 查询或获取最近会话
+  - 在 `main()` 中添加 `try/finally` 确保 `shutdown()` 被调用
+  - 注册 SIGTERM/SIGINT signal handler 调用 shutdown
+
+  **Technical design:**
+  ```python
+  async def main():
+      # ... setup ...
+      try:
+          await _server.run()
+      finally:
+          # 确保 SessionRecordManager 缓冲清空
+          if _agent_wrapper and _agent_wrapper.agent._session_manager:
+              await _agent_wrapper.agent._session_manager.shutdown()
+  ```
 
   **Patterns to follow:**
   - 参考现有 `session.reset` 的注册方式
@@ -337,6 +388,7 @@ deepened: 2026-05-08
   - Happy path: 获取当前会话完整历史
   - Edge case: 无会话记录时返回空列表
   - Edge case: 指定不存在的 session_id 返回空
+  - Integration: KeyboardInterrupt 后 JSONL 文件包含所有缓冲数据
 
   **Verification:**
   - RPC 客户端可调用 `session.get_history` 并获得完整 Entry 列表
@@ -345,7 +397,7 @@ deepened: 2026-05-08
 
   **Goal:** 支持配置会话持久化路径和行为
 
-  **Requirements:** R6
+  **Requirements:** R6, R10
 
   **Dependencies:** U2
 
@@ -354,8 +406,8 @@ deepened: 2026-05-08
 
   **Approach:**
   - 添加 `session.persist_dir` 配置项
-  - 添加 `session.max_history` 配置项
-  - 添加 `session.flush_interval_ms` 配置项
+  - 添加 `session.max_history` 配置项（最大保存会话数）
+  - 添加 `session.flush_interval_ms` 配置项（刷新间隔，默认 100ms）
 
   **Patterns to follow:**
   - 参考 `vector_store.persist_dir` 的配置方式
@@ -369,21 +421,27 @@ deepened: 2026-05-08
 
 ## System-Wide Impact
 
-- **Interaction graph:** AIAgent 依赖 SessionRecordManager，但不修改其他 Agent 组件接口。AIAgent 需在 `__init__` 中接收 `session_manager` 参数。
+- **Interaction graph:** AIAgent 依赖 SessionRecordManager，但不修改其他 Agent 组件接口。AIAgent 需在 `__init__` 中接收 `session_manager` 参数（可为 `None`）。
+- **Backend lifecycle:** backend.py 的 `main()` 使用 `try/finally` 块确保 `_agent_wrapper.agent.session_manager.shutdown()` 在退出前被调用。Signal handler 处理 SIGTERM/SIGINT。
 - **Error propagation:** JSONL 写入失败应抛出异常（不静默丢失），由调用方决定如何处理
 - **State lifecycle risks:**
-  - `shutdown()` 必须调用确保缓冲清空
+  - `shutdown()` 通过 `concurrent.futures.Future` 等待写入完成，确保数据不丢失
   - `reset_conversation()` 不删除 JSONL 文件
   - 会话重置后，原有记录仍可通过 `session.get_history(session_id)` 查询
+  - `session_manager=None` 时 `append_entry()` 为 no-op，不影响主流程
 
 ## Risks & Dependencies
 
 | Risk | Mitigation |
 |------|------------|
-| 同步写入阻塞主流程 | V1 接受；Future 可引入线程池异步写入 |
-| 进程崩溃导致缓冲数据丢失 | `shutdown()` 确保清理；V1 可选同步 flush |
+| 线程池写入线程安全 | 使用 `queue.Queue` 线程安全队列，Future 确保完成 |
+| 进程崩溃导致缓冲数据丢失 | `shutdown()` + Future 等待写入完成；SIGTERM/SIGINT handler |
 | JSONL 文件损坏 | 每行独立 JSON，损坏行可跳过 |
-| 文件过大（无分块） | MAX_CHUNK_BYTES 分块写入 |
+| JSONL 难以原地修正 | V2 实现 correction record 或 CompactSummary 压缩 |
+| JSONL 无随机访问 | V1 接受（适合 append-only 场景）；V2 可建索引 |
+| 文件过大（无 compaction） | V2 实现 CompactSummary；V1 接受上限 |
+| session_manager=None | `append_entry()` 为 no-op，不抛异常 |
+| Token 估算对 CJK 不准确 | V1 使用字符数/4；V2 从 Adapter 获取精确值 |
 
 ## Documentation / Operational Notes
 
