@@ -80,8 +80,8 @@ export const App: React.FC = () => {
 
   const handleSubmit = () => {
     if (!input.trim()) return;
-    // Only allow submit from idle or error state (after reset)
-    if (state !== 'idle' && state !== 'error') return;
+    // Allow submit from idle, completed, or error state
+    if (state !== 'idle' && state !== 'completed' && state !== 'error') return;
     setMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] User: ${input}`]);
     send('agent.run', { user_input: input });
     setState('running');
@@ -157,13 +157,11 @@ export const App: React.FC = () => {
           <Text dimColor>输入新需求继续，或按 Ctrl+C 退出</Text>
           <Spacer height={1} />
           <Box>
-            <Text dimColor>输入 </Text>
-            <Text color="cyan">enter</Text>
-            <Text dimColor> 开始新对话: </Text>
+            <Text dimColor>请输入需求: </Text>
             <TextInput
               value={input}
               onChange={setInput}
-              onSubmit={handleNewConversation}
+              onSubmit={handleSubmit}
             />
           </Box>
         </Box>
@@ -175,13 +173,11 @@ export const App: React.FC = () => {
           <Text dimColor>输入新需求继续，或按 Ctrl+C 退出</Text>
           <Spacer height={1} />
           <Box>
-            <Text dimColor>输入 </Text>
-            <Text color="cyan">enter</Text>
-            <Text dimColor> 开始新对话: </Text>
+            <Text dimColor>请输入需求: </Text>
             <TextInput
               value={input}
               onChange={setInput}
-              onSubmit={handleNewConversation}
+              onSubmit={handleSubmit}
             />
           </Box>
         </Box>
