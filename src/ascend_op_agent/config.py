@@ -109,6 +109,13 @@ class VectorStoreConfig(BaseModel):
     persist_dir: str = "~/.ascend_op_agent/vector_db"
 
 
+class SessionConfig(BaseModel):
+    """会话记录配置"""
+    persist_dir: str = "~/.ascend_op_agent/sessions"
+    max_history: Optional[int] = None
+    flush_interval_ms: int = 100
+
+
 class LoggingConfig(BaseModel):
     """日志配置"""
     level: str = "INFO"
@@ -134,6 +141,7 @@ class Config(BaseModel):
     local: LocalConfig = Field(default_factory=LocalConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
+    session: SessionConfig = Field(default_factory=SessionConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     # 配置文件路径（仅在从文件加载时设置）

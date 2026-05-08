@@ -19,7 +19,8 @@
 
 import logging
 import time
-from typing import Any, Optional
+import uuid
+from typing import TYPE_CHECKING, Any, Optional
 
 from ascend_op_agent.agent.context import ContextEngine
 from ascend_op_agent.agent.memory import MemoryStore
@@ -33,8 +34,19 @@ from ascend_op_agent.agent.providers import (
     OllamaAdapter,
     BaseLLMAdapter,
 )
+from ascend_op_agent.agent.session_manager import SessionRecordManager
+from ascend_op_agent.agent.session_record import (
+    Entry,
+    LLMEntry,
+    SystemEntry,
+    ToolEntry,
+    UserEntry,
+)
 from ascend_op_agent.agent.tool_registry import ToolRegistry
 from ascend_op_agent.config import Config
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -56,17 +68,31 @@ class AIAgent:
         prompt_builder: PromptBuilder,
         context_engine: ContextEngine,
         memory_store: MemoryStore,
+        session_manager: Optional[SessionRecordManager] = None,
     ):
         self.config = config
         self.tool_registry = tool_registry
         self.prompt_builder = prompt_builder
         self.context_engine = context_engine
         self.memory = memory_store
+        self._session_manager = session_manager
 
         self._llm_client = LLMClient(config.llm)
         self._conversation_history: list[dict[str, str]] = []
         self._max_iterations = 10
         self._current_iteration = 0
+        self._current_session_id: Optional[str] = None
+
+    def _safe_append(self, entry: Entry) -> None:
+        """安全追加 entry，session_manager 为 None 时不抛异常"""
+        if self._session_manager is not None:
+            self._session_manager.append_entry(entry)
+
+    def _get_or_create_session_id(self) -> str:
+        """获取或创建当前会话 ID"""
+        if self._current_session_id is None:
+            self._current_session_id = str(uuid.uuid4())
+        return self._current_session_id
 
     def run_conversation(self, user_input: str) -> str:
         """运行对话
@@ -77,6 +103,21 @@ class AIAgent:
         Returns:
             Agent响应
         """
+        session_id = self._get_or_create_session_id()
+        model = self.config.llm.model
+        provider = self.config.llm.provider
+
+        # 记录用户输入
+        self._safe_append(UserEntry(
+            id=str(uuid.uuid4()),
+            timestamp=time.time(),
+            session_id=session_id,
+            model=model,
+            provider=provider,
+            turn_id=0,
+            content=user_input,
+        ))
+
         self._conversation_history.append({"role": "user", "content": user_input})
         self._current_iteration = 0
 
@@ -92,11 +133,34 @@ class AIAgent:
                 memory_store=self.memory,
             )
 
+            # 记录 system prompt
+            self._safe_append(SystemEntry(
+                id=str(uuid.uuid4()),
+                timestamp=time.time(),
+                session_id=session_id,
+                model=model,
+                provider=provider,
+                turn_id=self._current_iteration,
+                content=system_prompt,
+            ))
+
             # 2. 调用LLM
             response = self._llm_client.call(
                 system_prompt=system_prompt,
                 conversation_history=self._conversation_history,
             )
+
+            # 记录 LLM 输出
+            self._safe_append(LLMEntry(
+                id=str(uuid.uuid4()),
+                timestamp=time.time(),
+                session_id=session_id,
+                model=model,
+                provider=provider,
+                turn_id=self._current_iteration,
+                input_messages=self._conversation_history.copy(),
+                output_content=response,
+            ))
 
             # 3. 解析响应（可能是工具调用或直接回复）
             if self._is_tool_call(response):
@@ -150,11 +214,48 @@ class AIAgent:
         if not tool:
             return f"错误: 未知工具: {tool_name}"
 
+        session_id = self._get_or_create_session_id()
+        model = self.config.llm.model
+        provider = self.config.llm.provider
+
         try:
             result = tool.execute(**args)
-            return str(result)
+            result_str = str(result)
+
+            # 记录工具调用
+            self._safe_append(ToolEntry(
+                id=str(uuid.uuid4()),
+                timestamp=time.time(),
+                session_id=session_id,
+                model=model,
+                provider=provider,
+                turn_id=self._current_iteration,
+                tool_name=tool_name,
+                arguments=args,
+                result=result_str,
+                success=True,
+            ))
+
+            return result_str
         except Exception as e:
-            return f"错误: 工具执行失败: {e}"
+            error_msg = f"错误: 工具执行失败: {e}"
+
+            # 记录工具调用失败
+            self._safe_append(ToolEntry(
+                id=str(uuid.uuid4()),
+                timestamp=time.time(),
+                session_id=session_id,
+                model=model,
+                provider=provider,
+                turn_id=self._current_iteration,
+                tool_name=tool_name,
+                arguments=args,
+                result="",
+                success=False,
+                error=error_msg,
+            ))
+
+            return error_msg
 
     def _update_memory(self, user_input: str, response: str) -> None:
         """更新记忆"""

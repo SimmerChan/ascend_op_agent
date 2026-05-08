@@ -21,6 +21,7 @@
 import asyncio
 import logging
 import os
+import signal
 import sys
 import threading
 from pathlib import Path
@@ -37,6 +38,7 @@ from ascend_op_agent.config import load_config
 # 全局变量
 _server: JSONRPCServer | None = None
 _agent_wrapper: AgentAsyncWrapper | None = None
+_session_manager = None
 
 
 def _setup_logging() -> None:
@@ -96,6 +98,56 @@ async def _handle_session_reset() -> dict:
     return {"status": "reset_completed"}
 
 
+async def _handle_session_get_history(session_id: str = None, limit: int = None) -> dict:
+    """处理 session.get_history 请求
+
+    Args:
+        session_id: 会话 ID（None 表示当前会话）
+        limit: 返回记录数限制
+
+    Returns:
+        会话历史记录
+    """
+    if _agent_wrapper is None:
+        return {"status": "error", "message": "Agent not initialized"}
+
+    from ascend_op_agent.agent.session_manager import read_session_history, list_sessions
+    from ascend_op_agent.config import load_config
+
+    config = load_config()
+    persist_dir = config.session.persist_dir
+
+    if session_id:
+        # 获取指定会话的历史
+        entries = read_session_history(session_id, persist_dir, limit)
+        return {
+            "status": "success",
+            "session_id": session_id,
+            "entries": [e.to_dict() for e in entries],
+            "count": len(entries),
+        }
+    else:
+        # 列出所有会话
+        sessions = list_sessions(persist_dir, limit or 100)
+        return {
+            "status": "success",
+            "sessions": sessions,
+            "count": len(sessions),
+        }
+
+
+async def _handle_session_shutdown() -> dict:
+    """处理 session.shutdown 请求
+
+    Returns:
+        关闭结果
+    """
+    if _session_manager is not None:
+        _session_manager.shutdown()
+        return {"status": "shutdown_completed"}
+    return {"status": "no_session_manager"}
+
+
 def _setup_agent(config_path: str | None = None) -> None:
     """初始化 Agent
 
@@ -120,12 +172,22 @@ def _setup_agent(config_path: str | None = None) -> None:
     from ascend_op_agent.agent.context import ContextEngine
     from ascend_op_agent.agent.memory import MemoryStore
     from ascend_op_agent.agent.prompt_builder import PromptBuilder
+    from ascend_op_agent.agent.session_manager import SessionRecordManager
     from ascend_op_agent.agent.tool_registry import ToolRegistry
+
+    global _session_manager
 
     tool_registry = ToolRegistry()
     prompt_builder = PromptBuilder()
     context_engine = ContextEngine()
     memory_store = MemoryStore()
+
+    # 创建 SessionRecordManager
+    _session_manager = SessionRecordManager(
+        persist_dir=config.session.persist_dir,
+        flush_interval_ms=config.session.flush_interval_ms,
+        max_history=config.session.max_history,
+    )
 
     agent = AIAgent(
         config=config,
@@ -133,6 +195,7 @@ def _setup_agent(config_path: str | None = None) -> None:
         prompt_builder=prompt_builder,
         context_engine=context_engine,
         memory_store=memory_store,
+        session_manager=_session_manager,
     )
 
     _agent_wrapper = AgentAsyncWrapper(agent)
@@ -156,6 +219,8 @@ async def main() -> None:
     # 注册处理方法
     _server.register_method("agent.run", _handle_run_conversation)
     _server.register_method("session.reset", _handle_session_reset)
+    _server.register_method("session.get_history", _handle_session_get_history)
+    _server.register_method("session.shutdown", _handle_session_shutdown)
 
     logging.info("Backend ready, starting RPC server")
 
@@ -167,6 +232,17 @@ if __name__ == "__main__":
     # 后台线程消费 stderr，避免 pipe 阻塞
     # 注意：此代码在作为子进程启动时会被父进程接管 stderr
     # 这里主要确保日志配置正确
+
+    # 信号处理
+    def handle_signal(signum, frame):
+        logging.info(f"Received signal {signum}, initiating shutdown...")
+        if _session_manager is not None:
+            _session_manager.shutdown()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGINT, handle_signal)
+
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
@@ -174,3 +250,7 @@ if __name__ == "__main__":
     except Exception as e:
         logging.error(f"Backend error: {e}")
         sys.exit(1)
+    finally:
+        # 确保关闭 session manager
+        if _session_manager is not None:
+            _session_manager.shutdown()
