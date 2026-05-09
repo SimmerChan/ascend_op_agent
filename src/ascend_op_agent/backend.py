@@ -173,11 +173,10 @@ def _setup_agent(config_path: str | None = None) -> None:
     from ascend_op_agent.agent.memory import MemoryStore
     from ascend_op_agent.agent.prompt_builder import PromptBuilder
     from ascend_op_agent.agent.session_manager import SessionRecordManager
-    from ascend_op_agent.agent.tool_registry import ToolRegistry
+    from ascend_op_agent.agent.tool_registry import tool_registry
 
     global _session_manager
 
-    tool_registry = ToolRegistry()
     prompt_builder = PromptBuilder()
     context_engine = ContextEngine()
     memory_store = MemoryStore()

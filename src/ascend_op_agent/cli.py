@@ -413,13 +413,12 @@ def acp(ctx: click.Context) -> None:
     from ascend_op_agent.agent.context import ContextEngine
     from ascend_op_agent.agent.memory import MemoryStore
     from ascend_op_agent.agent.prompt_builder import PromptBuilder
-    from ascend_op_agent.agent.tool_registry import ToolRegistry
+    from ascend_op_agent.agent.tool_registry import tool_registry
     from ascend_op_agent.config import Config
 
     config: Config = ctx.obj["config"]
 
     # 初始化 Agent 组件
-    tool_registry = ToolRegistry()
     prompt_builder = PromptBuilder()
     context_engine = ContextEngine()
     memory_store = MemoryStore()
