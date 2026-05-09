@@ -14,10 +14,11 @@
 
 """OpenAI API adapter"""
 
+import json
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
-from ascend_op_agent.agent.providers.base import BaseLLMAdapter
+from ascend_op_agent.agent.providers.base import BaseLLMAdapter, ToolCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class OpenAIAdapter(BaseLLMAdapter):
         system_prompt: str,
         conversation_history: list[dict[str, str]],
         tools: Optional[list[dict]] = None,
-    ) -> str:
+    ) -> Union[str, ToolCallResult]:
         """Send completion request to OpenAI API
 
         Args:
@@ -68,7 +69,7 @@ class OpenAIAdapter(BaseLLMAdapter):
             tools: Optional list of tool definitions in OpenAI function format
 
         Returns:
-            Response text from the model
+            Response text from the model, or ToolCallResult if a tool call is triggered
         """
         import time
         import httpx
@@ -104,7 +105,19 @@ class OpenAIAdapter(BaseLLMAdapter):
 
                 if response.status_code == 200:
                     data = response.json()
-                    return data["choices"][0]["message"]["content"]
+                    message = data["choices"][0]["message"]
+
+                    # Check for tool calls (Native Function Calling)
+                    if "tool_calls" in message and message["tool_calls"]:
+                        first_tool_call = message["tool_calls"][0]
+                        return ToolCallResult(
+                            tool_call_id=first_tool_call["id"],
+                            tool_name=first_tool_call["function"]["name"],
+                            arguments=json.loads(first_tool_call["function"]["arguments"]),
+                            raw_response=data
+                        )
+
+                    return message.get("content", "")
 
                 elif response.status_code == 429:
                     # Rate limit - exponential backoff

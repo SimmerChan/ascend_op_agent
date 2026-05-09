@@ -15,7 +15,20 @@
 """Base LLM adapter interface"""
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any, Optional, Union
+
+
+@dataclass
+class ToolCallResult:
+    """结构化工具调用结果
+
+    用于 Native Function Calling 模式，从 Provider 的原生响应中解析。
+    """
+    tool_call_id: str
+    tool_name: str
+    arguments: dict[str, Any]
+    raw_response: Any
 
 
 class BaseLLMAdapter(ABC):
@@ -35,7 +48,7 @@ class BaseLLMAdapter(ABC):
         system_prompt: str,
         conversation_history: list[dict[str, str]],
         tools: Optional[list[dict]] = None,
-    ) -> str:
+    ) -> Union[str, ToolCallResult]:
         """Send a completion request to the LLM provider
 
         Args:
@@ -44,7 +57,7 @@ class BaseLLMAdapter(ABC):
             tools: Optional list of tool definitions in OpenAI function format
 
         Returns:
-            The LLM's response text
+            The LLM's response text, or ToolCallResult if a tool call is triggered
 
         Raises:
             RateLimitError: When rate limited, caller should retry with backoff

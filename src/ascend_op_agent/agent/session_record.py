@@ -129,6 +129,7 @@ class ToolEntry(Entry):
     """工具调用条目"""
     type: str = "tool"
     tool_name: str = ""
+    tool_call_id: str = ""  # Native Function Calling 的 tool_call_id
     arguments: dict[str, Any] = field(default_factory=dict)
     result: str = ""
     success: bool = True
@@ -144,6 +145,7 @@ class ToolEntry(Entry):
             "turn_id": self.turn_id,
             "id": self.id,
             "tool_name": self.tool_name,
+            "tool_call_id": self.tool_call_id,
             "arguments": self.arguments,
             "result": self.result,
             "success": self.success,
@@ -201,6 +203,7 @@ def entry_from_dict(data: dict[str, Any]) -> Entry:
             turn_id=data.get("turn_id", 0),
             id=data.get("id", str(uuid.uuid4())),
             tool_name=data.get("tool_name", ""),
+            tool_call_id=data.get("tool_call_id", ""),
             arguments=data.get("arguments", {}),
             result=data.get("result", ""),
             success=data.get("success", True),

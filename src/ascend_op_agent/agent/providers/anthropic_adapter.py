@@ -15,9 +15,9 @@
 """Anthropic API adapter"""
 
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
-from ascend_op_agent.agent.providers.base import BaseLLMAdapter
+from ascend_op_agent.agent.providers.base import BaseLLMAdapter, ToolCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ class AnthropicAdapter(BaseLLMAdapter):
         system_prompt: str,
         conversation_history: list[dict[str, str]],
         tools: Optional[list[dict]] = None,
-    ) -> str:
+    ) -> Union[str, ToolCallResult]:
         """Send completion request to Anthropic API
 
         Args:
@@ -79,7 +79,7 @@ class AnthropicAdapter(BaseLLMAdapter):
             tools: Optional list of tool definitions in Anthropic format
 
         Returns:
-            Response text from the model
+            Response text from the model, or ToolCallResult if a tool call is triggered
         """
         import time
 
@@ -103,10 +103,23 @@ class AnthropicAdapter(BaseLLMAdapter):
                     messages=messages,
                     tools=tools if tools else None,
                 )
+
+                # Check for tool_use blocks (Native Function Calling)
+                for block in response.content:
+                    if block.type == "tool_use":
+                        return ToolCallResult(
+                            tool_call_id=block.tool_use.id,
+                            tool_name=block.tool_use.name,
+                            arguments=block.tool_use.input,
+                            raw_response=response
+                        )
+
+                # Return text content
                 for block in response.content:
                     if block.type == "text":
                         return block.text
-                raise Exception("No text block in response")
+
+                raise Exception("No text or tool_use block in response")
 
             except anthropic.RateLimitError:
                 wait_time = (attempt + 1) * 2

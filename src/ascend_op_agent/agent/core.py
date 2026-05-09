@@ -34,6 +34,7 @@ from ascend_op_agent.agent.providers import (
     OllamaAdapter,
     BaseLLMAdapter,
 )
+from ascend_op_agent.agent.providers.base import ToolCallResult
 from ascend_op_agent.agent.session_manager import SessionRecordManager
 from ascend_op_agent.agent.session_record import (
     Entry,
@@ -152,20 +153,21 @@ class AIAgent:
                 tools=tools if tools else None,
             )
 
-            # 记录 LLM 输出
-            self._safe_append(LLMEntry(
-                id=str(uuid.uuid4()),
-                timestamp=time.time(),
-                session_id=session_id,
-                model=model,
-                provider=provider,
-                turn_id=self._current_iteration,
-                input_messages=self._conversation_history.copy(),
-                output_content=response,
-            ))
-
-            # 3. 解析响应（可能是工具调用或直接回复）
-            if self._is_tool_call(response):
+            # 检查是否为 Native Function Calling 响应
+            if isinstance(response, ToolCallResult):
+                # Native Function Calling 模式：直接使用结构化数据
+                tool_result = self._execute_tool_call_from_result(response)
+                self._conversation_history.append({
+                    "role": "assistant",
+                    "content": f"tool_call({response.tool_name})",
+                })
+                self._conversation_history.append({
+                    "role": "tool",
+                    "content": tool_result,
+                })
+                # 继续迭代
+            elif self._is_tool_call(response):
+                # 旧版 XML 格式兼容
                 tool_result = self._execute_tool_call(response)
                 self._conversation_history.append({
                     "role": "assistant",
@@ -252,6 +254,79 @@ class AIAgent:
                 turn_id=self._current_iteration,
                 tool_name=tool_name,
                 arguments=args,
+                result="",
+                success=False,
+                error=error_msg,
+            ))
+
+            return error_msg
+
+    def _execute_tool_call_from_result(self, tool_call_info: ToolCallResult) -> str:
+        """执行工具调用（Native Function Calling 模式）
+
+        Args:
+            tool_call_info: 结构化工具调用信息
+
+        Returns:
+            工具执行结果字符串
+        """
+        session_id = self._get_or_create_session_id()
+        model = self.config.llm.model
+        provider = self.config.llm.provider
+
+        tool = self.tool_registry.get_tool(tool_call_info.tool_name)
+        if not tool:
+            error_msg = f"错误: 未知工具: {tool_call_info.tool_name}"
+            self._safe_append(ToolEntry(
+                id=str(uuid.uuid4()),
+                timestamp=time.time(),
+                session_id=session_id,
+                model=model,
+                provider=provider,
+                turn_id=self._current_iteration,
+                tool_name=tool_call_info.tool_name,
+                tool_call_id=tool_call_info.tool_call_id,
+                arguments=tool_call_info.arguments,
+                result="",
+                success=False,
+                error=error_msg,
+            ))
+            return error_msg
+
+        try:
+            result = tool.execute(**tool_call_info.arguments)
+            result_str = str(result)
+
+            # 记录工具调用
+            self._safe_append(ToolEntry(
+                id=str(uuid.uuid4()),
+                timestamp=time.time(),
+                session_id=session_id,
+                model=model,
+                provider=provider,
+                turn_id=self._current_iteration,
+                tool_name=tool_call_info.tool_name,
+                tool_call_id=tool_call_info.tool_call_id,
+                arguments=tool_call_info.arguments,
+                result=result_str,
+                success=True,
+            ))
+
+            return result_str
+        except Exception as e:
+            error_msg = f"错误: 工具执行失败: {e}"
+
+            # 记录工具调用失败
+            self._safe_append(ToolEntry(
+                id=str(uuid.uuid4()),
+                timestamp=time.time(),
+                session_id=session_id,
+                model=model,
+                provider=provider,
+                turn_id=self._current_iteration,
+                tool_name=tool_call_info.tool_name,
+                tool_call_id=tool_call_info.tool_call_id,
+                arguments=tool_call_info.arguments,
                 result="",
                 success=False,
                 error=error_msg,
