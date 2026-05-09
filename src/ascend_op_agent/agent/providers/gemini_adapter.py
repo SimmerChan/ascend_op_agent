@@ -15,7 +15,7 @@
 """Google Gemini API adapter"""
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from ascend_op_agent.agent.providers.base import BaseLLMAdapter
 
@@ -45,12 +45,14 @@ class GeminiAdapter(BaseLLMAdapter):
         self,
         system_prompt: str,
         conversation_history: list[dict[str, str]],
+        tools: Optional[list[dict]] = None,
     ) -> str:
         """Send completion request to Gemini API
 
         Args:
             system_prompt: System prompt
             conversation_history: List of {'role': str, 'content': str}
+            tools: Optional list of tool definitions (not fully supported by Gemini)
 
         Returns:
             Response text from the model

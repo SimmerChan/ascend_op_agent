@@ -15,7 +15,7 @@
 """Base LLM adapter interface"""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
 
 class BaseLLMAdapter(ABC):
@@ -34,12 +34,14 @@ class BaseLLMAdapter(ABC):
         self,
         system_prompt: str,
         conversation_history: list[dict[str, str]],
+        tools: Optional[list[dict]] = None,
     ) -> str:
         """Send a completion request to the LLM provider
 
         Args:
             system_prompt: System prompt for the conversation
             conversation_history: List of message dicts with 'role' and 'content'
+            tools: Optional list of tool definitions in OpenAI function format
 
         Returns:
             The LLM's response text

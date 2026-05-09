@@ -145,9 +145,11 @@ class AIAgent:
             ))
 
             # 2. 调用LLM
+            tools = self.tool_registry.to_openai_format()
             response = self._llm_client.call(
                 system_prompt=system_prompt,
                 conversation_history=self._conversation_history,
+                tools=tools if tools else None,
             )
 
             # 记录 LLM 输出
@@ -311,17 +313,19 @@ class LLMClient:
         self,
         system_prompt: str,
         conversation_history: list[dict[str, str]],
+        tools: Optional[list[dict]] = None,
     ) -> str:
         """Call the LLM using the configured provider adapter
 
         Args:
             system_prompt: System prompt for the conversation
             conversation_history: List of message dicts with 'role' and 'content'
+            tools: Optional list of tool definitions in OpenAI function format
 
         Returns:
             LLM response text
         """
-        return self._adapter.complete(system_prompt, conversation_history)
+        return self._adapter.complete(system_prompt, conversation_history, tools=tools)
 
 
 class RateLimitError(Exception):

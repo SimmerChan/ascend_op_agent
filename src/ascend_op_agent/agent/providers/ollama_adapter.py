@@ -15,7 +15,7 @@
 """Ollama API adapter for local LLM models"""
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from ascend_op_agent.agent.providers.base import BaseLLMAdapter
 
@@ -49,6 +49,7 @@ class OllamaAdapter(BaseLLMAdapter):
         self,
         system_prompt: str,
         conversation_history: list[dict[str, str]],
+        tools: Optional[list[dict]] = None,
     ) -> str:
         """Send completion request to Ollama API
 
@@ -57,6 +58,7 @@ class OllamaAdapter(BaseLLMAdapter):
         Args:
             system_prompt: System prompt
             conversation_history: List of {'role': str, 'content': str}
+            tools: Optional list of tool definitions in OpenAI function format
 
         Returns:
             Response text from the model
@@ -78,6 +80,9 @@ class OllamaAdapter(BaseLLMAdapter):
             "messages": messages,
             "temperature": 0.7,
         }
+
+        if tools is not None:
+            payload["tools"] = tools
 
         last_error = None
         for attempt in range(self.max_retries):

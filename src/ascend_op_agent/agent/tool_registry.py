@@ -138,6 +138,26 @@ class ToolRegistry:
         """转换为OpenAI工具列表格式"""
         return [tool.to_openai_format() for tool in self._tools.values()]
 
+    def call_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """调用工具并返回结构化结果
+
+        Args:
+            name: 工具名称
+            args: 工具参数
+
+        Returns:
+            结构化字典: {"success": true, "result": <value>}
+                     或 {"success": false, "error": <message>}
+        """
+        tool = self.get_tool(name)
+        if not tool:
+            return {"success": False, "error": f"错误: 未知工具: {name}"}
+        try:
+            result = tool.execute(**args)
+            return {"success": True, "result": result}
+        except Exception as e:
+            return {"success": False, "error": f"错误: 工具执行失败: {e}"}
+
 
 # 全局工具注册表实例
 tool_registry = ToolRegistry()

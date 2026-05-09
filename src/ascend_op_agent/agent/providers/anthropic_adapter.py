@@ -15,7 +15,7 @@
 """Anthropic API adapter"""
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from ascend_op_agent.agent.providers.base import BaseLLMAdapter
 
@@ -69,12 +69,14 @@ class AnthropicAdapter(BaseLLMAdapter):
         self,
         system_prompt: str,
         conversation_history: list[dict[str, str]],
+        tools: Optional[list[dict]] = None,
     ) -> str:
         """Send completion request to Anthropic API
 
         Args:
             system_prompt: System prompt
             conversation_history: List of {'role': str, 'content': str}
+            tools: Optional list of tool definitions in Anthropic format
 
         Returns:
             Response text from the model
@@ -99,6 +101,7 @@ class AnthropicAdapter(BaseLLMAdapter):
                     max_tokens=4096,
                     system=system_prompt,
                     messages=messages,
+                    tools=tools if tools else None,
                 )
                 for block in response.content:
                     if block.type == "text":

@@ -106,16 +106,7 @@ class PromptBuilder:
         """Layer 3: Tool-aware Behavioral Guidance"""
         return """## Tool Usage
 
-当需要执行操作时，使用以下工具调用格式:
-
-<tool_call name="tool_name">{"arg1": "value1", "arg2": "value2"}</tool_call>
-
-可用工具:
-- file_ops: 文件操作（读取、写入、目录操作）
-- shell_ops: 执行Shell命令
-- ssh_ops: 远程命令/文件传输
-- ascend_ops: CANN环境检测、编译
-- skill_ops: 技能CRUD
+当需要执行操作时，你可以调用工具。工具参数将根据其 schema 进行验证。
 
 重要:
 - 工具调用后等待结果再继续
