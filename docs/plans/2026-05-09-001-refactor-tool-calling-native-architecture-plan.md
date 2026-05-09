@@ -74,9 +74,11 @@ def complete(self, system_prompt: str, conversation_history: list[dict[str, str]
 
 ## Scope Boundaries
 
-- 不涉及 Session Record 系统的修改
 - 不涉及 Frontend/TUI 的修改
 - 不涉及 LLM API 认证或 Provider 切换
+- **注意**: U7（扩展 ToolEntry 支持 tool_call_id 关联）涉及 `session_record.py` 的修改，超出原定范围。实际实施时可选择：
+  - 方案A: 保留 U7，从 Scope Boundaries 中移除"不涉及 Session Record 系统的修改"
+  - 方案B: 从 Phase 2 中移除 U7，将 tool_call_id 关联功能推迟至后续版本
 
 ---
 
@@ -89,16 +91,16 @@ def complete(self, system_prompt: str, conversation_history: list[dict[str, str]
 - **决策**: 工具定义通过 `tool_registry.to_openai_format()` 动态生成
   - 原因: 避免硬编码，工具列表与实际注册保持一致
 
-- **决策**: 保留 `ToolEntry` 会话记录但扩展字段
-  - 原因: 记录需要增加 `tool_call_id` 字段以关联原生调用
+- **决策**: U7 扩展 `ToolEntry` 的决定视 Scope 而定
+  - 原因: U7 涉及 session_record.py 修改，若不纳入 Scope 则推迟
 
 - **决策**: ACP Adapter 的 `call_tool()` 返回结构化字典
   - 原因: ACP 协议需要区分成功/失败状态
   - 格式: `{"success": true, "result": <value>}`
        或 `{"success": false, "error": <message>}`
 
-- **决策**: 阶段一先实现 U1-U4（基础修复），阶段二实现 U5-U7（架构重构）
-  - 原因: 降低风险，U1 是阻塞性 bug 必须先修
+- **决策**: Phase 1 实现顺序为 U1, U2, U4, U3；Phase 2 实现 U5, U6, U7
+  - 原因: U4 必须先于 U3 完成，因 U3 依赖 U4 提供的 tools 参数传递能力
 
 ---
 
@@ -180,13 +182,16 @@ def complete(self, system_prompt: str, conversation_history: list[dict[str, str]
 | 文件 | 变更 |
 |------|------|
 | `src/ascend_op_agent/agent/tool_registry.py` | U1: 添加 `call_tool()` 方法 |
-| `src/ascend_op_agent/agent/core.py` | U3/U5: 修改 `LLMClient.call()` 签名 |
+| `src/ascend_op_agent/acp/adapter.py` | U1: 修复 `call_tool()` 调用 |
 | `src/ascend_op_agent/agent/providers/base.py` | U4: 修改 `BaseLLMAdapter.complete()` 签名 |
+| `src/ascend_op_agent/agent/core.py` | U4: 修改 `LLMClient.call()` 签名 |
 | `src/ascend_op_agent/agent/providers/openai_adapter.py` | U4: 添加 `tools` 到 payload |
 | `src/ascend_op_agent/agent/providers/anthropic_adapter.py` | U4: 添加 `tools` 到 API 调用 |
-| `src/ascend_op_agent/agent/providers/*.py` | U4: 其他 Provider 适配器 |
-| `src/ascend_op_agent/agent/prompt_builder.py` | U6: 删除硬编码工具描述 |
-| `src/ascend_op_agent/acp/adapter.py` | U1: 修复 `call_tool()` 调用 |
+| `src/ascend_op_agent/agent/providers/gemini_adapter.py` | U4: 添加 `tools` 到 API 调用 |
+| `src/ascend_op_agent/agent/providers/openrouter_adapter.py` | U4: 添加 `tools` 到 API 调用 |
+| `src/ascend_op_agent/agent/providers/azure_openai_adapter.py` | U4: 添加 `tools` 到 API 调用 |
+| `src/ascend_op_agent/agent/providers/ollama_adapter.py` | U4: 添加 `tools` 到 API 调用 |
+| `src/ascend_op_agent/agent/prompt_builder.py` | U5: 删除硬编码工具描述 |
 
 ---
 
@@ -196,14 +201,14 @@ def complete(self, system_prompt: str, conversation_history: list[dict[str, str]
 
 - U1. **[修复 ToolRegistry.call_tool 方法]**
 - U2. **[确认工具命名规范]**
-- U3. **[AIAgent 集成工具调用指令]**
 - U4. **[扩展 LLM 适配器接口支持 tools 参数]**
+- U3. **[AIAgent 集成工具调用指令]**
 
 ### Phase 2: 架构重构（Hermes Agent 风格）
 
 - U5. **[修改 PromptBuilder 删除硬编码工具描述]**
 - U6. **[利用 Provider 内置 tool_call 解析]**
-- U7. **[扩展 ToolEntry 支持 tool_call_id 关联]**
+- U7. **[扩展 ToolEntry 支持 tool_call_id 关联]**（注：此条目涉及 Session Record 系统修改，与 Scope Boundaries 不一致，实际实施时应移除或更新 Scope）**
 
 ---
 
@@ -293,7 +298,7 @@ def call_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
 - Edge case: 无工具注册时正常运作
 
 **Verification:**
-- 带工具的 LLM 调用返回正确的 tool_call XML 格式响应
+- 带工具的 LLM 调用正确传递工具列表给 Provider（验证 payload 中包含 tools 字段）
 
 ---
 
@@ -402,8 +407,8 @@ def _build_tool_guidance(self) -> str:
 
 **Approach:**
 OpenAI 和 Anthropic 的 SDK 已经内置了 tool_call 解析：
-- **OpenAI**: 响应中的 `response.tools` 包含 `{"id": "tool_xxx", "name": "tool_name", "input": {...}}`
-- **Anthropic**: 响应中的 `content_block.tool_use` 包含 `{"id": "toolu_xxx", "name": "tool_name", "input": {...}}`
+- **OpenAI**: 响应中的 `response.tool_calls[0]` 包含 `{"id": "tool_xxx", "function": {"name": "tool_name", "arguments": "{...}"}}`
+- **Anthropic**: 需要迭代 `response.content` 列表查找 `type == "tool_use"` 的 block，其包含 `{"id": "toolu_xxx", "name": "tool_name", "input": {...}}`
 
 需要修改 Adapter 返回值以传递这些结构化信息，修改 `AIAgent._execute_tool_call()` 以使用 Provider 返回的 tool_call 而非正则解析。
 
@@ -419,14 +424,32 @@ class ToolCallResult:
 # openai_adapter.py
 def complete(self, ...) -> str | ToolCallResult:
     response = client.chat.completions.create(...)
-    if response.tool_calls:
+    if response.tool_calls and len(response.tool_calls) > 0:
+        first_tool_call = response.tool_calls[0]
         return ToolCallResult(
-            tool_call_id=response.tool_calls[0].id,
-            tool_name=response.tool_calls[0].function.name,
-            arguments=json.loads(response.tool_calls[0].function.arguments),
+            tool_call_id=first_tool_call.id,
+            tool_name=first_tool_call.function.name,
+            arguments=json.loads(first_tool_call.function.arguments),
             raw_response=response
         )
     return response.content
+
+# anthropic_adapter.py - 需要迭代 content blocks 查找 tool_use
+def complete(self, ...) -> str | ToolCallResult:
+    response = client.messages.create(...)
+    for content_block in response.content:
+        if content_block.type == "tool_use":
+            return ToolCallResult(
+                tool_call_id=content_block.tool_use.id,
+                tool_name=content_block.tool_use.name,
+                arguments=content_block.tool_use.input,
+                raw_response=response
+            )
+    # 从 content 列表中找到 text 块返回
+    for content_block in response.content:
+        if content_block.type == "text":
+            return content_block.text
+    return ""
 
 # core.py - _execute_tool_call
 def _execute_tool_call(self, tool_call_info: ToolCallResult) -> str:
@@ -438,8 +461,8 @@ def _execute_tool_call(self, tool_call_info: ToolCallResult) -> str:
 ```
 
 **Patterns to follow:**
-- OpenAI SDK 的 `response.tool_calls` 解析
-- Anthropic SDK 的 `content_block.tool_use` 解析
+- OpenAI SDK 的 `response.tool_calls[0].function.name` 和 `response.tool_calls[0].function.arguments` 解析
+- Anthropic SDK 需要迭代 `response.content` 列表，查找 `type == "tool_use"` 的 content block
 
 **Test scenarios:**
 - Happy path: Provider 返回结构化 tool_call 时正确解析并执行
