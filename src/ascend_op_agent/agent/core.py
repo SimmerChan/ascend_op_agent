@@ -190,8 +190,9 @@ class AIAgent:
 
     def _is_tool_call(self, response: str) -> bool:
         """检查响应是否为工具调用"""
-        # Support both XML format (<tool_call>) and multi-line tool_calls block
-        return "<tool_call" in response and "</tool_call>" in response
+        # Support both XML format (<tool_call> or <TOOL_CALL>) and multi-line tool_calls block
+        response_lower = response.lower()
+        return "<tool_call" in response_lower and "</tool_call>" in response_lower
 
     def _execute_tool_call(self, response: str) -> str:
         """执行工具调用"""
@@ -199,8 +200,8 @@ class AIAgent:
         # 格式: <tool_call name="tool_name">{"arg": "value"}</tool_call>
         import re
 
-        # Match the first tool_call block (may span multiple lines)
-        match = re.search(r'<tool_call\s+name="(\w+)">(.+?)</tool_call>', response, re.DOTALL)
+        # Match the first tool_call block (may span multiple lines), case-insensitive
+        match = re.search(r'<tool_call\s+name="(\w+)">(.+?)</tool_call>', response, re.DOTALL | re.IGNORECASE)
         if not match:
             return "错误: 无效的工具调用格式"
 
