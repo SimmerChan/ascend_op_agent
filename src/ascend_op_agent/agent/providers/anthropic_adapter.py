@@ -65,6 +65,29 @@ class AnthropicAdapter(BaseLLMAdapter):
             self._client = anthropic.Anthropic(**client_kwargs)
         return self._client
 
+    def _convert_tools_to_anthropic_format(self, tools: list[dict]) -> list[dict]:
+        """Convert OpenAI function format tools to Anthropic tool format
+
+        OpenAI format:
+            {"type": "function", "function": {"name": ..., "description": ..., "parameters": ...}}
+
+        Anthropic format:
+            {"name": ..., "description": ..., "input_schema": ...}
+        """
+        anthropic_tools = []
+        for tool in tools:
+            if tool.get("type") == "function" and "function" in tool:
+                func = tool["function"]
+                anthropic_tools.append({
+                    "name": func.get("name", ""),
+                    "description": func.get("description", ""),
+                    "input_schema": func.get("parameters", {}),
+                })
+            elif "name" in tool:
+                # Already in Anthropic format or named tool
+                anthropic_tools.append(tool)
+        return anthropic_tools
+
     def complete(
         self,
         system_prompt: str,
@@ -93,6 +116,9 @@ class AnthropicAdapter(BaseLLMAdapter):
 
         client = self._get_client()
 
+        # Convert tools from OpenAI format to Anthropic format if provided
+        anthropic_tools = self._convert_tools_to_anthropic_format(tools) if tools else None
+
         last_error = None
         for attempt in range(self.max_retries):
             try:
@@ -101,7 +127,7 @@ class AnthropicAdapter(BaseLLMAdapter):
                     max_tokens=4096,
                     system=system_prompt,
                     messages=messages,
-                    tools=tools if tools else None,
+                    tools=anthropic_tools,
                 )
 
                 # Check for tool_use blocks (Native Function Calling)
