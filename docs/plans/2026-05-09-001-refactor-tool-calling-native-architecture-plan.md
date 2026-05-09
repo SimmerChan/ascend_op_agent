@@ -1,9 +1,10 @@
 ---
 title: 重构工具调用系统为原生Native Function Calling架构
 type: refactor
-status: active
+status: completed
 date: 2026-05-08
 deepened: 2026-05-09
+completed: 2026-05-09
 ---
 
 # 重构工具调用系统为原生 Native Function Calling 架构
