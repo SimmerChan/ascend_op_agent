@@ -134,9 +134,9 @@ class AnthropicAdapter(BaseLLMAdapter):
                 for block in response.content:
                     if block.type == "tool_use":
                         return ToolCallResult(
-                            tool_call_id=block.tool_use.id,
-                            tool_name=block.tool_use.name,
-                            arguments=block.tool_use.input,
+                            tool_call_id=block.id,
+                            tool_name=block.name,
+                            arguments=block.input,
                             raw_response=response
                         )
 
