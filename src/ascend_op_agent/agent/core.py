@@ -109,8 +109,9 @@ class AIAgent:
         provider = self.config.llm.provider
 
         # 记录用户输入
+        user_entry_id = str(uuid.uuid4())
         self._safe_append(UserEntry(
-            id=str(uuid.uuid4()),
+            id=user_entry_id,
             timestamp=time.time(),
             session_id=session_id,
             model=model,
@@ -135,8 +136,9 @@ class AIAgent:
             )
 
             # 记录 system prompt
+            system_entry_id = str(uuid.uuid4())
             self._safe_append(SystemEntry(
-                id=str(uuid.uuid4()),
+                id=system_entry_id,
                 timestamp=time.time(),
                 session_id=session_id,
                 model=model,
@@ -146,17 +148,40 @@ class AIAgent:
             ))
 
             # 2. 调用LLM
+            # 构建 input_messages
+            input_messages = [{"role": "system", "content": system_prompt}] + self._conversation_history
             tools = self.tool_registry.to_openai_format()
+
+            llm_entry_id = str(uuid.uuid4())
+            llm_entry_parent_id = user_entry_id  # LLMEntry.parent_id = UserEntry.id
+
             response = self._llm_client.call(
                 system_prompt=system_prompt,
                 conversation_history=self._conversation_history,
                 tools=tools if tools else None,
             )
 
+            # 解析 tool_calls（如果有）
+            tool_calls = self._parse_tool_calls(response)
+
+            # 记录 LLMEntry
+            self._safe_append(LLMEntry(
+                id=llm_entry_id,
+                timestamp=time.time(),
+                session_id=session_id,
+                model=model,
+                provider=provider,
+                turn_id=self._current_iteration,
+                parent_id=llm_entry_parent_id,
+                input_messages=input_messages,
+                output_content=response,
+                tool_calls=tool_calls,
+            ))
+
             # 检查是否为 Native Function Calling 响应
             if isinstance(response, ToolCallResult):
                 # Native Function Calling 模式：直接使用结构化数据
-                tool_result = self._execute_tool_call_from_result(response)
+                tool_result = self._execute_tool_call_from_result(response, llm_entry_id)
                 self._conversation_history.append({
                     "role": "assistant",
                     "content": f"tool_call({response.tool_name})",
@@ -168,7 +193,7 @@ class AIAgent:
                 # 继续迭代
             elif self._is_tool_call(response):
                 # 旧版 XML 格式兼容
-                tool_result = self._execute_tool_call(response)
+                tool_result = self._execute_tool_call(response, llm_entry_id)
                 self._conversation_history.append({
                     "role": "assistant",
                     "content": response,
@@ -194,8 +219,53 @@ class AIAgent:
         response_lower = response.lower()
         return "<tool_call" in response_lower and "</tool_call>" in response_lower
 
-    def _execute_tool_call(self, response: str) -> str:
-        """执行工具调用"""
+    def _parse_tool_calls(self, response: str) -> list[dict[str, Any]]:
+        """解析 LLM 响应中的工具调用
+
+        Args:
+            response: LLM 响应文本
+
+        Returns:
+            工具调用列表
+        """
+        if isinstance(response, ToolCallResult):
+            # Native Function Calling 模式
+            return [{
+                "tool_call_id": response.tool_call_id,
+                "name": response.tool_name,
+                "arguments": response.arguments,
+            }]
+        elif self._is_tool_call(response):
+            # XML 格式
+            import re
+            import json
+            tool_calls = []
+            matches = re.findall(
+                r'<tool_call\s+name="(\w+)">(.+?)</tool_call>',
+                response,
+                re.DOTALL | re.IGNORECASE
+            )
+            for match in matches:
+                tool_name = match[0]
+                args_str = match[1].strip()
+                try:
+                    args = json.loads(args_str)
+                    tool_calls.append({
+                        "name": tool_name,
+                        "arguments": args,
+                    })
+                except json.JSONDecodeError:
+                    pass
+            return tool_calls
+        return []
+
+    def _execute_tool_call(self, response: str, parent_id: str) -> str:
+        """执行工具调用
+
+        Args:
+            response: LLM 响应文本
+            parent_id: 父节点 ID（LLMEntry 的 id）
+        """
         # 解析工具调用 XML 格式
         # 格式: <tool_call name="tool_name">{"arg": "value"}</tool_call>
         import re
@@ -228,13 +298,15 @@ class AIAgent:
             result_str = str(result)
 
             # 记录工具调用
+            tool_entry_id = str(uuid.uuid4())
             self._safe_append(ToolEntry(
-                id=str(uuid.uuid4()),
+                id=tool_entry_id,
                 timestamp=time.time(),
                 session_id=session_id,
                 model=model,
                 provider=provider,
                 turn_id=self._current_iteration,
+                parent_id=parent_id,
                 tool_name=tool_name,
                 arguments=args,
                 result=result_str,
@@ -246,13 +318,15 @@ class AIAgent:
             error_msg = f"错误: 工具执行失败: {e}"
 
             # 记录工具调用失败
+            tool_entry_id = str(uuid.uuid4())
             self._safe_append(ToolEntry(
-                id=str(uuid.uuid4()),
+                id=tool_entry_id,
                 timestamp=time.time(),
                 session_id=session_id,
                 model=model,
                 provider=provider,
                 turn_id=self._current_iteration,
+                parent_id=parent_id,
                 tool_name=tool_name,
                 arguments=args,
                 result="",
@@ -262,11 +336,12 @@ class AIAgent:
 
             return error_msg
 
-    def _execute_tool_call_from_result(self, tool_call_info: ToolCallResult) -> str:
+    def _execute_tool_call_from_result(self, tool_call_info: ToolCallResult, parent_id: str) -> str:
         """执行工具调用（Native Function Calling 模式）
 
         Args:
             tool_call_info: 结构化工具调用信息
+            parent_id: 父节点 ID（LLMEntry 的 id）
 
         Returns:
             工具执行结果字符串
@@ -278,13 +353,15 @@ class AIAgent:
         tool = self.tool_registry.get_tool(tool_call_info.tool_name)
         if not tool:
             error_msg = f"错误: 未知工具: {tool_call_info.tool_name}"
+            tool_entry_id = str(uuid.uuid4())
             self._safe_append(ToolEntry(
-                id=str(uuid.uuid4()),
+                id=tool_entry_id,
                 timestamp=time.time(),
                 session_id=session_id,
                 model=model,
                 provider=provider,
                 turn_id=self._current_iteration,
+                parent_id=parent_id,
                 tool_name=tool_call_info.tool_name,
                 tool_call_id=tool_call_info.tool_call_id,
                 arguments=tool_call_info.arguments,
@@ -299,13 +376,15 @@ class AIAgent:
             result_str = str(result)
 
             # 记录工具调用
+            tool_entry_id = str(uuid.uuid4())
             self._safe_append(ToolEntry(
-                id=str(uuid.uuid4()),
+                id=tool_entry_id,
                 timestamp=time.time(),
                 session_id=session_id,
                 model=model,
                 provider=provider,
                 turn_id=self._current_iteration,
+                parent_id=parent_id,
                 tool_name=tool_call_info.tool_name,
                 tool_call_id=tool_call_info.tool_call_id,
                 arguments=tool_call_info.arguments,
@@ -318,13 +397,15 @@ class AIAgent:
             error_msg = f"错误: 工具执行失败: {e}"
 
             # 记录工具调用失败
+            tool_entry_id = str(uuid.uuid4())
             self._safe_append(ToolEntry(
-                id=str(uuid.uuid4()),
+                id=tool_entry_id,
                 timestamp=time.time(),
                 session_id=session_id,
                 model=model,
                 provider=provider,
                 turn_id=self._current_iteration,
+                parent_id=parent_id,
                 tool_name=tool_call_info.tool_name,
                 tool_call_id=tool_call_info.tool_call_id,
                 arguments=tool_call_info.arguments,

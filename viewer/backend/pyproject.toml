@@ -1,0 +1,21 @@
+[project]
+name = "ascend-op-agent-viewer-backend"
+version = "0.1.0"
+description = "Agent Conversation Visualizer Backend"
+requires-python = ">=3.9"
+
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

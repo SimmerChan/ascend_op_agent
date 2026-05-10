@@ -50,6 +50,7 @@ class Entry:
     provider: Optional[str] = None
     turn_id: int = 0
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    parent_id: Optional[str] = None  # 父节点 ID，用于构建树形关系
 
     def to_dict(self) -> dict[str, Any]:
         """序列化为字典"""
@@ -75,6 +76,7 @@ class UserEntry(Entry):
             "provider": self.provider,
             "turn_id": self.turn_id,
             "id": self.id,
+            "parent_id": self.parent_id,
             "content": self.content,
             "token_count": estimate_tokens(self.content),
         }
@@ -95,6 +97,7 @@ class SystemEntry(Entry):
             "provider": self.provider,
             "turn_id": self.turn_id,
             "id": self.id,
+            "parent_id": self.parent_id,
             "content": self.content,
             "token_count": estimate_tokens(self.content),
         }
@@ -117,6 +120,7 @@ class LLMEntry(Entry):
             "provider": self.provider,
             "turn_id": self.turn_id,
             "id": self.id,
+            "parent_id": self.parent_id,
             "input_messages": self.input_messages,
             "output_content": self.output_content,
             "token_count": estimate_tokens(self.output_content),
@@ -144,6 +148,7 @@ class ToolEntry(Entry):
             "provider": self.provider,
             "turn_id": self.turn_id,
             "id": self.id,
+            "parent_id": self.parent_id,
             "tool_name": self.tool_name,
             "tool_call_id": self.tool_call_id,
             "arguments": self.arguments,
@@ -167,6 +172,7 @@ def entry_from_dict(data: dict[str, Any]) -> Entry:
             provider=data.get("provider"),
             turn_id=data.get("turn_id", 0),
             id=data.get("id", str(uuid.uuid4())),
+            parent_id=data.get("parent_id"),
             content=data.get("content", ""),
         )
     elif entry_type == "system":
@@ -178,6 +184,7 @@ def entry_from_dict(data: dict[str, Any]) -> Entry:
             provider=data.get("provider"),
             turn_id=data.get("turn_id", 0),
             id=data.get("id", str(uuid.uuid4())),
+            parent_id=data.get("parent_id"),
             content=data.get("content", ""),
         )
     elif entry_type == "assistant":
@@ -189,6 +196,7 @@ def entry_from_dict(data: dict[str, Any]) -> Entry:
             provider=data.get("provider"),
             turn_id=data.get("turn_id", 0),
             id=data.get("id", str(uuid.uuid4())),
+            parent_id=data.get("parent_id"),
             input_messages=data.get("input_messages", []),
             output_content=data.get("output_content", ""),
             tool_calls=data.get("tool_calls", []),
@@ -202,6 +210,7 @@ def entry_from_dict(data: dict[str, Any]) -> Entry:
             provider=data.get("provider"),
             turn_id=data.get("turn_id", 0),
             id=data.get("id", str(uuid.uuid4())),
+            parent_id=data.get("parent_id"),
             tool_name=data.get("tool_name", ""),
             tool_call_id=data.get("tool_call_id", ""),
             arguments=data.get("arguments", {}),

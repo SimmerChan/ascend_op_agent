@@ -563,5 +563,123 @@ def sync(ctx: click.Context, direction: str, files: tuple[str, ...]) -> None:
             console.print(f"[red]同步失败: {e}[/red]")
 
 
+@main.command()
+@click.option("--only-backend", is_flag=True, help="仅启动后端服务")
+@click.option("--port", type=int, default=3001, help="后端服务端口")
+@click.pass_context
+def viewer(ctx: click.Context, only_backend: bool, port: int) -> None:
+    """启动 Agent Conversation Visualizer 可视化调试工具
+
+    启动独立的后端 API 服务和前端界面，用于可视化调试 Agent 与用户的完整交互流程。
+
+    EXAMPLES:
+        ascend-op-agent viewer
+        ascend-op-agent viewer --only-backend
+        ascend-op-agent viewer --port 3001
+    """
+    import threading
+    import webbrowser
+
+    config: Config = ctx.obj["config"]
+
+    # 启动后端服务
+    backend_path = Path(__file__).parent.parent.parent / "viewer" / "backend" / "src" / "main.py"
+    if not backend_path.exists():
+        console.print("[red]错误: Viewer 后端未找到[/red]")
+        console.print("请确保 viewer/backend/src/main.py 存在")
+        return
+
+    console.print(f"[bold]启动 Viewer 后端服务...[/bold] 端口 {port}")
+
+    # 后端服务启动环境
+    env = {
+        **os.environ,
+        "PYTHONUNBUFFERED": "1",
+    }
+
+    # 启动后端进程
+    backend_process = subprocess.Popen(
+        [sys.executable, str(backend_path)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    # 等待后端启动
+    import urllib.request
+    backend_ready = False
+    for _ in range(30):  # 最多等3秒
+        try:
+            urllib.request.urlopen(f"http://localhost:{port}/health", timeout=0.5)
+            backend_ready = True
+            break
+        except Exception:
+            time.sleep(0.1)
+
+    if not backend_ready:
+        console.print("[red]错误: 后端服务启动失败[/red]")
+        backend_process.terminate()
+        return
+
+    console.print(f"[green]✓[/green] 后端服务已启动: http://localhost:{port}")
+
+    if only_backend:
+        console.print(f"[dim]后端服务运行在 http://localhost:{port}，按 Ctrl+C 停止[/dim]")
+        try:
+            backend_process.wait()
+        except KeyboardInterrupt:
+            backend_process.terminate()
+        return
+
+    # 启动前端
+    frontend_path = Path(__file__).parent.parent.parent / "viewer" / "frontend"
+    if not frontend_path.exists():
+        console.print("[yellow]警告: 前端目录不存在，跳过前端启动[/yellow]")
+        console.print(f"[dim]请手动启动前端: cd {frontend_path} && npm run dev[/dim]")
+        console.print(f"[dim]后端服务运行在 http://localhost:{port}，按 Ctrl+C 停止[/dim]")
+        try:
+            backend_process.wait()
+        except KeyboardInterrupt:
+            backend_process.terminate()
+        return
+
+    console.print("[bold]启动 Viewer 前端...[/bold]")
+
+    # 检查 npm 是否可用
+    if not shutil.which("npm"):
+        console.print("[red]错误: 前端需要 Node.js 和 npm[/red]")
+        console.print("请安装 Node.js: https://nodejs.org/")
+        backend_process.terminate()
+        return
+
+    # 启动前端开发服务器
+    frontend_process = subprocess.Popen(
+        ["npm", "run", "dev", "--", "--port", "3002"],
+        cwd=str(frontend_path),
+        env={**env, "VITE_API_URL": f"http://localhost:{port}"},
+    )
+
+    # 等待前端启动
+    time.sleep(3)
+
+    # 打开浏览器
+    console.print("[bold]在浏览器中打开...[/bold]")
+    webbrowser.open("http://localhost:3002")
+
+    console.print(f"[green]✓[/green] Viewer 已启动!")
+    console.print(f"  后端: http://localhost:{port}")
+    console.print(f"  前端: http://localhost:3002")
+    console.print("\n按 Ctrl+C 停止服务")
+
+    try:
+        # 等待任一进程结束
+        while backend_process.poll() is None and frontend_process.poll() is None:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]停止服务...[/yellow]")
+        backend_process.terminate()
+        frontend_process.terminate()
+
+
 if __name__ == "__main__":
     main()
