@@ -90,16 +90,10 @@ class PromptBuilder:
                 return f.read()
         return ""
 
-    def _build_hermes_guidance(self) -> str:
-        """Layer 2: Hermes Help Guidance"""
-        return """## Hermes Help Guidance
-
-你是一个专业的昇腾算子开发助手。请遵循以下原则:
-
-1. **准确**: 提供准确的技术信息和代码
-2. **完整**: 确保解决方案包含所有必要部分
-3. **清晰**: 解释你的推理过程和决策依据
-4. **安全**: 遵循安全编码实践
+    def _build_agent_guidance(self) -> str:
+        """Layer 2: Agent Guidance"""
+        return """## Agent Guidance
+如果用户询问关于配置、设置或使用Ascend Oo Agent​ 本身的问题，参考项目根目录的README.md中的使用指南部分进行回答。
 """
 
     def _build_tool_guidance(self) -> str:
