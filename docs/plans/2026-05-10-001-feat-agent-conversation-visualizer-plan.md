@@ -76,13 +76,10 @@ origin: docs/brainstorms/agent-conversation-visualizer-requirements.md
 
 ### Resolved During Planning
 
-- Q: Entry 的 parent_id 如何建立？A: 在 AIAgent.run_conversation 中，UserEntry.id → LLMEntry.parent_id，LLMEntry.id → ToolEntry.parent_id
+- Q: Entry 的 parent_id 如何建立？A: 在 AIAgent.run_conversation 中，UserEntry.id → LLMEntry.parent_id，LLMEntry.id → ToolEntry.parent_id，ToolEntry.id → 后续 LLMEntry.parent_id
 - Q: 树节点 ID 是否稳定？A: 使用 Entry.id 作为树节点唯一标识，parent_id 引用父节点 ID
-
-### Deferred to Implementation
-
-- 工具调用结果的 content 类型是否需要区分 tool_use/tool_result？待查看现有工具实现
-- 前端树形组件使用 Element Plus el-tree 或自递归组件？待前端实现时决定
+- Q: 前端树形组件选择？A: 使用 el-tree + custom node slot，el-tree 提供 keyboard nav 和 accessibility
+- Q: LLM Entry 内容截断策略？A: 默认截断500字符，点击"展开全部"显示全文
 
 ---
 
@@ -102,14 +99,15 @@ ascend_op_agent/
     │   │       └── session.py       # Pydantic 类型定义
     │   └── pyproject.toml
     └── frontend/
-        ├── src/
-        │   ├── views/
-        │   │   └── SessionTreeView.vue
-        │   ├── components/
-        │   │   └── TreeNode.vue
-        │   └── api/
-        │       └── sessions.ts
-        └── package.json
+        └── src/
+            ├── views/
+            │   └── SessionTreeView.vue  # Split View: 会话列表 + 树详情
+            ├── components/
+            │   └── TreeNode.vue         # 自定义树节点组件
+            ├── api/
+            │   └── sessions.ts
+            └── stores/
+                └── session.ts           # Pinia Store
 ```
 
 ---
@@ -123,10 +121,10 @@ ascend_op_agent/
 ```
 AIAgent.run_conversation()
   ├─ UserEntry (id=U1, parent_id=null)
-  ├─ SystemEntry (id=S1, parent_id=U1)
+  ├─ SystemEntry (id=S1, parent_id=null)  ← 全局上下文，根节点
   ├─ LLMEntry (id=L1, parent_id=U1, input=[...], output="...")
   │   ├─ ToolEntry (id=T1, parent_id=L1, tool_name="xxx", arguments={...})
-  │   └─ LLMEntry (id=L2, parent_id=L1, ...)  ← 工具调用后继续迭代
+  │   └─ LLMEntry (id=L2, parent_id=T1, ...)  ← 工具调用后继续迭代，parent=ToolEntry
   └─ LLMEntry (id=L3, parent_id=U1, output="final response")  ← 最终回复
 ```
 
@@ -298,11 +296,13 @@ ascend_op_agent viewer --port 3001     # 指定端口
 
 **Approach:**
 - 复用 claude-session-dashboard 前端设计模式
+- **页面架构**: Split View - 左侧会话列表，右侧树详情
 - 使用 Element Plus el-tree 或自递归组件展示树形
-- LLM Entry 展示：输入消息数、输出内容（可展开）、工具调用数
-- Tool Entry 展示：工具名称、参数 JSON（可展开）、结果/错误
+- LLM Entry 展示：输入消息数、输出内容（默认截断500字符，点击展开）、工具调用数
+- Tool Entry 展示：工具名称、参数 JSON（el-collapse + syntax highlighting）、结果/错误
 - 顶部筛选器支持按会话源（ACP/CLI）筛选
 - Pinia Store 管理会话状态
+- **交互状态规范**: Loading(skeleton)、Empty(提示)、Error(重试按钮)、Partial(折叠+计数)
 
 **Patterns to follow:**
 - claude-session-dashboard: SessionDetailView.vue、SessionCard.vue
@@ -310,12 +310,16 @@ ascend_op_agent viewer --port 3001     # 指定端口
 - Pinia Store 模式
 
 **Test scenarios:**
+- Happy path: Split View 布局正常，左侧会话列表，右侧树详情
 - Happy path: 树形正确展示，父子节点缩进正确
 - Happy path: 点击展开/折叠正常工作
-- Happy path: LLM Entry 展开显示完整输入输出
-- Happy path: Tool Entry 展开显示参数和结果
-- Edge case: 长文本内容截断和展开
-- Edge case: 工具调用失败显示错误样式
+- Happy path: LLM Entry 展开显示完整输入输出（默认截断500字符）
+- Happy path: Tool Entry 展开显示 syntax highlighting 的参数和结果
+- Edge case: 长文本超过500字符显示"展开全部"按钮
+- Edge case: Loading 状态显示 skeleton animation
+- Edge case: Empty 会话显示"暂无数据"提示
+- Edge case: API Error 显示错误提示和重试按钮
+- Edge case: 工具调用失败显示红色错误样式
 
 **Verification:**
 - 页面正常渲染，API 数据正确显示，树形交互正常
