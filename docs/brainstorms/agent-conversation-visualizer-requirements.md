@@ -76,10 +76,20 @@ UserEntry (parent=null)
 
 ## 技术方案
 
+### 技术选型
+
+| 考量 | 决定 |
+|------|------|
+| 后端框架 | **FastAPI (Python)** - 与 ascend_op_agent 同一 runtime，可复用 Entry 类型和 session_manager 逻辑 |
+| 前端框架 | **Vue3 + Element Plus** - 复用 dashboard 设计模式 |
+| 树构建位置 | **后端构建** - API 返回嵌套结构，前端直接渲染 |
+| 类型共享 | Python dataclass → Pydantic → OpenAPI schema → TypeScript types |
+
 ### 数据层
 
 - Entry dataclass 添加 `parent_id: Optional[str]`
 - AIAgent.run_conversation 补录 LLMEntry，建立父子关系
+- 树构建逻辑在 viewer 后端 service 层实现
 
 ### 可视化服务
 
@@ -89,20 +99,20 @@ ascend_op_agent/
     ├── backend/               # FastAPI 后端
     │   └── src/
     │       ├── routes/        # API 路由
-    │       ├── services/      # 树构建服务
+    │       ├── services/      # 树构建服务（复用 session_manager）
+    │       ├── schemas/        # Pydantic 类型定义
     │       └── main.py
     └── frontend/              # Vue3 前端
         └── src/
             ├── views/         # 页面
-            └── components/    # 组件
+            └── components/   # 树形组件
 ```
 
-### 复用 claude-session-dashboard
+### 复用策略
 
-参考其前端设计：
-- Vue3 + Element Plus
-- Pinia 状态管理
-- 树形组件渲染
+- **session_manager.py** - 复用 read_session_history() 读取 JSONL
+- **session_record.py** - Entry 类型 + parent_id 扩展
+- **dashboard 前端** - Vue3 组件模式、Element Plus、Pinia Store
 
 ## 成功标准
 
