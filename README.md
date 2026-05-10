@@ -10,6 +10,57 @@
 - **Skill知识库**: 积累和复用算子开发经验
 - **四层记忆系统**: Working/Episodic/Semantic/Procedural Memory
 - **ACP编辑器适配器**: 支持 VS Code、Zed、JetBrains
+- **对话可视化器**: 树形结构调试 Agent 与用户的完整交互流程
+
+## CLI 命令
+
+| 命令 | 说明 |
+|------|------|
+| `ascend-op-agent init` | 初始化项目配置和工作目录 |
+| `ascend-op-agent run` | 启动 Agent 对话（TUI 交互界面） |
+| `ascend-op-agent skill list` | 列出已安装的 Skills |
+| `ascend-op-agent skill add <url>` | 添加外部 Skill 仓库 |
+| `ascend-op-agent skill install <url>` | 从仓库安装 Skill（交互式选择） |
+| `ascend-op-agent skill remove <name>` | 移除外部 Skill 仓库 |
+| `ascend-op-agent mcp list` | 列出已配置的 MCP 服务器 |
+| `ascend-op-agent mcp start <name>` | 启动 MCP 服务器 |
+| `ascend-op-agent mcp stop <name>` | 停止 MCP 服务器 |
+| `ascend-op-agent mcp status` | 查看 MCP 服务器状态 |
+| `ascend-op-agent acp` | ACP 编辑器集成模式（stdio 与 IDE 通信） |
+| `ascend-op-agent sync push -f <files>` | 将本地文件同步到远程 |
+| `ascend-op-agent sync pull -f <files>` | 将远程文件同步到本地 |
+| `ascend-op-agent viewer` | 启动 Agent Conversation Visualizer 可视化调试工具 |
+| `ascend-op-agent viewer --only-backend` | 仅启动后端 API 服务 |
+| `ascend-op-agent viewer --port <port>` | 指定后端服务端口（默认 3001） |
+
+### 命令示例
+
+```bash
+# 初始化项目
+ascend-op-agent init --workspace ./workspace
+
+# 启动 Agent 对话
+ascend-op-agent run
+
+# 管理 Skills
+ascend-op-agent skill list
+ascend-op-agent skill install https://gitcode.com/ascend/agent-skills
+
+# 管理 MCP 服务器
+ascend-op-agent mcp list
+ascend-op-agent mcp start code-search
+
+# 使用 ACP 编辑器模式
+ascend-op-agent acp
+
+# 文件同步
+ascend-op-agent sync push -f src/ops
+ascend-op-agent sync pull -f build/output.cce
+
+# 启动可视化调试工具
+ascend-op-agent viewer
+ascend-op-agent viewer --port 8080
+```
 
 ## 环境要求
 
@@ -120,6 +171,9 @@ ascend_op_agent/
 │   ├── adapter.py  # 适配器主类
 │   └── protocol.py # 协议定义
 ├── backend/       # RPC后端服务
+├── viewer/        # Agent对话可视化器
+│   ├── backend/    # 后端 API 服务（FastAPI）
+│   └── frontend/   # 前端界面（Vue 3 + Element Plus）
 ├── security/      # 安全模块
 └── cli.py         # CLI入口
 ```
