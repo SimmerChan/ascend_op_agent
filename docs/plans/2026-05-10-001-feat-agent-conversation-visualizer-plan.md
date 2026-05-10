@@ -40,9 +40,11 @@ origin: docs/brainstorms/agent-conversation-visualizer-requirements.md
 - JSONL 兼容读取（复用现有 session_manager）
 
 ### 不纳入
-- 修改现有 SessionRecordManager 写入逻辑
+- 修改 SessionRecordManager 的 Append-only 写入机制（ThreadPoolExecutor + Queue 模式）
 - 修改 backend.py 的 RPC 逻辑
 - 修改 CLI 的 TUI 逻辑
+
+**说明**: "写入逻辑不变"指 SessionRecordManager 的异步写入机制不变，但 R1 的 parent_id 字段和 R2 的 LLMEntry 数据内容会通过现有 `_safe_append` 正常写入 JSONL
 
 ---
 
@@ -85,6 +87,8 @@ origin: docs/brainstorms/agent-conversation-visualizer-requirements.md
 
 ## Output Structure
 
+> App.vue 和 main.ts 是 Vue3 项目模板自动生成的 boilerplate，不列入交付物
+
 ```
 ascend_op_agent/
 └── viewer/
@@ -92,7 +96,7 @@ ascend_op_agent/
     │   ├── src/
     │   │   ├── main.py              # FastAPI 入口
     │   │   ├── routes/
-    │   │   │   └── sessions.py      # 会话 API 路由
+    │   │   │   └── sessions.py      # 会话 API 路由 (GET /api/sessions?source=)
     │   │   ├── services/
     │   │   │   └── tree_builder.py # 树构建服务
     │   │   └── schemas/
@@ -121,11 +125,15 @@ ascend_op_agent/
 ```
 AIAgent.run_conversation()
   ├─ UserEntry (id=U1, parent_id=null)
-  ├─ SystemEntry (id=S1, parent_id=null)  ← 全局上下文，根节点
-  ├─ LLMEntry (id=L1, parent_id=U1, input=[...], output="...")
-  │   ├─ ToolEntry (id=T1, parent_id=L1, tool_name="xxx", arguments={...})
-  │   └─ LLMEntry (id=L2, parent_id=T1, ...)  ← 工具调用后继续迭代，parent=ToolEntry
-  └─ LLMEntry (id=L3, parent_id=U1, output="final response")  ← 最终回复
+  │
+  ├─ Turn 1 (iteration)
+  │   ├─ SystemEntry (id=S1, parent_id=null)  ← 每次迭代的根节点
+  │   ├─ LLMEntry (id=L1, parent_id=U1, input=[...], output="...")
+  │   │   ├─ ToolEntry (id=T1, parent_id=L1, ...)
+  │   │   └─ LLMEntry (id=L2, parent_id=T1, ...)  ← 工具调用后继续迭代
+  │   └─ LLMEntry (id=L3, parent_id=U1, output="response")
+  │
+  └─ Turn N (后续迭代，同上结构)
 ```
 
 ### 后端树构建逻辑
@@ -143,6 +151,7 @@ build_tree(entries)
 
 ```python
 # GET /api/sessions
+# Query params: ?source=acp|cli|all (可选，默认 all)
 # 返回: { sessions: [{session_id, source, created_at, entry_count}] }
 
 # GET /api/sessions/{session_id}/tree
@@ -162,7 +171,7 @@ build_tree(entries)
 
 **Requirements:** R1
 
-**Dependencies:** None
+**Dependencies:** None（可与 U2 并行开发，修改不同文件）
 
 **Files:**
 - Modify: `src/ascend_op_agent/agent/session_record.py`
@@ -170,7 +179,8 @@ build_tree(entries)
 **Approach:**
 - Entry 基类添加 `parent_id: Optional[str] = None` 字段
 - 各子类（UserEntry、SystemEntry、LLMEntry、ToolEntry）继承此字段
-- entry_from_dict / entry_from_json 支持 parent_id 反序列化
+- **关键**: 各子类的 `to_dict()` 方法需手动添加 `parent_id` 字段（不调用 super()，现有结构），或重构为 `super().to_dict()` + update 模式
+- entry_from_dict / entry_from_json 在每个 entry 分支添加 `parent_id=data.get('parent_id')`
 
 **Patterns to follow:**
 - 现有 Entry dataclass 结构
@@ -191,15 +201,16 @@ build_tree(entries)
 
 **Requirements:** R2
 
-**Dependencies:** U1
+**Dependencies:** None（可与 U1 并行开发，修改不同文件）
 
 **Files:**
 - Modify: `src/ascend_op_agent/agent/core.py`
 - Test: `tests/unit/agent/test_core.py`（新建）
 
 **Approach:**
-- LLMClient.call() 返回值包装为 LLMEntry
-- 记录 input_messages（system_prompt + conversation_history）、output_content
+- LLMClient.call() 返回 str（LLM response），不是结构化对象
+- **关键**: `input_messages` 需在调用前构造：在 AIAgent.run_conversation 中，调用 LLM 前记录 `{"role": "system", "content": system_prompt}` + 当前 `conversation_history`，作为 LLMEntry.input_messages
+- LLMEntry.output_content 来自 LLMClient.call() 返回的 response string
 - 建立父子关系：UserEntry → LLMEntry，LLMEntry → ToolEntry，ToolEntry → 后续 LLMEntry
 - 当 LLM 返回工具调用时，ToolEntry.parent_id = LLMEntry.id
 - 工具调用后的下一个 LLMEntry.parent_id = ToolEntry.id（如果继续迭代）
@@ -210,16 +221,18 @@ build_tree(entries)
 **Test scenarios:**
 - Happy path: 单轮对话正确记录 LLMEntry 和父子关系
 - Happy path: 工具调用场景正确记录 ToolEntry 和后续 LLMEntry
+- Happy path: input_messages 包含调用前的 system_prompt + conversation_history
 - Error path: LLM 调用失败时仍记录失败的 ToolEntry
+- Error path: session_manager 为 None 时 _safe_append 静默失败不影响主流程（LLMEntry 未记录但 Agent 继续运行）
 
 **Verification:**
 - 日志或调试输出确认 LLMEntry 被正确创建和记录
 
 ---
 
-- U3. **[Viewer 后端 - 树构建服务]**
+- U3. **[Viewer 后端 + CLI 集成]**
 
-**Goal:** 读取 JSONL 文件，构建嵌套树结构 API
+**Goal:** 读取 JSONL 文件，构建嵌套树结构 API，提供 CLI 启动命令
 
 **Requirements:** R3
 
@@ -237,43 +250,31 @@ build_tree(entries)
 - FastAPI 路由读取 JSONL，调用 tree_builder 构建嵌套结构
 - API 返回两种模式：扁平 entries 和嵌套 tree
 - 支持按 session_id 前缀区分 ACP/CLI 会话
+- **CLI 集成**: 修改 `src/ascend_op_agent/cli.py` 添加 `viewer` 子命令
+  - `ascend_op_agent viewer` 启动后端 + 前端
+  - `ascend_op_agent viewer --only-backend` 仅后端
+  - `ascend_op_agent viewer --port 3001` 指定端口
+  - 启动逻辑：检查端口 → 启动后端(subprocess) → 启动前端(subprocess) → 打开浏览器
 
 **Patterns to follow:**
 - ascend_op_agent 现有 SessionRecordManager 读取逻辑
-- FastAPI 路由模式（参考 backend.py RPC handler）
+- FastAPI 路由模式（参考 API 设计，非修改 backend.py）
 - CLI 子命令模式（参考 acp/command.ts）
 
 **Test scenarios:**
 - Happy path: 正确读取 JSONL 并构建嵌套树
+- Happy path: CLI 命令正常启动后端和前端服务
 - Edge case: 空会话或仅有一条 Entry 的会话
 - Edge case: parent_id 断裂时的降级处理（显示为根节点）
+- Edge case: 端口被占用时的错误提示
 
 **Verification:**
 - API 返回的 JSON 结构与前端期望的 TreeNode 一致
+- `ascend_op_agent viewer --help` 显示正确的帮助信息
 
 ---
 
-### U3.5 CLI 集成
-
-**CLI 命令设计:**
-```
-ascend_op_agent viewer          # 启动 viewer 服务（后端 + 前端）
-ascend_op_agent viewer --only-backend  # 仅启动后端
-ascend_op_agent viewer --port 3001     # 指定端口
-```
-
-**集成位置:**
-- Modify: `src/ascend_op_agent/cli.py` - 添加 `viewer` 子命令
-- 或 Create: `src/ascend_op_agent/cli/viewer.py` - viewer 命令模块
-
-**启动逻辑:**
-1. 检查端口是否可用
-2. 启动 FastAPI 后端服务（subprocess）
-3. 启动前端 dev server（subprocess，可选）
-4. 打开浏览器
-5. Ctrl+C 关闭所有进程
-
----
+## Implementation Units
 
 - U4. **[Viewer 前端 - 树形展示组件]**
 
@@ -320,6 +321,7 @@ ascend_op_agent viewer --port 3001     # 指定端口
 - Edge case: Empty 会话显示"暂无数据"提示
 - Edge case: API Error 显示错误提示和重试按钮
 - Edge case: 工具调用失败显示红色错误样式
+- Edge case: 按 ACP/CLI 筛选后无结果显示空状态
 
 **Verification:**
 - 页面正常渲染，API 数据正确显示，树形交互正常
@@ -332,7 +334,7 @@ ascend_op_agent viewer --port 3001     # 指定端口
 
 **Requirements:** R1, R2, R3, R4, R5, R6, R7
 
-**Dependencies:** U1, U2, U3, U4
+**Dependencies:** U3, U4
 
 **Files:**
 - Test: `tests/integration/test_viewer_e2e.py`（新建）
