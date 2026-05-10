@@ -3,12 +3,12 @@
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
-from ..schemas.session import (
+from schemas.session import (
     SessionListResponse,
     SessionTreeResponse,
     SessionDetailResponse,
 )
-from ..services.tree_builder import TreeBuilder
+from services.tree_builder import TreeBuilder
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 

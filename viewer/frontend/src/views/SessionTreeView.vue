@@ -53,7 +53,7 @@ const getRowClass = ({ row }: { row: { source: string } }) => {
           v-else
           :data="store.filteredSessions"
           highlight-current-row
-          @row-click="store.selectSession"
+          @row-click="(row: any) => store.selectSession(row.session_id)"
           :row-class-name="getRowClass"
           style="width: 100%"
         >

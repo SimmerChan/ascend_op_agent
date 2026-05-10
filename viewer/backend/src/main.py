@@ -3,9 +3,11 @@
 import sys
 from pathlib import Path
 
-# Add project root to path
-project_root = Path(__file__).parent.parent.parent.parent.parent
+# Add backend src and project root to path
+backend_src = Path(__file__).parent.absolute()
+project_root = backend_src.parent.parent.parent
 sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(backend_src))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

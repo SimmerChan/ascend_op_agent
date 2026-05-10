@@ -599,26 +599,69 @@ def viewer(ctx: click.Context, only_backend: bool, port: int) -> None:
 
     # 启动后端进程
     backend_process = subprocess.Popen(
-        [sys.executable, str(backend_path)],
+        [sys.executable, "-m", "main"],
+        cwd=str(backend_path.parent),
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
 
-    # 等待后端启动
+    # 等待后端启动（增加超时时间和重试间隔）
     import urllib.request
     backend_ready = False
-    for _ in range(30):  # 最多等3秒
+    last_error = ""
+    for i in range(50):  # 最多等5秒
         try:
-            urllib.request.urlopen(f"http://localhost:{port}/health", timeout=0.5)
+            # 使用 127.0.0.1 而非 localhost，避免 IPv6 连接问题
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=0.5)
             backend_ready = True
             break
-        except Exception:
+        except Exception as e:
+            last_error = str(e)
             time.sleep(0.1)
 
     if not backend_ready:
-        console.print("[red]错误: 后端服务启动失败[/red]")
+        # 获取后端进程的stderr输出以诊断失败原因
         backend_process.terminate()
+        try:
+            _, stderr = backend_process.communicate(timeout=2)
+            error_output = stderr.decode("utf-8", errors="replace").strip() if stderr else ""
+        except Exception:
+            error_output = ""
+
+        # 检查实际错误而非INFO级别日志
+        if not error_output:
+            # 服务器可能仍在运行但health check失败（如IPv6 vs IPv4问题）
+            # 检查端口是否真的无法访问
+            import socket
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                result = sock.connect_ex(('127.0.0.1', port))
+                sock.close()
+                if result == 0:
+                    error_detail = f"健康检查失败但端口可访问，可能服务正在启动中: {last_error}"
+                else:
+                    error_detail = f"端口无法访问，最后错误: {last_error}"
+            except Exception:
+                error_detail = f"健康检查失败: {last_error}"
+        elif "No module named" in error_output:
+            missing_module = error_output.split("No module named")[1].split("'")[0].split()[0]
+            error_detail = f"缺少模块: {missing_module}，请运行: pip install {missing_module}"
+        elif "address already in use" in error_output or "Errno 48" in error_output:
+            error_detail = "端口已被占用，请先关闭占用端口的进程 (lsof -i :3001 | grep Python | awk '{print $2}' | xargs kill)"
+        elif "Permission denied" in error_output or "Errno 13" in error_output:
+            error_detail = "端口权限被拒绝，请尝试使用其他端口: ascend-op-agent viewer --port 3002"
+        elif "Traceback" in error_output:
+            # 显示真实的错误栈
+            lines = [l for l in error_output.split("\n") if "File " in l or "Error:" in l or "Exception" in l]
+            error_detail = "\n".join(lines[:3]) if lines else error_output[:200]
+        else:
+            error_lines = [l for l in error_output.split("\n") if l.strip() and not l.startswith("INFO:")]
+            error_detail = "\n".join(error_lines[:3]) if error_lines else f"健康检查失败: {last_error}"
+
+        console.print(f"[red]错误: 后端服务启动失败[/red]")
+        console.print(f"[dim]原因: {error_detail}[/dim]")
         return
 
     console.print(f"[green]✓[/green] 后端服务已启动: http://localhost:{port}")
@@ -652,9 +695,9 @@ def viewer(ctx: click.Context, only_backend: bool, port: int) -> None:
         backend_process.terminate()
         return
 
-    # 启动前端开发服务器
+    # 启动前端开发服务器 (使用 npx 确保能找到 vite)
     frontend_process = subprocess.Popen(
-        ["npm", "run", "dev", "--", "--port", "3002"],
+        ["npx", "vite", "--port", "3002"],
         cwd=str(frontend_path),
         env={**env, "VITE_API_URL": f"http://localhost:{port}"},
     )
