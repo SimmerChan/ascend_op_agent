@@ -16,19 +16,33 @@ import React from 'react';
 
 interface ProgressBarProps {
   label?: string;
-  percent: number; // 0-100
-  phase?: number;
+  stage?: 'thinking' | 'tool_executing' | 'completed' | 'waiting';
+  tool_name?: string;
+  error_message?: string;
 }
 
-export const ProgressBar: React.FC<ProgressBarProps> = ({ label, percent, phase }) => {
-  const filled = Math.floor(percent / 2.5);
-  const empty = 40 - filled;
-  const bar = '█'.repeat(filled) + '░'.repeat(empty);
+export const ProgressBar: React.FC<ProgressBarProps> = ({ label, stage, tool_name, error_message }) => {
+  const getStageText = () => {
+    if (stage === 'thinking') {
+      return '思考中...';
+    } else if (stage === 'tool_executing' && error_message) {
+      return `⚠️ ${tool_name || 'tool'} - ${error_message}`;
+    } else if (stage === 'tool_executing' && tool_name) {
+      return `正在执行 ${tool_name}...`;
+    } else if (stage === 'tool_executing') {
+      return '执行中...';
+    } else if (stage === 'waiting') {
+      return '等待响应...';
+    } else if (stage === 'completed') {
+      return '完成';
+    }
+    return '';
+  };
+
   return (
     <Box flexDirection="column">
       {label && <Text>{label}</Text>}
-      {phase !== undefined && <Text dimColor>Phase {phase}</Text>}
-      <Text>[{bar}] {percent}%</Text>
+      <Text dimColor>{getStageText()}</Text>
     </Box>
   );
 };

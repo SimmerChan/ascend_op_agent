@@ -18,9 +18,10 @@
 """
 
 import logging
+import threading
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from ascend_op_agent.agent.context import ContextEngine
 from ascend_op_agent.agent.memory import MemoryStore
@@ -70,6 +71,8 @@ class AIAgent:
         context_engine: ContextEngine,
         memory_store: MemoryStore,
         session_manager: Optional[SessionRecordManager] = None,
+        tool_progress_callback: Optional[Callable[..., None]] = None,
+        status_callback: Optional[Callable[..., None]] = None,
     ):
         self.config = config
         self.tool_registry = tool_registry
@@ -77,6 +80,8 @@ class AIAgent:
         self.context_engine = context_engine
         self.memory = memory_store
         self._session_manager = session_manager
+        self._tool_progress_callback = tool_progress_callback
+        self._status_callback = status_callback
 
         self._llm_client = LLMClient(config.llm)
         self._conversation_history: list[dict[str, str]] = []
@@ -155,11 +160,32 @@ class AIAgent:
             llm_entry_id = str(uuid.uuid4())
             llm_entry_parent_id = user_entry_id  # LLMEntry.parent_id = UserEntry.id
 
-            response = self._llm_client.call(
-                system_prompt=system_prompt,
-                conversation_history=self._conversation_history,
-                tools=tools if tools else None,
-            )
+            # 触发 thinking 状态回调
+            if self._status_callback:
+                try:
+                    self._status_callback("thinking")
+                except Exception as e:
+                    logger.warning(f"status_callback error: {e}")
+
+            # 启动超时追踪器
+            timeout_tracker = TimeoutTracker(60, lambda: self._status_callback("waiting") if self._status_callback else None)
+            timeout_tracker.start()
+
+            try:
+                response = self._llm_client.call(
+                    system_prompt=system_prompt,
+                    conversation_history=self._conversation_history,
+                    tools=tools if tools else None,
+                )
+            finally:
+                timeout_tracker.cancel()
+
+            # 触发 idle 状态回调
+            if self._status_callback:
+                try:
+                    self._status_callback("idle")
+                except Exception as e:
+                    logger.warning(f"status_callback error: {e}")
 
             # 解析 tool_calls（如果有）
             tool_calls = self._parse_tool_calls(response)
@@ -208,6 +234,14 @@ class AIAgent:
                 self._conversation_history.append({"role": "assistant", "content": response})
                 # 更新记忆
                 self._update_memory(user_input, response)
+
+                # 触发 completed 状态回调
+                if self._status_callback:
+                    try:
+                        self._status_callback("completed")
+                    except Exception as e:
+                        logger.warning(f"status_callback error: {e}")
+
                 return response
 
         # 达到最大迭代次数
@@ -294,6 +328,13 @@ class AIAgent:
         provider = self.config.llm.provider
 
         try:
+            # 触发 tool.started 回调
+            if self._tool_progress_callback:
+                try:
+                    self._tool_progress_callback("tool.started", tool_name)
+                except Exception as e:
+                    logger.warning(f"tool_progress_callback error: {e}")
+
             result = tool.execute(**args)
             result_str = str(result)
 
@@ -312,6 +353,13 @@ class AIAgent:
                 result=result_str,
                 success=True,
             ))
+
+            # 触发 tool.complete 回调
+            if self._tool_progress_callback:
+                try:
+                    self._tool_progress_callback("tool.complete", tool_name, success=True)
+                except Exception as e:
+                    logger.warning(f"tool_progress_callback error: {e}")
 
             return result_str
         except Exception as e:
@@ -333,6 +381,13 @@ class AIAgent:
                 success=False,
                 error=error_msg,
             ))
+
+            # 触发 tool.error 回调
+            if self._tool_progress_callback:
+                try:
+                    self._tool_progress_callback("tool.error", tool_name, error_code="EXECUTION_ERROR", error_message=str(e))
+                except Exception as cb_e:
+                    logger.warning(f"tool_progress_callback error: {cb_e}")
 
             return error_msg
 
@@ -372,6 +427,13 @@ class AIAgent:
             return error_msg
 
         try:
+            # 触发 tool.started 回调
+            if self._tool_progress_callback:
+                try:
+                    self._tool_progress_callback("tool.started", tool_call_info.tool_name)
+                except Exception as e:
+                    logger.warning(f"tool_progress_callback error: {e}")
+
             result = tool.execute(**tool_call_info.arguments)
             result_str = str(result)
 
@@ -391,6 +453,13 @@ class AIAgent:
                 result=result_str,
                 success=True,
             ))
+
+            # 触发 tool.complete 回调
+            if self._tool_progress_callback:
+                try:
+                    self._tool_progress_callback("tool.complete", tool_call_info.tool_name, success=True)
+                except Exception as e:
+                    logger.warning(f"tool_progress_callback error: {e}")
 
             return result_str
         except Exception as e:
@@ -414,6 +483,13 @@ class AIAgent:
                 error=error_msg,
             ))
 
+            # 触发 tool.error 回调
+            if self._tool_progress_callback:
+                try:
+                    self._tool_progress_callback("tool.error", tool_call_info.tool_name, error_code="EXECUTION_ERROR", error_message=str(e))
+                except Exception as cb_e:
+                    logger.warning(f"tool_progress_callback error: {cb_e}")
+
             return error_msg
 
     def _update_memory(self, user_input: str, response: str) -> None:
@@ -433,6 +509,35 @@ class AIAgent:
     def tools(self) -> list[str]:
         """获取已注册工具列表"""
         return self.tool_registry.list_tools()
+
+
+class TimeoutTracker:
+    """LLM 调用超时追踪器
+
+    使用 threading.Timer 在外部计时，触发超时回调。
+    """
+
+    def __init__(self, timeout: float, callback: Callable[[], None]):
+        """初始化超时追踪器
+
+        Args:
+            timeout: 超时时间（秒）
+            callback: 超时触发的回调函数
+        """
+        self._timeout = timeout
+        self._callback = callback
+        self._timer: Optional[threading.Timer] = None
+
+    def start(self) -> None:
+        """启动计时器"""
+        self._timer = threading.Timer(self._timeout, self._callback)
+        self._timer.start()
+
+    def cancel(self) -> None:
+        """取消计时器"""
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
 
 
 class LLMClient:

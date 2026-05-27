@@ -23,6 +23,13 @@ import TextInput from 'ink-text-input';
 
 type AppState = 'idle' | 'running' | 'waiting_confirm' | 'completed' | 'error';
 
+interface ProgressState {
+  stage: 'thinking' | 'tool_executing' | 'completed' | 'waiting';
+  tool_name?: string;
+  error_code?: string;
+  error_message?: string;
+}
+
 interface ConfirmData {
   title: string;
   message?: string;
@@ -32,7 +39,7 @@ interface ConfirmData {
 export const App: React.FC = () => {
   const [state, setState] = useState<AppState>('idle');
   const [input, setInput] = useState('');
-  const [progress, setProgress] = useState({ phase: 0, percent: 0 });
+  const [progress, setProgress] = useState<ProgressState>({ stage: 'thinking' });
   const [messages, setMessages] = useState<string[]>([]);
   const [confirmData, setConfirmData] = useState<ConfirmData | null>(null);
 
@@ -47,10 +54,12 @@ export const App: React.FC = () => {
       const msg = lastResponse.params?.message as string;
       setMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
     } else if (lastResponse.method === 'agent.progress') {
-      const p = lastResponse.params as { phase?: number; percent?: number } | undefined;
+      const p = lastResponse.params as { stage?: string; tool_name?: string; error_code?: string; error_message?: string } | undefined;
       setProgress({
-        phase: p?.phase ?? 0,
-        percent: p?.percent ?? 0
+        stage: (p?.stage as ProgressState['stage']) ?? 'thinking',
+        tool_name: p?.tool_name,
+        error_code: p?.error_code,
+        error_message: p?.error_message
       });
     } else if (lastResponse.method === 'agent.error') {
       const err = lastResponse.params?.message as string;
@@ -105,7 +114,7 @@ export const App: React.FC = () => {
     // Immediately clear all UI state to prevent stale input display
     setInput('');
     setMessages([]);
-    setProgress({ phase: 0, percent: 0 });
+    setProgress({ stage: 'thinking' });
     setConfirmData(null);
     setState('idle');
     // Then reset backend
@@ -148,7 +157,7 @@ export const App: React.FC = () => {
       )}
 
       {state === 'running' && (
-        <ProgressBar percent={progress.percent} phase={progress.phase} />
+        <ProgressBar stage={progress.stage} tool_name={progress.tool_name} error_message={progress.error_message} />
       )}
 
       {state === 'completed' && (

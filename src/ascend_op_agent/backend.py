@@ -197,7 +197,7 @@ def _setup_agent(config_path: str | None = None) -> None:
         session_manager=_session_manager,
     )
 
-    _agent_wrapper = AgentAsyncWrapper(agent)
+    _agent_wrapper = AgentAsyncWrapper(agent, send_notification_fn=_server.send_notification)
     logging.info("Agent initialized")
 
 
