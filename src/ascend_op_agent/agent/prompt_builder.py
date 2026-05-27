@@ -64,7 +64,7 @@ class PromptBuilder:
         layers.append(self._build_identity_layer())
 
         # Layer 2: Hermes Help Guidance
-        layers.append(self._build_hermes_guidance())
+        layers.append(self._build_agent_guidance())
 
         # Layer 3: Tool-aware Behavioral Guidance
         layers.append(self._build_tool_guidance())
