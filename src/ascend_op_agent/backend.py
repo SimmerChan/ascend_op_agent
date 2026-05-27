@@ -208,10 +208,6 @@ async def main() -> None:
     _setup_logging()
     logging.info("Starting backend RPC service")
 
-    # 初始化 Agent
-    config_path = os.getenv("ASCEND_OP_AGENT_CONFIG")
-    _setup_agent(config_path)
-
     # 创建 RPC 服务器
     _server = JSONRPCServer()
 
@@ -220,6 +216,10 @@ async def main() -> None:
     _server.register_method("session.reset", _handle_session_reset)
     _server.register_method("session.get_history", _handle_session_get_history)
     _server.register_method("session.shutdown", _handle_session_shutdown)
+
+    # 初始化 Agent（需要 _server 已创建）
+    config_path = os.getenv("ASCEND_OP_AGENT_CONFIG")
+    _setup_agent(config_path)
 
     logging.info("Backend ready, starting RPC server")
 
