@@ -597,28 +597,35 @@ def viewer(ctx: click.Context, only_backend: bool, port: int) -> None:
         "PYTHONUNBUFFERED": "1",
     }
 
-    # 启动后端进程
+    # 启动后端进程 (start_new_session 隔离终端, stdin=DEVNULL 防止 EOF)
+    # 使用 shell=True 确保进程完全隔离，避免 uvicorn 收到 stdin EOF
     backend_process = subprocess.Popen(
-        [sys.executable, "-m", "main"],
-        cwd=str(backend_path.parent),
+        f"cd {backend_path.parent} && {sys.executable} main.py",
+        shell=True,
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
     )
 
-    # 等待后端启动（增加超时时间和重试间隔）
-    import urllib.request
+    # 等待后端启动（使用 curl 避免 urllib 问题）
+    # 注意：subprocess 已在文件顶部导入，此处直接使用
     backend_ready = False
     last_error = ""
     for i in range(50):  # 最多等5秒
         try:
-            # 使用 127.0.0.1 而非 localhost，避免 IPv6 连接问题
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=0.5)
-            backend_ready = True
-            break
+            # 使用 curl 而不是 urllib.request，避免 502 问题
+            result = subprocess.run(
+                ["curl", "-s", "--max-time", "1", f"http://127.0.0.1:{port}/health"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            if result.returncode == 0 and "healthy" in result.stdout:
+                backend_ready = True
+                break
+            last_error = f"curl returned {result.returncode}: {result.stdout.strip()}"
         except Exception as e:
             last_error = str(e)
-            time.sleep(0.1)
+        time.sleep(0.1)
 
     if not backend_ready:
         # 获取后端进程的stderr输出以诊断失败原因
