@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineOptions } from 'vue'
+import { computed, ref, defineOptions } from 'vue'
 
 // Enable recursive component
 defineOptions({ name: 'TreeNode' })
@@ -17,6 +17,32 @@ const props = defineProps<{
 
 const depth = computed(() => props.depth ?? 0)
 const entry = computed(() => props.node.entry)
+
+// 控制 input_messages 展开/收起
+const showInputMessages = ref(false)
+
+const inputMessages = computed(() => entry.value.input_messages as Array<{role: string, content: string}> || [])
+const hasInputMessages = computed(() => inputMessages.value.length > 0)
+
+const truncatedContent = computed(() => {
+  const content = entry.value.output_content || entry.value.content || ''
+  const maxLen = 500
+  if (content.length <= maxLen) return content
+  return content.substring(0, maxLen) + '...'
+})
+
+const hasMore = computed(() => {
+  const content = entry.value.output_content || entry.value.content || ''
+  return content.length > 500
+})
+
+const toolName = computed(() => entry.value.tool_name as string || '')
+const toolSuccess = computed(() => entry.value.success as boolean ?? true)
+const toolError = computed(() => entry.value.error as string | null)
+
+const formatTime = (ts: number) => {
+  return new Date(ts * 1000).toLocaleTimeString()
+}
 
 const typeIcon = computed(() => {
   switch (entry.value.type) {
@@ -39,26 +65,6 @@ const typeLabel = computed(() => {
     default: return 'Unknown'
   }
 })
-
-const truncatedContent = computed(() => {
-  const content = entry.value.output_content || entry.value.content || ''
-  const maxLen = 500
-  if (content.length <= maxLen) return content
-  return content.substring(0, maxLen) + '...'
-})
-
-const hasMore = computed(() => {
-  const content = entry.value.output_content || entry.value.content || ''
-  return content.length > 500
-})
-
-const toolName = computed(() => entry.value.tool_name as string || '')
-const toolSuccess = computed(() => entry.value.success as boolean ?? true)
-const toolError = computed(() => entry.value.error as string | null)
-
-const formatTime = (ts: number) => {
-  return new Date(ts * 1000).toLocaleTimeString()
-}
 </script>
 
 <template>
@@ -72,8 +78,35 @@ const formatTime = (ts: number) => {
     <div class="node-content">
       <!-- LLM Entry -->
       <template v-if="entry.type === 'assistant'">
+        <!-- 输入消息可折叠区域 -->
         <div class="entry-section">
-          <div class="section-label">输入消息 ({{ (entry.input_messages as unknown[])?.length || 0 }})</div>
+          <div class="section-label" style="display: flex; align-items: center; gap: 8px;">
+            <span>输入消息 ({{ inputMessages.length }})</span>
+            <button
+              v-if="hasInputMessages"
+              class="toggle-btn"
+              @click="showInputMessages = !showInputMessages"
+            >
+              {{ showInputMessages ? '收起' : '展开' }}
+            </button>
+          </div>
+          <!-- 折叠时显示简要信息 -->
+          <div v-if="!showInputMessages && hasInputMessages" class="messages-preview">
+            <div v-for="(msg, idx) in inputMessages.slice(0, 2)" :key="idx" class="message-brief">
+              <span class="msg-role">{{ msg.role }}:</span>
+              <span class="msg-content">{{ msg.content.substring(0, 80) }}{{ msg.content.length > 80 ? '...' : '' }}</span>
+            </div>
+            <div v-if="inputMessages.length > 2" class="messages-more">
+              还有 {{ inputMessages.length - 2 }} 条消息...
+            </div>
+          </div>
+          <!-- 展开时显示完整消息列表 -->
+          <div v-if="showInputMessages" class="messages-list">
+            <div v-for="(msg, idx) in inputMessages" :key="idx" class="message-item">
+              <span class="msg-role">{{ msg.role }}</span>
+              <pre class="msg-content">{{ msg.content }}</pre>
+            </div>
+          </div>
         </div>
         <div class="entry-section">
           <div class="section-label">输出内容</div>
@@ -189,5 +222,70 @@ const formatTime = (ts: number) => {
   cursor: pointer;
   font-size: 12px;
   padding: 4px 0;
+}
+
+.toggle-btn {
+  background: #ecf5ff;
+  border: 1px solid #409eff;
+  color: #409eff;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.toggle-btn:hover {
+  background: #409eff;
+  color: white;
+}
+
+.messages-preview {
+  padding: 8px;
+  background: #f5f7fa;
+  border-radius: 4px;
+  margin-top: 4px;
+}
+
+.messages-list {
+  padding: 8px;
+  background: #f5f7fa;
+  border-radius: 4px;
+  margin-top: 4px;
+}
+
+.message-brief {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.messages-more {
+  font-size: 12px;
+  color: #909399;
+  font-style: italic;
+}
+
+.msg-role {
+  font-weight: 600;
+  color: #606266;
+  margin-right: 8px;
+}
+
+.msg-content {
+  color: #303133;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.message-item {
+  margin-bottom: 8px;
+}
+
+.message-item .msg-content {
+  background: white;
+  padding: 4px 8px;
+  border-radius: 3px;
+  margin-top: 4px;
+  font-size: 12px;
 }
 </style>
