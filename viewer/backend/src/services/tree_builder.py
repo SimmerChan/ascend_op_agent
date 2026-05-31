@@ -55,50 +55,32 @@ class TreeBuilder:
 
         Returns:
             Tuple of (root_node, entries) where root_node is None if no entries.
-            If multiple conversation turns exist, creates a virtual root node with
-            each turn's user entry as a child.
+            Uses chronological ordering since all entries have parent_id=None.
         """
         entries = read_session_history(session_id, self.persist_dir)
         if not entries:
             return None, []
 
-        # Build parent_id -> children mapping
-        children_map: dict[str, list[Entry]] = {}
-        root_entries: list[Entry] = []
+        # Find all user entries as conversation roots
+        user_entries: list[Entry] = [e for e in entries if e.type == "user"]
+        if not user_entries:
+            user_entries = [entries[0]] if entries else []
 
-        for entry in entries:
-            parent_id = entry.parent_id
-            if parent_id is None:
-                root_entries.append(entry)
-            else:
-                if parent_id not in children_map:
-                    children_map[parent_id] = []
-                children_map[parent_id].append(entry)
-
-        # Find all user entries (one per conversation turn)
-        user_roots: list[Entry] = []
-        for entry in entries:
-            if entry.type == "user":
-                user_roots.append(entry)
-
-        if not user_roots:
-            # No user entries, use first entry as root
-            user_roots = [entries[0]] if entries else []
-
-        # Build tree recursively
+        # Build tree using chronological order
+        # All entries between two user entries belong to the first user entry
         def build_node(entry: Entry) -> TreeNode:
             node = TreeNode(entry)
-            children = children_map.get(entry.id, [])
-            for child in children:
-                node.children.append(build_node(child))
             return node
 
-        if len(user_roots) == 1:
-            # Single turn: build normal tree
-            root_node = build_node(user_roots[0])
+        if len(user_entries) == 1:
+            # Single turn - all entries after user belong to it
+            root_node = build_node(user_entries[0])
+            user_idx = entries.index(user_entries[0])
+            for i in range(user_idx + 1, len(entries)):
+                child_node = build_node(entries[i])
+                root_node.children.append(child_node)
         else:
-            # Multiple turns: create virtual root node
-            # Use first entry as base for the virtual root
+            # Multiple turns - create virtual root
             virtual_root = Entry(
                 type="turn",
                 id="conversation-root",
@@ -106,8 +88,17 @@ class TreeBuilder:
                 parent_id=None,
             )
             root_node = TreeNode(virtual_root)
-            for user_root in user_roots:
-                root_node.children.append(build_node(user_root))
+
+            for turn_idx, user_entry in enumerate(user_entries):
+                turn_start = entries.index(user_entry)
+                turn_end = entries.index(user_entries[turn_idx + 1]) if turn_idx + 1 < len(user_entries) else len(entries)
+
+                turn_node = build_node(user_entry)
+                for i in range(turn_start + 1, turn_end):
+                    child_node = build_node(entries[i])
+                    turn_node.children.append(child_node)
+
+                root_node.children.append(turn_node)
 
         return root_node, entries
 
