@@ -40,6 +40,13 @@ const toolName = computed(() => entry.value.tool_name as string || '')
 const toolSuccess = computed(() => entry.value.success as boolean ?? true)
 const toolError = computed(() => entry.value.error as string | null)
 
+// 工具调用列表
+const toolCalls = computed(() => entry.value.tool_calls as Array<{name?: string, arguments?: Record<string, unknown>}> || [])
+const hasToolCalls = computed(() => toolCalls.value.length > 0)
+
+// 工具调用结果（来自 tool entry 的 result）
+const toolResult = computed(() => entry.value.result as string || '')
+
 const formatTime = (ts: number) => {
   return new Date(ts * 1000).toLocaleTimeString()
 }
@@ -113,8 +120,23 @@ const typeLabel = computed(() => {
           <div class="content-text">{{ truncatedContent }}</div>
           <button v-if="hasMore" class="expand-btn">展开全部</button>
         </div>
-        <div v-if="(entry.tool_calls as unknown[])?.length > 0" class="entry-section">
-          <div class="section-label">工具调用 ({{ (entry.tool_calls as unknown[]).length }})</div>
+        <!-- 工具调用区域 -->
+        <div v-if="hasToolCalls" class="entry-section">
+          <div class="section-label" style="display: flex; align-items: center; gap: 8px;">
+            <span>🔧 工具调用 ({{ toolCalls.length }})</span>
+          </div>
+          <div class="tool-calls-list">
+            <div v-for="(call, idx) in toolCalls" :key="idx" class="tool-call-item">
+              <div class="tool-call-header">
+                <span class="tool-call-icon">🔧</span>
+                <span class="tool-call-name">{{ call.name || 'unknown' }}</span>
+              </div>
+              <div v-if="call.arguments && Object.keys(call.arguments).length > 0" class="tool-call-args">
+                <div class="args-label">参数:</div>
+                <pre class="args-content">{{ JSON.stringify(call.arguments, null, 2) }}</pre>
+              </div>
+            </div>
+          </div>
         </div>
       </template>
 
@@ -122,13 +144,16 @@ const typeLabel = computed(() => {
       <template v-if="entry.type === 'tool'">
         <div class="entry-section">
           <div class="tool-name" :class="{ 'tool-error': !toolSuccess }">
-            {{ toolName }}
+            🔧 {{ toolName }}
+          </div>
+          <div v-if="entry.tool_call_id" class="tool-call-id">
+            调用ID: {{ entry.tool_call_id }}
           </div>
         </div>
-        <div v-if="toolError" class="error-message">{{ toolError }}</div>
-        <div v-else class="entry-section">
-          <div class="section-label">结果</div>
-          <div class="content-text">{{ truncatedContent }}</div>
+        <div v-if="toolError" class="error-message">❌ {{ toolError }}</div>
+        <div v-else-if="toolResult" class="entry-section">
+          <div class="section-label">✅ 调用结果</div>
+          <div class="tool-result">{{ toolResult }}</div>
         </div>
       </template>
 
@@ -287,5 +312,72 @@ const typeLabel = computed(() => {
   border-radius: 3px;
   margin-top: 4px;
   font-size: 12px;
+}
+
+/* Tool call styles */
+.tool-calls-list {
+  margin-top: 8px;
+}
+
+.tool-call-item {
+  background: #fff7e6;
+  border: 1px solid #faecd8;
+  border-radius: 4px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.tool-call-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.tool-call-icon {
+  font-size: 14px;
+}
+
+.tool-call-name {
+  font-weight: 600;
+  color: #e6a23c;
+}
+
+.tool-call-args {
+  background: #fdf6ec;
+  padding: 6px 8px;
+  border-radius: 3px;
+}
+
+.args-label {
+  font-size: 11px;
+  color: #909399;
+  margin-bottom: 4px;
+}
+
+.args-content {
+  margin: 0;
+  font-size: 11px;
+  color: #606266;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Tool result styles */
+.tool-result {
+  background: #f0f9eb;
+  border: 1px solid #e1f3d8;
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 12px;
+  color: #67c23a;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tool-call-id {
+  font-size: 11px;
+  color: #909399;
+  margin-top: 4px;
 }
 </style>
