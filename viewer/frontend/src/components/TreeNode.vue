@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, defineOptions } from 'vue'
+
+// Enable recursive component
+defineOptions({ name: 'TreeNode' })
 
 interface TreeNode {
   id: string
@@ -9,12 +12,15 @@ interface TreeNode {
 
 const props = defineProps<{
   node: TreeNode
+  depth?: number
 }>()
 
+const depth = computed(() => props.depth ?? 0)
 const entry = computed(() => props.node.entry)
 
 const typeIcon = computed(() => {
   switch (entry.value.type) {
+    case 'turn': return '📝'
     case 'user': return '👤'
     case 'assistant': return '🤖'
     case 'system': return '⚙️'
@@ -25,6 +31,7 @@ const typeIcon = computed(() => {
 
 const typeLabel = computed(() => {
   switch (entry.value.type) {
+    case 'turn': return '会话'
     case 'user': return 'User'
     case 'assistant': return 'LLM'
     case 'system': return 'System'
@@ -55,7 +62,7 @@ const formatTime = (ts: number) => {
 </script>
 
 <template>
-  <div class="tree-node">
+  <div class="tree-node" :style="{ paddingLeft: `${depth * 24}px` }">
     <div class="node-header">
       <span class="node-icon">{{ typeIcon }}</span>
       <span class="node-type">{{ typeLabel }}</span>
@@ -98,6 +105,14 @@ const formatTime = (ts: number) => {
         <button v-if="hasMore" class="expand-btn">展开全部</button>
       </template>
     </div>
+
+    <!-- Recursively render children -->
+    <TreeNode
+      v-for="child in node.children"
+      :key="child.id"
+      :node="child"
+      :depth="depth + 1"
+    />
   </div>
 </template>
 

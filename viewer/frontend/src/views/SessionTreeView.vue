@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElCard, ElTable, ElTableColumn, ElButton, ElRadioGroup, ElRadioButton, ElEmpty, ElLoading } from 'element-plus'
 import { useSessionStore } from '../stores/session'
-import TreeNodeComponent from '../components/TreeNode.vue'
+import TreeNode from '../components/TreeNode.vue'
 
 const store = useSessionStore()
 
@@ -96,7 +96,7 @@ const getRowClass = ({ row }: { row: { source: string } }) => {
 
           <!-- Tree View -->
           <div v-if="activeTab === 'tree' && store.currentTree" class="tree-view">
-            <TreeNodeComponent :node="store.currentTree" />
+            <TreeNode :node="store.currentTree" />
           </div>
 
           <!-- Entries List View -->

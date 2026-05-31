@@ -54,7 +54,9 @@ class TreeBuilder:
             session_id: Session ID to load
 
         Returns:
-            Tuple of (root_node, entries) where root_node is None if no entries
+            Tuple of (root_node, entries) where root_node is None if no entries.
+            If multiple conversation turns exist, creates a virtual root node with
+            each turn's user entry as a child.
         """
         entries = read_session_history(session_id, self.persist_dir)
         if not entries:
@@ -73,18 +75,15 @@ class TreeBuilder:
                     children_map[parent_id] = []
                 children_map[parent_id].append(entry)
 
-        # Find root node (first UserEntry or earliest entry)
-        root: Optional[Entry] = None
+        # Find all user entries (one per conversation turn)
+        user_roots: list[Entry] = []
         for entry in entries:
             if entry.type == "user":
-                root = entry
-                break
+                user_roots.append(entry)
 
-        if root is None and entries:
-            root = entries[0]
-
-        if root is None:
-            return None, entries
+        if not user_roots:
+            # No user entries, use first entry as root
+            user_roots = [entries[0]] if entries else []
 
         # Build tree recursively
         def build_node(entry: Entry) -> TreeNode:
@@ -94,7 +93,22 @@ class TreeBuilder:
                 node.children.append(build_node(child))
             return node
 
-        root_node = build_node(root)
+        if len(user_roots) == 1:
+            # Single turn: build normal tree
+            root_node = build_node(user_roots[0])
+        else:
+            # Multiple turns: create virtual root node
+            # Use first entry as base for the virtual root
+            virtual_root = Entry(
+                type="turn",
+                id="conversation-root",
+                session_id=session_id,
+                parent_id=None,
+            )
+            root_node = TreeNode(virtual_root)
+            for user_root in user_roots:
+                root_node.children.append(build_node(user_root))
+
         return root_node, entries
 
     def get_entries(self, session_id: str) -> list[Entry]:
