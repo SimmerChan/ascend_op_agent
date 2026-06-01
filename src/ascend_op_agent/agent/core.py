@@ -47,6 +47,9 @@ from ascend_op_agent.agent.session_record import (
 from ascend_op_agent.agent.tool_registry import ToolRegistry
 from ascend_op_agent.config import Config
 
+# 导入工具包以触发自注册
+from ascend_op_agent.agent import tools  # noqa: F401
+
 if TYPE_CHECKING:
     pass
 

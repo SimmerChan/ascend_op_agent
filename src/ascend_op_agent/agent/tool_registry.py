@@ -30,6 +30,9 @@ class Tool:
         description: str,
         func: Callable[..., Any],
         parameters: Optional[dict] = None,
+        toolset: str = "default",
+        emoji: str = "",
+        max_result_size_chars: Optional[int] = None,
     ):
         """
         Args:
@@ -37,11 +40,17 @@ class Tool:
             description: 工具描述
             func: 工具函数
             parameters: OpenAI格式的参数schema
+            toolset: 工具集分组
+            emoji: 表情图标
+            max_result_size_chars: 结果最大字符数
         """
         self.name = name
         self.description = description
         self.func = func
         self.parameters = parameters or self._infer_parameters(func)
+        self.toolset = toolset
+        self.emoji = emoji
+        self.max_result_size_chars = max_result_size_chars
 
     def _infer_parameters(self, func: Callable) -> dict:
         """从函数签名推断参数schema"""
@@ -110,6 +119,10 @@ class ToolRegistry:
         description: str,
         func: Callable[..., Any],
         parameters: Optional[dict] = None,
+        toolset: str = "default",
+        emoji: str = "",
+        max_result_size_chars: Optional[int] = None,
+        schema: Optional[dict] = None,
     ) -> None:
         """注册工具
 
@@ -118,8 +131,23 @@ class ToolRegistry:
             description: 工具描述
             func: 工具函数
             parameters: OpenAI格式的参数schema
+            toolset: 工具集分组
+            emoji: 表情图标
+            max_result_size_chars: 结果最大字符数
+            schema: 参数schema（parameters 的别名）
         """
-        tool = Tool(name=name, description=description, func=func, parameters=parameters)
+        # schema 是 parameters 的别名
+        if schema is not None and parameters is None:
+            parameters = schema
+        tool = Tool(
+            name=name,
+            description=description,
+            func=func,
+            parameters=parameters,
+            toolset=toolset,
+            emoji=emoji,
+            max_result_size_chars=max_result_size_chars,
+        )
         self._tools[name] = tool
 
     def get_tool(self, name: str) -> Optional[Tool]:
@@ -186,70 +214,5 @@ def tool(
     return decorator
 
 
-# 内置工具
-def _register_builtin_tools():
-    """注册内置工具"""
-
-    @tool(
-        name="file_read",
-        description="读取文件内容",
-        parameters={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "文件路径"},
-            },
-            "required": ["path"],
-        },
-    )
-    def file_read(path: str) -> str:
-        """读取文件"""
-        with open(path, 'r', encoding='utf-8') as f:
-            return f.read()
-
-    @tool(
-        name="file_write",
-        description="写入文件内容",
-        parameters={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "文件路径"},
-                "content": {"type": "string", "description": "文件内容"},
-            },
-            "required": ["path", "content"],
-        },
-    )
-    def file_write(path: str, content: str) -> str:
-        """写入文件"""
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        return f"已写入文件: {path}"
-
-    @tool(
-        name="shell_exec",
-        description="执行Shell命令",
-        parameters={
-            "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "Shell命令"},
-                "cwd": {"type": "string", "description": "工作目录"},
-            },
-            "required": ["command"],
-        },
-    )
-    def shell_exec(command: str, cwd: Optional[str] = None) -> str:
-        """执行Shell命令"""
-        import subprocess
-        result = subprocess.run(
-            command,
-            shell=True,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return result.stdout or "命令执行成功（无输出）"
-        return f"错误: {result.stderr}"
-
-
-# 注册内置工具
-_register_builtin_tools()
+# 内置工具 (已迁移到 tools/ 包)
+# _register_builtin_tools() 已移除，工具通过 tools/__init__.py 注册

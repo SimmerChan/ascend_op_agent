@@ -40,6 +40,13 @@ const toolName = computed(() => entry.value.tool_name as string || '')
 const toolSuccess = computed(() => entry.value.success as boolean ?? true)
 const toolError = computed(() => entry.value.error as string | null)
 
+// 工具调用参数
+const toolArguments = computed(() => {
+  const args = entry.value.arguments as Record<string, unknown> | undefined
+  if (!args) return null
+  return Object.entries(args).map(([k, v]) => `${k}: ${JSON.stringify(v)}`).join('\n')
+})
+
 // 工具调用列表
 const toolCalls = computed(() => entry.value.tool_calls as Array<{name?: string, arguments?: Record<string, unknown>}> || [])
 const hasToolCalls = computed(() => toolCalls.value.length > 0)
@@ -143,16 +150,22 @@ const typeLabel = computed(() => {
       <!-- Tool Entry -->
       <template v-if="entry.type === 'tool'">
         <div class="entry-section">
-          <div class="tool-name" :class="{ 'tool-error': !toolSuccess }">
+          <div class="tool-name" :class="{ 'tool-error': !toolSuccess, 'tool-ok': toolSuccess }">
             🔧 {{ toolName }}
+            <span v-if="toolSuccess" class="tool-status ok">✓ 成功</span>
+            <span v-else class="tool-status fail">✗ 失败</span>
           </div>
           <div v-if="entry.tool_call_id" class="tool-call-id">
             调用ID: {{ entry.tool_call_id }}
           </div>
+          <div v-if="toolArguments" class="tool-args">
+            <div class="args-label">📥 输入参数:</div>
+            <pre class="args-content">{{ toolArguments }}</pre>
+          </div>
         </div>
         <div v-if="toolError" class="error-message">❌ {{ toolError }}</div>
         <div v-else-if="toolResult" class="entry-section">
-          <div class="section-label">✅ 调用结果</div>
+          <div class="section-label">📤 输出结果</div>
           <div class="tool-result">{{ toolResult }}</div>
         </div>
       </template>
@@ -233,6 +246,30 @@ const typeLabel = computed(() => {
 
 .tool-name.tool-error {
   color: #f56c6c;
+}
+
+.tool-name.tool-ok {
+  color: #67c23a;
+}
+
+.tool-status {
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+.tool-status.ok {
+  color: #67c23a;
+}
+
+.tool-status.fail {
+  color: #f56c6c;
+}
+
+.tool-args {
+  background: #fdf6ec;
+  padding: 6px 8px;
+  border-radius: 3px;
+  margin-top: 6px;
 }
 
 .error-message {
