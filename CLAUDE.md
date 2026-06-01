@@ -31,6 +31,26 @@ ascend-op-agent viewer          # 前端(port 3001) + 后端(port 3002)
 ascend-op-agent viewer --only-backend  # 仅后端
 ```
 
+### Agent 工具集
+
+Agent 提供以下工具（定义在 `agent/tools/`）：
+
+| 工具 | 说明 |
+|------|------|
+| `file_read` | 读取文件内容（带大小限制、loop 检测） |
+| `file_write` | 写入文件（原子写入、备份） |
+| `file_search` | 正则/glob 搜索文件内容或名称 |
+| `patch` | 文本替换（精确/模糊匹配） |
+| `shell_exec` | 执行 Shell 命令 |
+| `python_exec` | 执行 Python 脚本（子进程隔离） |
+| `git_log` | 查询 Git 提交历史 |
+| `git_diff` | 查看 Git 差异 |
+| `git_status` | 查看 Git 仓库状态 |
+| `git_branch` | 列出 Git 分支 |
+| `npu_smi` | 查询昇腾 NPU 设备信息 |
+| `msop` | CANN 算子分析工具 |
+| `cann_compile` | CANN 算子编译 |
+
 ## 系统架构
 
 ### 双进程 TUI 架构
