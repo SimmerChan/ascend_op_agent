@@ -8,27 +8,40 @@ P0 MVP 版本(U9):
   U13 加 NpuExecutor 后替换为真实 cann_compile 调用
 - review_fix 在 U9 阶段无条件推进到 compile;U14 加 fix_loop 后补 retry 边
 
-cannbot skill 绑定(决策 3 路径 C 行):
+cannbot skill 绑定(决策 3 路径 C 行,真实接入由 cannbot_loader 提供):
 
-- analyze: ascendc-kernel-architect skill 集(需求分析 + tiling 决策)
-- design: ascendc-kernel-architect skill 集(DESIGN.md/PLAN.md)
-- codegen: ascendc-kernel-developer skill 集(实现)
-- review_fix: ascendc-kernel-reviewer skill 集(review + fix)
+- analyze/design: ascendc-tiling-design + ascendc-simt-tiling-design + npu-arch
+- codegen: ascendc-direct-invoke-template + ascendc-simt-best-practices
+- review_fix: ascendc-code-review
 - compile: 无 LLM,确定性 cann_compile 调用(U13)
 - precision: ascendc-ops-precision-standard skill 集(numpy diff,U13)
 
-本 MVP 阶段 skill_bundle_text 留占位,真 cannbot skill 文本由
-``cannbot_loader.build_skill_bundle`` 在 backend.py wiring 时注入。
+调用方传入 ``use_real_skill_bundles=True`` 时,自动从 cannbot submodule 加载
+skill 并渲染成 Layer 6 文本;否则用 ``skill_bundles`` 显式参数(便于测试)。
 """
 
 from __future__ import annotations
 
 from typing import Callable, Optional
 
+from ascend_op_agent.orchestrator.cannbot_loader import (
+    build_skill_bundle,
+    render_skill_bundle_text,
+)
 from ascend_op_agent.orchestrator.checkpoint import CheckpointStore
 from ascend_op_agent.orchestrator.nodes.common import AgentFactory, make_llm_node
 from ascend_op_agent.orchestrator.nodes.hitl import make_hitl_llm_node
 from ascend_op_agent.orchestrator.state_machine import Node, PhaseCallback, PhaseRunner
+
+
+# (graph, phase) → 该阶段要加载的 cannbot skill bundle
+# 对应 cannbot_loader.SKILL_BUNDLES 的 (new_dev, *) 行
+_NEW_DEV_PHASE_TO_BUNDLE_KEY: dict[str, tuple[str, str]] = {
+    "analyze": ("new_dev", "design"),  # analyze 与 design 共用 architect skill 集
+    "design": ("new_dev", "design"),
+    "codegen": ("new_dev", "codegen"),
+    "review_fix": ("new_dev", "review"),
+}
 
 
 def _build_phase_2_agent_factory(
@@ -41,11 +54,40 @@ def _build_phase_2_agent_factory(
     return agent_factory
 
 
+def _resolve_skill_bundles(
+    skill_bundles: Optional[dict[str, str]],
+    use_real_skill_bundles: bool,
+) -> dict[str, Optional[str]]:
+    """合并显式 skill_bundles 参数和真实 cannbot 加载。
+
+    优先级:显式参数 > 真实加载。允许调用方对单阶段 override。
+    """
+    resolved: dict[str, Optional[str]] = {
+        "analyze": None,
+        "design": None,
+        "codegen": None,
+        "review_fix": None,
+    }
+
+    if use_real_skill_bundles:
+        for phase, key in _NEW_DEV_PHASE_TO_BUNDLE_KEY.items():
+            skills = build_skill_bundle(phase=key[1], graph=key[0])
+            resolved[phase] = render_skill_bundle_text(skills, phase=phase)
+
+    # 显式 override
+    if skill_bundles:
+        for phase, text in skill_bundles.items():
+            resolved[phase] = text
+
+    return resolved
+
+
 def build_new_dev_graph(
     store: CheckpointStore,
     agent_factory: Optional[AgentFactory] = None,
     phase_callback: Optional[PhaseCallback] = None,
     skill_bundles: Optional[dict[str, str]] = None,
+    use_real_skill_bundles: bool = False,
     compile_node_factory: Optional[Callable[[], Node]] = None,
     precision_node_factory: Optional[Callable[[], Node]] = None,
 ) -> PhaseRunner:
@@ -55,8 +97,10 @@ def build_new_dev_graph(
         store: CheckpointStore 实例
         agent_factory: 返回 fresh AIAgent 的工厂
         phase_callback: PhaseRunner 阶段事件回调(U8 由 backend 注入)
-        skill_bundles: ``{phase: skill_bundle_text}`` —— 各阶段 cannbot skill 文本。
-            缺省 ``{}`` 时各 LLM 节点用默认 Layer 6
+        skill_bundles: ``{phase: skill_bundle_text}`` —— 显式覆盖各阶段 skill 文本。
+            优先级高于 ``use_real_skill_bundles``
+        use_real_skill_bundles: True 时从 cannbot submodule 加载真实 skill。
+            生产环境应设 True;测试默认 False(用 mock)
         compile_node_factory: 自定义 compile 节点工厂(U13 注入真 compile_node);
             None 时用占位(返回 success=True)
         precision_node_factory: 自定义 precision 节点工厂(U13 注入);
@@ -66,7 +110,7 @@ def build_new_dev_graph(
         PhaseRunner —— invoke/resume 入口
     """
     factory = _build_phase_2_agent_factory(agent_factory)
-    bundles = skill_bundles or {}
+    bundles = _resolve_skill_bundles(skill_bundles, use_real_skill_bundles)
 
     # ---- LLM 节点(用 make_llm_node / make_hitl_llm_node) ----
     analyze_node = make_llm_node(

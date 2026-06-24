@@ -11,6 +11,7 @@ from ascend_op_agent.orchestrator.cannbot_loader import (
     CannbotSkill,
     build_skill_bundle,
     load_skill,
+    render_skill_bundle_text,
 )
 from ascend_op_agent.orchestrator.checkpoint import (
     STATUS_DONE,
@@ -45,6 +46,7 @@ __all__ = [
     "CannbotSkill",
     "build_skill_bundle",
     "load_skill",
+    "render_skill_bundle_text",
     # checkpoint
     "CheckpointStore",
     "PendingCheckpoint",

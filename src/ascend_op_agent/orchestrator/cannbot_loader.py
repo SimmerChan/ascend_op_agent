@@ -213,3 +213,50 @@ def build_skill_bundle(
         except (FileNotFoundError, ValueError):
             continue
     return skills
+
+
+def render_skill_bundle_text(
+    skills: list[CannbotSkill],
+    phase: Optional[str] = None,
+) -> str:
+    """把 skill bundle 渲染成 PromptBuilder Layer 6 文本。
+
+    格式(每个 skill 含 name + description,不 dump body 避免上下文爆炸;
+    LLM 需要细节时由 ``skill_ops`` 工具按名加载 —— cannbot 设计如此):
+
+        ## Available Skills (phase=design)
+
+        - **ascendc-tiling-design**: <description>
+        - **ascendc-simt-tiling-design**: <description>
+        ...
+
+        使用 skill_ops 工具加载完整 skill 内容。
+
+    Args:
+        skills: ``build_skill_bundle`` 返回的 skill 列表
+        phase: 当前阶段名(仅用于标题展示);None 时不显示
+
+    Returns:
+        Layer 6 文本。空列表返回空串(调用方决定是否降级为默认 Layer 6)
+    """
+    if not skills:
+        return ""
+
+    lines: list[str] = []
+    if phase is not None:
+        lines.append(f"## Available Skills (phase={phase})")
+    else:
+        lines.append("## Available Skills")
+
+    lines.append("")
+    for s in skills:
+        # description 可能多行,首行作 summary,其余忽略
+        desc_first = s.description.strip().split("\n", 1)[0]
+        lines.append(f"- **{s.name}**: {desc_first}")
+
+    lines.append("")
+    lines.append(
+        "需要详细 skill 内容时,使用 skill_ops 工具按名加载,或读取 skill 目录下"
+        "的 SKILL.md / references/ 文件。"
+    )
+    return "\n".join(lines)
