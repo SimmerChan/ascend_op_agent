@@ -12,22 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Workflow工作流模块
+"""Workflow 数据契约与执行封装。
 
-实现六阶段算子开发工作流:
-- Phase0: 初始化（环境检测）
-- Phase1: 需求分析（自动）
-- Phase2: 方案设计（用户确认）
-- Phase3: 代码生成
-- Phase4: 编译验证
-- Phase5: 精度评估（≥30用例，必选）
+U8 死代码清理后保留 3 个职责:
 
-注:engine/phases/skill_save/performance 是 P0 重构中的死代码层(U8 计划删除),
-其环境依赖(chromadb/sklearn/pandas/numpy)在不兼容环境下会触发 import 错误。
-为避免阻塞 models(核心数据契约)及其下游(orchestrator),用 try/except 降级。
+- ``models.py`` — 核心数据契约(OpInfo/DesignDoc/CodeGenResult/CompileResult/
+  PrecisionReport/PhaseResult 等 dataclass + to_dict/from_dict serde)。F2 落地。
+- ``compiler.py`` — cann_compile subprocess 封装(确定性编译)。
+- ``performance.py`` — torch_npu.profiler 性能采集。
+
+旧的 ``engine.py`` / ``phases.py`` / ``adapters.py`` / ``skill_save.py`` 是
+**从未被 backend.py / agent.core.py / CLI 调用过的死代码**(3759 LOC),
+已被 ``ascend_op_agent.orchestrator`` (LangGraph-free 自研状态机)替代。
+
+迁移指南:旧 ``OperatorWorkflow`` / ``Phase0..5Init`` / ``SkillSaver`` /
+``PyTorchAdapter`` 等的等价能力由 orchestrator + cannbot-skills 提供,
+参考 ``docs/plans/2026-06-23-001-feat-op-runtime-engine-plan.md``。
 """
 
-# 核心数据契约:必加载,失败立即抛
+# 核心数据契约(必加载)
 from ascend_op_agent.workflow.models import (
     ArchitectureMapping,
     CodeGenResult,
@@ -43,47 +46,15 @@ from ascend_op_agent.workflow.models import (
     TestResult,
 )
 
-# 死代码层:U8 删除。try/except 防环境依赖阻塞 models。
+# 执行封装(可选加载,触发 import 错误时降级为 None,避免阻塞 models)
 try:
-    from ascend_op_agent.workflow.engine import (
-        OperatorWorkflow,
-        WorkflowError,
-        create_workflow,
+    from ascend_op_agent.workflow.compiler import (
+        compile_operator,
+        fix_compile_errors,
     )
 except Exception:
-    OperatorWorkflow = None  # type: ignore[assignment]
-    WorkflowError = None  # type: ignore[assignment]
-    create_workflow = None  # type: ignore[assignment]
-
-try:
-    from ascend_op_agent.workflow.phases import (
-        Phase,
-        Phase0Init,
-        Phase1Analysis,
-        Phase2Design,
-        Phase3CodeGen,
-        Phase4Verify,
-        Phase5Precision,
-    )
-except Exception:
-    Phase = None  # type: ignore[assignment]
-    Phase0Init = None  # type: ignore[assignment]
-    Phase1Analysis = None  # type: ignore[assignment]
-    Phase2Design = None  # type: ignore[assignment]
-    Phase3CodeGen = None  # type: ignore[assignment]
-    Phase4Verify = None  # type: ignore[assignment]
-    Phase5Precision = None  # type: ignore[assignment]
-
-try:
-    from ascend_op_agent.workflow.skill_save import (
-        SkillSaver,
-        OpResult,
-        SkillDimension,
-    )
-except Exception:
-    SkillSaver = None  # type: ignore[assignment]
-    OpResult = None  # type: ignore[assignment]
-    SkillDimension = None  # type: ignore[assignment]
+    compile_operator = None  # type: ignore[assignment]
+    fix_compile_errors = None  # type: ignore[assignment]
 
 try:
     from ascend_op_agent.workflow.performance import (
@@ -101,7 +72,7 @@ except Exception:
     PerformanceEvaluator = None  # type: ignore[assignment]
 
 __all__ = [
-    # 核心数据契约(models)
+    # models(U5 serde 落地,F2 修正)
     "OpInfo",
     "DesignDoc",
     "CodeGenResult",
@@ -114,20 +85,10 @@ __all__ = [
     "FileChange",
     "TestCase",
     "TestResult",
-    # 死代码(可能在 degraded 环境下为 None)
-    "OperatorWorkflow",
-    "WorkflowError",
-    "create_workflow",
-    "Phase",
-    "Phase0Init",
-    "Phase1Analysis",
-    "Phase2Design",
-    "Phase3CodeGen",
-    "Phase4Verify",
-    "Phase5Precision",
-    "SkillSaver",
-    "OpResult",
-    "SkillDimension",
+    # compiler(可能在 degraded 环境下为 None)
+    "compile_operator",
+    "fix_compile_errors",
+    # performance(可能在 degraded 环境下为 None)
     "PerformanceMetric",
     "BenchmarkCase",
     "PerformanceResult",

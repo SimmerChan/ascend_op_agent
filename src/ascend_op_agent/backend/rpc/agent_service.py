@@ -38,6 +38,15 @@ class AgentResponse(TypedDict):
     data: Optional[dict]
 
 
+# PhaseRunner 事件 → orchestrator.progress stage 映射
+PHASE_EVENT_TO_STAGE = {
+    "started": "phase_started",
+    "completed": "phase_completed",
+    "failed": "phase_failed",
+    "interrupted": "phase_interrupted",
+}
+
+
 class AgentAsyncWrapper:
     """将同步 AIAgent 封装为异步接口
 
@@ -137,6 +146,37 @@ class AgentAsyncWrapper:
             Agent 响应字符串
         """
         return self.agent.run_conversation(user_input)
+
+    def make_phase_callback(self) -> Callable[[str, str, Optional[str]], None]:
+        """构造 PhaseRunner 阶段事件 → orchestrator.progress 通知的桥接回调。
+
+        U8 阶段:桥接建好,但 ``PhaseRunner`` 未注入(等 U9 Path-C 图)。
+        当 ``PhaseRunner(phase_callback=wrapper.make_phase_callback())`` 时,
+        每个节点的 started/completed/failed/interrupted 事件会转成
+        ``orchestrator.progress`` 通知放入 ``NotificationQueue``。
+
+        Returns:
+            ``callable(phase: str, event: str, error: Optional[str]) -> None``
+            无 NotificationQueue 时返回空操作回调(不抛)
+        """
+        if self._notification_queue is None:
+            # 无通知机制:静默 noop
+            def _noop(phase: str, event: str, error: Optional[str] = None) -> None:
+                logger.debug(
+                    f"phase event (no queue): phase={phase} event={event} error={error}"
+                )
+            return _noop
+
+        def _phase_callback(
+            phase: str, event: str, error: Optional[str] = None
+        ) -> None:
+            stage = PHASE_EVENT_TO_STAGE.get(event, f"phase_{event}")
+            params: dict[str, Any] = {"phase": phase, "stage": stage}
+            if error is not None:
+                params["error"] = error
+            self._notification_queue.put("orchestrator.progress", params)
+
+        return _phase_callback
 
     def shutdown(self) -> None:
         """关闭线程池"""
