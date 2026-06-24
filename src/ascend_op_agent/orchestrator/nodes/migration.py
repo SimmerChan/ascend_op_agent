@@ -175,3 +175,100 @@ def make_cuda_frontend_node(
         return update
 
     return Node(name=phase_name, func=_frontend)
+
+
+_TRITON_FRONTEND_PROMPT = """你是 Triton → Ascend C 迁移专家。
+参考 cannbot triton-* skill 链(5 skill)的 description 触发词,分析以下 Triton 算子源码/描述,
+产出迁移决策。skill 链入口是 triton-task-extractor(从 PyTorch 代码提取算子任务),
+后续节点(triton-op-designer / triton-op-coding / triton-op-verifier / triton-latency-optimizer)
+由 phase 内 LLM 路由触发,本节点只负责 task extraction + 迁移方案识别。
+
+输入(Triton 代码或算子描述):
+{user_input}
+
+要求:
+
+1. 识别算子名、输入/输出 shape 与 dtype
+2. ``migration_strategy`` 必须为 ``"triton_to_ascendc"``
+3. ``ref_code_type`` = ``"triton"``
+4. ``arch_mapping.mappings`` 至少包含一个 Triton → Ascend C 概念对应
+   (如 ``tl.program_id`` → ``GetProgramId``、``tl.load`` → ``GlobalTensor.Load``)
+
+请严格用以下 JSON 格式输出(用 ```json 包裹):
+
+```json
+{{
+  "op_info": {{
+    "name": "<算子名>",
+    "description": "<一句话描述>",
+    "op_type": "<elementwise/reduction/matmul/...",
+    "input_shapes": [[...], ...],
+    "input_dtypes": ["float16", ...],
+    "output_shapes": [[...], ...],
+    "output_dtypes": ["float16", ...],
+    "migration_strategy": "triton_to_ascendc",
+    "ref_code_type": "triton"
+  }},
+  "arch_mapping": {{
+    "source_type": "triton",
+    "mappings": {{
+      "<triton_api>": "<ascend_equivalent>",
+      ...
+    }}
+  }}
+}}
+```"""
+
+
+def make_triton_frontend_node(
+    agent_factory: AgentFactory,
+    skill_bundle_text: Optional[str] = None,
+    phase_name: str = "triton_frontend",
+) -> Node:
+    """构造 Triton 前端解析节点(scoped 5-skill 链)。
+
+    与 CUDA 前端同形(OpInfo + ArchitectureMapping 解析逻辑),
+    区别在 prompt(_TRITON_FRONTEND_PROMPT)和默认 phase_name。
+
+    Args:
+        agent_factory: 返回 fresh AIAgent 的工厂
+        skill_bundle_text: triton 5-skill 链文本(Layer 6 注入);
+            None 时用默认 Layer 6
+        phase_name: 节点名(默认 ``triton_frontend``)
+
+    Returns:
+        Node —— 跑完 LLM 后,从响应抽 JSON 写入 state
+    """
+    base_node = make_llm_node(
+        phase=phase_name,
+        task_prompt_template=_TRITON_FRONTEND_PROMPT,
+        skill_bundle_text=skill_bundle_text,
+        agent_factory=agent_factory,
+    )
+
+    def _frontend(state: dict) -> dict:
+        update = base_node.func(state)
+
+        if state.get("pending_confirmation") is not None:
+            return update
+
+        response = (update.get("last_phase_result") or {}).get("response", "")
+        parsed = extract_structured_output(response)
+
+        if parsed["op_info"] is not None:
+            update["op_info"] = parsed["op_info"]
+
+        if parsed["arch_mapping"] is not None:
+            existing_design = state.get("design_doc") or {}
+            merged_design = dict(existing_design)
+            merged_design["arch_mapping"] = parsed["arch_mapping"]
+            update["design_doc"] = merged_design
+
+        if parsed["parse_error"] is not None:
+            lpr = dict(update.get("last_phase_result") or {})
+            lpr["parse_error"] = parsed["parse_error"]
+            update["last_phase_result"] = lpr
+
+        return update
+
+    return Node(name=phase_name, func=_frontend)

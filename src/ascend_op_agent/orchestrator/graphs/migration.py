@@ -11,10 +11,13 @@ U10 实现:
 - 后续节点与 ``new_dev`` 共享设计(design/codegen/review_fix/compile/precision)
 - design 节点是 HITL(用户批准迁移方案)
 
-U11 扩展:
+U11 实现:
 
 - ``build_migration_graph(source_type="triton", ...)``:triton_frontend 节点
-  (scoped 5-skill 链入口),产出 OpInfo(triton_to_ascendc)
+  (scoped triton 5-skill 链入口:task-extractor / op-designer / op-coding /
+  op-verifier / latency-optimizer),产出 OpInfo(migration_strategy=triton_to_ascendc)
+- 后续节点 design/codegen/review_fix 与 cuda 同形,skill 由 frontend_skill_text
+  按 source_type 解析(cannbot_loader SKILL_BUNDLES 已含 triton_frontend 5 路径)
 """
 
 from __future__ import annotations
@@ -28,7 +31,10 @@ from ascend_op_agent.orchestrator.cannbot_loader import (
 from ascend_op_agent.orchestrator.checkpoint import CheckpointStore
 from ascend_op_agent.orchestrator.nodes.common import AgentFactory, make_llm_node
 from ascend_op_agent.orchestrator.nodes.hitl import make_hitl_llm_node
-from ascend_op_agent.orchestrator.nodes.migration import make_cuda_frontend_node
+from ascend_op_agent.orchestrator.nodes.migration import (
+    make_cuda_frontend_node,
+    make_triton_frontend_node,
+)
 from ascend_op_agent.orchestrator.state_machine import Node, PhaseCallback, PhaseRunner
 
 
@@ -94,30 +100,33 @@ def build_migration_graph(
             "agent_factory required (production wires AIAgent with session_manager=None)"
         )
 
-    if source_type == "triton":
-        # U11 未实现:triton_frontend 节点暂用 stub 提示
-        raise NotImplementedError(
-            "Triton frontend (U11) not yet implemented. Use source_type='cuda' for U10."
-        )
-
-    # ---- CUDA 前端(U10) ----
+    # ---- 前端节点(cuda / triton 二选一) ----
     frontend_skill = _resolve_frontend_skill_text(
         source_type=source_type,
         use_real_skill_bundles=use_real_skill_bundles,
         explicit=frontend_skill_text,
     )
 
-    frontend_node = make_cuda_frontend_node(
-        agent_factory=agent_factory,
-        skill_bundle_text=frontend_skill,
-        phase_name="cuda_frontend",
-    )
+    if source_type == "cuda":
+        frontend_node = make_cuda_frontend_node(
+            agent_factory=agent_factory,
+            skill_bundle_text=frontend_skill,
+            phase_name="cuda_frontend",
+        )
+        frontend_phase_name = "cuda_frontend"
+    else:  # source_type == "triton"
+        frontend_node = make_triton_frontend_node(
+            agent_factory=agent_factory,
+            skill_bundle_text=frontend_skill,
+            phase_name="triton_frontend",
+        )
+        frontend_phase_name = "triton_frontend"
 
     # ---- design 节点(HITL,共享 new_dev 设计) ----
     def _migration_design_payload_builder(state: dict, update: dict) -> dict:
         return {
             "phase": "design",
-            "message": "请确认迁移方案以继续 codegen 阶段",
+            "message": f"请确认{source_type} → Ascend C 迁移方案以继续 codegen 阶段",
             "op_info": state.get("op_info"),
             "arch_mapping": (state.get("design_doc") or {}).get("arch_mapping"),
             "options": ["approve", "reject"],
@@ -126,14 +135,14 @@ def build_migration_graph(
     design_node = make_hitl_llm_node(
         phase="design",
         task_prompt_template=(
-            "你是 CUDA → Ascend C SIMT 迁移架构师。基于前端解析的 OpInfo 和\n"
+            f"你是 {source_type.upper()} → Ascend C 迁移架构师。基于前端解析的 OpInfo 和\n"
             "ArchitectureMapping,产出迁移 DESIGN.md:\n\n"
             "状态(OpInfo + arch_mapping + 历史):\n{state}\n\n"
-            "包含:Tiling 策略、API 映射(从 cuda2ascend-simt skill 查)、数据流、\n"
+            "包含:Tiling 策略、API 映射(从 scoped skill 查)、数据流、\n"
             "downgrade/blocked/excluded 分类、文件清单、测试计划。"
         ),
         interrupt_payload_builder=_migration_design_payload_builder,
-        skill_bundle_text=frontend_skill,  # design 也用 cuda2ascend-simt
+        skill_bundle_text=frontend_skill,
         agent_factory=agent_factory,
     )
 
@@ -141,10 +150,10 @@ def build_migration_graph(
     codegen_node = make_llm_node(
         phase="codegen",
         task_prompt_template=(
-            "你是 Ascend C SIMT developer。基于已确认的迁移 DESIGN.md 生成 AscendC kernel:\n\n"
+            f"你是 Ascend C developer。基于已确认的 {source_type.upper()} → Ascend C "
+            "迁移 DESIGN.md 生成 AscendC kernel:\n\n"
             "{state}\n\n"
-            "输出:kernel.cpp + op.cpp 文件内容(参考 cuda2ascend-simt skill 的\n"
-            "grammar.md 和 constraints.md)。"
+            "输出:kernel.cpp + op.cpp 文件内容(参考 scoped skill 的 grammar 与约束)。"
         ),
         skill_bundle_text=frontend_skill,
         agent_factory=agent_factory,
@@ -153,7 +162,8 @@ def build_migration_graph(
     review_fix_node = make_llm_node(
         phase="review_fix",
         task_prompt_template=(
-            "你是 Ascend C SIMT reviewer。审查迁移产出的代码是否保持源行为:\n\n"
+            f"你是 Ascend C reviewer。审查 {source_type.upper()} → Ascend C "
+            "迁移产出的代码是否保持源行为:\n\n"
             "{state}\n\n"
             "重点:无 silent downgrade、API 映射正确、dtype 覆盖完整。\n"
             "输出:问题列表 + 修复建议;无问题时返回 LGTM。"

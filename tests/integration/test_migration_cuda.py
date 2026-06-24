@@ -275,13 +275,6 @@ def test_build_migration_graph_requires_agent_factory(tmp_path) -> None:
         build_migration_graph(store=store, source_type="cuda", agent_factory=None)
 
 
-def test_build_migration_graph_triton_raises_not_implemented(tmp_path) -> None:
-    """U11 未实现:source_type='triton' 抛 NotImplementedError。"""
-    store = CheckpointStore(tmp_path / "ck.db")
-    with pytest.raises(NotImplementedError, match="Triton frontend"):
-        build_migration_graph(store=store, source_type="triton", agent_factory=_factory_from([]))
-
-
 # ---- CUDA 端到端 ----
 
 

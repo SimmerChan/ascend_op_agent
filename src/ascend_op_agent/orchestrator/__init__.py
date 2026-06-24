@@ -31,6 +31,7 @@ from ascend_op_agent.orchestrator.nodes.hitl import make_hitl_llm_node
 from ascend_op_agent.orchestrator.nodes.migration import (
     extract_structured_output,
     make_cuda_frontend_node,
+    make_triton_frontend_node,
 )
 from ascend_op_agent.orchestrator.state import (
     APPEND_FIELDS,
@@ -76,6 +77,7 @@ __all__ = [
     "make_llm_node",
     "make_hitl_llm_node",
     "make_cuda_frontend_node",
+    "make_triton_frontend_node",
     # migration helpers
     "extract_structured_output",
     # graphs
