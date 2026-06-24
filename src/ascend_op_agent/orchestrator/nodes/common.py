@@ -1,0 +1,128 @@
+"""make_llm_node —— LLM 节点工厂(实现 P0-2 共存契约)。
+
+每个 LLM 节点封装一个 **fresh AIAgent**,按以下顺序工作:
+
+1. ``agent = agent_factory()`` —— 每节点新 AIAgent(``session_manager=None``,
+   编排器 owns 持久化)
+2. ``agent._conversation_history = list(state["messages"])`` —— 从 checkpoint
+   rehydrate 对话历史(同形 ``list[{"role","content"}]``,零转换)
+3. 从 ``state["memory_pools"]`` rehydrate MemoryStore(memory pool 跨节点持久化)
+4. 构建 task_prompt(模板 + state 字段插值)
+5. ``agent.run_conversation(task_prompt, skills_layer_override=skill_bundle_text)``
+   —— scoped skill 文本注入 PromptBuilder Layer 6(P0-1 修正)
+6. 返回 update dict:
+
+   - ``messages``: append ``[{"role":"assistant","content":response}]``
+   - ``memory_pools``: merge agent 端最新 memory 快照
+   - ``last_phase_result``: ``{"phase":phase,"response":response}``
+
+幂等契约(P0-3 修正):
+
+- HITL resume(``state["pending_confirmation"]`` 非空):节点不重跑 LLM,直接返回
+  ``{"pending_confirmation": None}`` 让编排器推进。这是 design / delivery_mode
+  这类"等用户确认"节点的通用模式
+- 工件级幂等(compile/precision 等长跑节点)由 ``CheckpointStore.has_artifact_with_sha``
+  在节点实现内单独处理,不在此处兜底
+"""
+
+from __future__ import annotations
+
+from typing import Any, Callable, Optional
+
+from ascend_op_agent.orchestrator.state_machine import Node
+
+AgentFactory = Callable[[], Any]
+
+
+def make_llm_node(
+    phase: str,
+    task_prompt_template: str,
+    skill_bundle_text: Optional[str] = None,
+    agent_factory: Optional[AgentFactory] = None,
+) -> Node:
+    """构造 LLM 节点。
+
+    Args:
+        phase: 阶段名(用作 current_phase / last_phase_result.phase)
+        task_prompt_template: 任务 prompt 模板,支持 ``{state}`` ``{user_input}``
+            ``{pending_confirmation}`` 占位符(简单 ``str.format``)
+        skill_bundle_text: 该阶段 cannbot skill 文本(注入 PromptBuilder Layer 6)。
+            None 时使用 PromptBuilder 默认 Layer 6
+        agent_factory: 返回 fresh AIAgent 的工厂(``agent_factory()``)。测试时
+            替换为 mock。生产时是 ``lambda: AIAgent(config, ...,
+            session_manager=None)``
+
+    Returns:
+        Node —— PhaseRunner 直接消费
+    """
+    if agent_factory is None:
+        raise ValueError(
+            "agent_factory is required (use lambda for production wiring)"
+        )
+
+    def _node(state: dict) -> dict:
+        # 1. HITL 恢复:幂等跳过 LLM 调用
+        pending = state.get("pending_confirmation")
+        if pending is not None:
+            return {
+                "pending_confirmation": None,
+                "last_phase_result": {
+                    "phase": phase,
+                    "skipped_llm": True,
+                    "pending": pending,
+                },
+            }
+
+        # 2. 构造 fresh agent
+        agent = agent_factory()
+
+        # 3. rehydrate 对话历史(同形,零转换)
+        agent._conversation_history = list(state.get("messages", []))
+
+        # 4. rehydrate memory_pools
+        existing_memory = state.get("memory_pools", {})
+        for pool, items in existing_memory.items():
+            if isinstance(items, list):
+                for item in items:
+                    agent.memory.add(pool, item)
+
+        # 5. 构建 task prompt
+        user_input = ""
+        messages = state.get("messages", [])
+        if messages:
+            first_user = next(
+                (m for m in messages if m.get("role") == "user"), None
+            )
+            if first_user is not None:
+                user_input = first_user.get("content", "")
+
+        try:
+            task_prompt = task_prompt_template.format(
+                state=state,
+                user_input=user_input,
+                pending_confirmation=pending,
+            )
+        except KeyError:
+            # 模板里出现了不支持的占位符,降级为原样
+            task_prompt = task_prompt_template
+
+        # 6. 调用 agent(scoped skill 注入 Layer 6)
+        response = agent.run_conversation(
+            task_prompt,
+            skills_layer_override=skill_bundle_text,
+        )
+
+        # 7. 抓取 memory 快照(merge 现有)
+        new_memory_pools: dict[str, list[str]] = dict(existing_memory)
+        for pool in ("memory", "user"):
+            items = agent.memory.get(pool)
+            if items:
+                new_memory_pools[pool] = list(items)
+
+        return {
+            "messages": [{"role": "assistant", "content": response}],
+            "memory_pools": new_memory_pools,
+            "last_phase_result": {"phase": phase, "response": response},
+        }
+
+    return Node(name=phase, func=_node)

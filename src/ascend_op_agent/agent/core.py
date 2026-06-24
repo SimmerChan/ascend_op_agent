@@ -103,11 +103,17 @@ class AIAgent:
             self._current_session_id = str(uuid.uuid4())
         return self._current_session_id
 
-    def run_conversation(self, user_input: str) -> str:
+    def run_conversation(
+        self,
+        user_input: str,
+        skills_layer_override: Optional[str] = None,
+    ) -> str:
         """运行对话
 
         Args:
             user_input: 用户输入
+            skills_layer_override: 可选,注入该阶段 cannbot skill 包替换 Layer 6。
+                由编排器 LLM 节点传入(hybrid 集成);默认 None 保持原行为。
 
         Returns:
             Agent响应
@@ -141,6 +147,7 @@ class AIAgent:
             system_prompt = self.prompt_builder.build_system_prompt(
                 workspace_path=self.config.local.workspace,
                 memory_store=self.memory,
+                skills_layer_override=skills_layer_override,
             )
 
             # 记录 system prompt

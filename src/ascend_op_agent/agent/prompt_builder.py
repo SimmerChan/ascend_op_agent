@@ -48,12 +48,15 @@ class PromptBuilder:
         self,
         workspace_path: str,
         memory_store: MemoryStore,
+        skills_layer_override: Optional[str] = None,
     ) -> str:
         """构建完整的系统Prompt（7层组装）
 
         Args:
             workspace_path: 工作区路径
             memory_store: 记忆存储
+            skills_layer_override: 可选,注入该阶段 cannbot skill 包替换默认 Layer 6。
+                由编排器 LLM 节点调用时传入(hybrid 集成的编排层入口);
 
         Returns:
             组装后的完整系统Prompt
@@ -75,8 +78,11 @@ class PromptBuilder:
         # Layer 5: Persistent Memory
         layers.append(self._build_memory_layer(memory_store))
 
-        # Layer 6: Skills Index
-        layers.append(self._build_skills_layer())
+        # Layer 6: Skills Index(支持编排器 scope 注入 cannbot skill 包)
+        if skills_layer_override is not None:
+            layers.append(skills_layer_override)
+        else:
+            layers.append(self._build_skills_layer())
 
         # Layer 7: Context Files + Timestamp + Env
         layers.append(self._build_context_layer(workspace_path))
