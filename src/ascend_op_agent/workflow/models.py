@@ -86,6 +86,17 @@ class ArchitectureMapping:
             return cls(source_type=source_type, mappings=mappings)
         return cls(source_type=source_type, mappings={})
 
+    def to_dict(self) -> dict:
+        """序列化(只含实例字段 source_type+mappings,类变量 CUDA_MAPPINGS 等不进 dict)。"""
+        return {"source_type": self.source_type, "mappings": dict(self.mappings)}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ArchitectureMapping":
+        return cls(
+            source_type=data["source_type"],
+            mappings=dict(data.get("mappings", {})),
+        )
+
 
 @dataclass
 class OpInfo:
@@ -140,6 +151,39 @@ class OpInfo:
 
         return min(score, 10)
 
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "op_type": self.op_type,
+            "input_shapes": [list(s) for s in self.input_shapes],
+            "input_dtypes": list(self.input_dtypes),
+            "output_shapes": [list(s) for s in self.output_shapes],
+            "output_dtypes": list(self.output_dtypes),
+            "migration_strategy": self.migration_strategy.value,
+            "ref_code_path": self.ref_code_path,
+            "ref_code_type": self.ref_code_type,
+            "attributes": dict(self.attributes),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "OpInfo":
+        ms_raw = data.get("migration_strategy")
+        ms = MigrationStrategy(ms_raw) if ms_raw else MigrationStrategy.FROM_SCRATCH
+        return cls(
+            name=data["name"],
+            description=data["description"],
+            op_type=data["op_type"],
+            input_shapes=[list(s) for s in data.get("input_shapes", [])],
+            input_dtypes=list(data.get("input_dtypes", [])),
+            output_shapes=[list(s) for s in data.get("output_shapes", [])],
+            output_dtypes=list(data.get("output_dtypes", [])),
+            migration_strategy=ms,
+            ref_code_path=data.get("ref_code_path"),
+            ref_code_type=data.get("ref_code_type"),
+            attributes=dict(data.get("attributes", {})),
+        )
+
 
 @dataclass
 class DesignDoc:
@@ -163,6 +207,33 @@ class DesignDoc:
     # 用户确认状态
     confirmed: bool = False
 
+    def to_dict(self) -> dict:
+        """递归序列化(含 op_info + arch_mapping)。"""
+        return {
+            "op_info": self.op_info.to_dict(),
+            "input_layouts": list(self.input_layouts),
+            "output_layouts": list(self.output_layouts),
+            "tile_shape": list(self.tile_shape) if self.tile_shape else None,
+            "block_dim": list(self.block_dim) if self.block_dim else None,
+            "arch_mapping": self.arch_mapping.to_dict() if self.arch_mapping else None,
+            "decisions": list(self.decisions),
+            "confirmed": self.confirmed,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "DesignDoc":
+        am_raw = data.get("arch_mapping")
+        return cls(
+            op_info=OpInfo.from_dict(data["op_info"]),
+            input_layouts=list(data.get("input_layouts", [])),
+            output_layouts=list(data.get("output_layouts", [])),
+            tile_shape=list(data["tile_shape"]) if data.get("tile_shape") else None,
+            block_dim=list(data["block_dim"]) if data.get("block_dim") else None,
+            arch_mapping=ArchitectureMapping.from_dict(am_raw) if am_raw else None,
+            decisions=list(data.get("decisions", [])),
+            confirmed=bool(data.get("confirmed", False)),
+        )
+
 
 @dataclass
 class FileChange:
@@ -170,6 +241,17 @@ class FileChange:
     path: str
     action: str  # "create", "modify", "delete"
     content: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {"path": self.path, "action": self.action, "content": self.content}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "FileChange":
+        return cls(
+            path=data["path"],
+            action=data["action"],
+            content=data.get("content"),
+        )
 
 
 @dataclass
@@ -184,17 +266,24 @@ class CodeGenResult:
     generated_files: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        """转换为字典"""
+        """转换为字典(含 files[*].content,可 round-trip)。"""
         return {
             "success": self.success,
-            "files": [
-                {"path": f.path, "action": f.action}
-                for f in self.files
-            ],
-            "errors": self.errors,
-            "warnings": self.warnings,
-            "generated_files": self.generated_files,
+            "files": [f.to_dict() for f in self.files],
+            "errors": list(self.errors),
+            "warnings": list(self.warnings),
+            "generated_files": list(self.generated_files),
         }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CodeGenResult":
+        return cls(
+            success=bool(data["success"]),
+            files=[FileChange.from_dict(f) for f in data.get("files", [])],
+            errors=list(data.get("errors", [])),
+            warnings=list(data.get("warnings", [])),
+            generated_files=list(data.get("generated_files", [])),
+        )
 
 
 @dataclass
@@ -224,6 +313,37 @@ class CompileResult:
         """是否应该停止修复（已达最大次数）"""
         return self.fix_attempts >= 3
 
+    def to_dict(self) -> dict:
+        return {
+            "success": self.success,
+            "command": self.command,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "return_code": self.return_code,
+            "fix_attempts": self.fix_attempts,
+            "fixed": self.fixed,
+            "syntax_errors": list(self.syntax_errors),
+            "missing_headers": list(self.missing_headers),
+            "type_errors": list(self.type_errors),
+            "other_errors": list(self.other_errors),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CompileResult":
+        return cls(
+            success=bool(data["success"]),
+            command=data["command"],
+            stdout=data.get("stdout", ""),
+            stderr=data.get("stderr", ""),
+            return_code=int(data.get("return_code", 0)),
+            fix_attempts=int(data.get("fix_attempts", 0)),
+            fixed=bool(data.get("fixed", False)),
+            syntax_errors=list(data.get("syntax_errors", [])),
+            missing_headers=list(data.get("missing_headers", [])),
+            type_errors=list(data.get("type_errors", [])),
+            other_errors=list(data.get("other_errors", [])),
+        )
+
 
 @dataclass
 class TestCase:
@@ -235,6 +355,27 @@ class TestCase:
     expected_dtypes: list[str]
     attrs: dict[str, Any] = field(default_factory=dict)
 
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "input_shapes": [list(s) for s in self.input_shapes],
+            "input_dtypes": list(self.input_dtypes),
+            "expected_shapes": [list(s) for s in self.expected_shapes],
+            "expected_dtypes": list(self.expected_dtypes),
+            "attrs": dict(self.attrs),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "TestCase":
+        return cls(
+            name=data["name"],
+            input_shapes=[list(s) for s in data["input_shapes"]],
+            input_dtypes=list(data["input_dtypes"]),
+            expected_shapes=[list(s) for s in data["expected_shapes"]],
+            expected_dtypes=list(data["expected_dtypes"]),
+            attrs=dict(data.get("attrs", {})),
+        )
+
 
 @dataclass
 class TestResult:
@@ -245,6 +386,27 @@ class TestResult:
     rel_err: Optional[float] = None
     cos_sim: Optional[float] = None
     error_message: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "test_case": self.test_case.to_dict(),
+            "passed": self.passed,
+            "abs_err": self.abs_err,
+            "rel_err": self.rel_err,
+            "cos_sim": self.cos_sim,
+            "error_message": self.error_message,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "TestResult":
+        return cls(
+            test_case=TestCase.from_dict(data["test_case"]),
+            passed=bool(data["passed"]),
+            abs_err=data.get("abs_err"),
+            rel_err=data.get("rel_err"),
+            cos_sim=data.get("cos_sim"),
+            error_message=data.get("error_message"),
+        )
 
 
 @dataclass
@@ -331,6 +493,36 @@ class PrecisionReport:
             lines.append(f"| {i} | {status} | {abs_err} | {rel_err} | {cos_sim} |")
 
         return "\n".join(lines)
+
+    def to_dict(self) -> dict:
+        """递归序列化(含 test_results[*].test_case)。"""
+        return {
+            "operator_name": self.operator_name,
+            "total_cases": self.total_cases,
+            "passed_cases": self.passed_cases,
+            "failed_cases": self.failed_cases,
+            "test_results": [r.to_dict() for r in self.test_results],
+            "avg_abs_err": self.avg_abs_err,
+            "avg_rel_err": self.avg_rel_err,
+            "avg_cos_sim": self.avg_cos_sim,
+            "report_path": self.report_path,
+            "meets_requirement": self.meets_requirement,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PrecisionReport":
+        return cls(
+            operator_name=data["operator_name"],
+            total_cases=int(data["total_cases"]),
+            passed_cases=int(data["passed_cases"]),
+            failed_cases=int(data["failed_cases"]),
+            test_results=[TestResult.from_dict(r) for r in data.get("test_results", [])],
+            avg_abs_err=data.get("avg_abs_err"),
+            avg_rel_err=data.get("avg_rel_err"),
+            avg_cos_sim=data.get("avg_cos_sim"),
+            report_path=data.get("report_path", "test/precision_report.md"),
+            meets_requirement=bool(data.get("meets_requirement", False)),
+        )
 
 
 @dataclass
@@ -435,3 +627,22 @@ class PhaseResult:
     def requires_confirmation(self) -> bool:
         """是否需要用户确认"""
         return self.status == PhaseStatus.WAITING_CONFIRMATION
+
+    def to_dict(self) -> dict:
+        return {
+            "phase_name": self.phase_name,
+            "status": self.status.value,
+            "data": self.data,
+            "message": self.message,
+            "errors": list(self.errors),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PhaseResult":
+        return cls(
+            phase_name=data["phase_name"],
+            status=PhaseStatus(data["status"]),
+            data=data.get("data"),
+            message=data.get("message", ""),
+            errors=list(data.get("errors", [])),
+        )
