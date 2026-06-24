@@ -116,6 +116,16 @@ class SessionConfig(BaseModel):
     flush_interval_ms: int = 100
 
 
+class CheckpointConfig(BaseModel):
+    """编排器 checkpoint 配置(自研 sqlite3)。
+
+    支撑崩溃恢复(R4):节点每步落 checkpoint,backend 启动时按 auto_resume
+    检测 pending thread 并续跑。
+    """
+    db_path: str = "~/.ascend_op_agent/checkpoints.db"
+    auto_resume: bool = True
+
+
 class LoggingConfig(BaseModel):
     """日志配置"""
     level: str = "INFO"
@@ -142,6 +152,7 @@ class Config(BaseModel):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
+    checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     # 配置文件路径（仅在从文件加载时设置）
