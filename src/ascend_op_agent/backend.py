@@ -18,6 +18,8 @@
 通过 stdin/stdout 与前端通信，支持 JSON-RPC 2.0 协议。
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
@@ -39,6 +41,8 @@ from ascend_op_agent.config import load_config
 _server: JSONRPCServer | None = None
 _agent_wrapper: AgentAsyncWrapper | None = None
 _session_manager = None
+_checkpoint_store = None  # U7: CheckpointStore 实例(op.* RPC 用)
+_orchestrator = None  # U7: Orchestrator 实例(U9 才有真实 graph,U7 期间为 None)
 
 
 def _setup_logging() -> None:
@@ -148,6 +152,86 @@ async def _handle_session_shutdown() -> dict:
     return {"status": "no_session_manager"}
 
 
+async def _handle_session_list_pending() -> dict:
+    """处理 session.list_pending 请求(U7)。
+
+    列出所有 status != done 的 checkpoint(供前端展示"可恢复"列表)。
+
+    Returns:
+        ``{"status": "success", "pending": [...], "count": N}``
+    """
+    if _checkpoint_store is None:
+        return {"status": "error", "message": "CheckpointStore not initialized"}
+
+    pending = _checkpoint_store.list_pending()
+    return {
+        "status": "success",
+        "pending": [
+            {
+                "thread_id": p.thread_id,
+                "current_phase": p.current_phase,
+                "status": p.status,
+                "updated_at": p.updated_at,
+            }
+            for p in pending
+        ],
+        "count": len(pending),
+    }
+
+
+async def _handle_session_resume_with_input(
+    thread_id: str,
+    payload: dict | None = None,
+) -> AgentResponse:
+    """处理 session.resume_with_input 请求(U7)。
+
+    HITL 恢复:把用户确认 payload 注入 pending_confirmation 并续跑。
+
+    Args:
+        thread_id: 要恢复的 thread
+        payload: 用户确认内容(如 ``{"approved": True}``)
+
+    Returns:
+        AgentResponse:``status="completed"/"interrupted"/"failed"``
+        + ``data={"current_phase": ..., "pending_confirmation": ...}``
+    """
+    if _orchestrator is None:
+        return AgentResponse(
+            status="error",
+            response=None,
+            data={
+                "message": (
+                    "Orchestrator not wired (U7 fallback: only CheckpointStore is "
+                    "initialized; Orchestrator graph ships in U9). "
+                    "Use op.run for new threads."
+                )
+            },
+        )
+    try:
+        state = _orchestrator.resume(thread_id, payload=payload)
+    except Exception as e:
+        logging.exception(f"op.resume failed for thread={thread_id}")
+        return AgentResponse(
+            status="error",
+            response=None,
+            data={"message": str(e), "thread_id": thread_id},
+        )
+
+    status = "completed"
+    if state.get("pending_confirmation") is not None:
+        status = "interrupted"
+    return AgentResponse(
+        status=status,
+        response=None,
+        data={
+            "thread_id": thread_id,
+            "current_phase": state.get("current_phase"),
+            "pending_confirmation": state.get("pending_confirmation"),
+            "messages_count": len(state.get("messages", [])),
+        },
+    )
+
+
 def _setup_agent(config_path: str | None = None) -> None:
     """初始化 Agent
 
@@ -200,6 +284,46 @@ def _setup_agent(config_path: str | None = None) -> None:
     _agent_wrapper = AgentAsyncWrapper(agent, send_notification_fn=_server.send_notification)
     logging.info("Agent initialized")
 
+    # U7: 初始化 CheckpointStore(崩溃恢复 + HITL 持久化底层)
+    global _checkpoint_store
+    from ascend_op_agent.orchestrator import CheckpointStore
+    _checkpoint_store = CheckpointStore.from_config(config.checkpoint)
+    logging.info(
+        f"CheckpointStore initialized at {_checkpoint_store.db_path} "
+        f"(auto_resume={config.checkpoint.auto_resume})"
+    )
+
+    # 启动时检测 pending(pending != done 的 checkpoint)
+    _resume_pending_check(config.checkpoint.auto_resume)
+
+
+def _resume_pending_check(auto_resume: bool) -> None:
+    """启动时检测未完成的 thread(U7)。
+
+    列出 status != done 的 checkpoint,日志记录。
+
+    - ``auto_resume=True``:日志提示"可自动恢复,等待 op.resume RPC 触发"
+      (P0 阶段不自动 invoke,避免误启动 LLM;真正自动 resume 留 P1)
+    - ``auto_resume=False``:仅日志记录,等待用户显式调用
+
+    Fallback 设计:此处只检测不自动续跑,确保现有 agent.run UX 不受影响。
+    """
+    if _checkpoint_store is None:
+        return
+    pending = _checkpoint_store.list_pending()
+    if not pending:
+        logging.info("No pending checkpoints found at startup")
+        return
+    logging.warning(
+        f"Found {len(pending)} pending checkpoint(s): "
+        + ", ".join(f"{p.thread_id}({p.status}@{p.current_phase})" for p in pending)
+    )
+    if auto_resume:
+        logging.info(
+            "auto_resume=true: use 'op.resume' RPC with thread_id to resume. "
+            "P0 does not auto-invoke to avoid accidental LLM calls."
+        )
+
 
 async def main() -> None:
     """主入口"""
@@ -216,6 +340,9 @@ async def main() -> None:
     _server.register_method("session.reset", _handle_session_reset)
     _server.register_method("session.get_history", _handle_session_get_history)
     _server.register_method("session.shutdown", _handle_session_shutdown)
+    # U7: checkpoint/resume 相关 RPC
+    _server.register_method("session.list_pending", _handle_session_list_pending)
+    _server.register_method("session.resume_with_input", _handle_session_resume_with_input)
 
     # 初始化 Agent（需要 _server 已创建）
     config_path = os.getenv("ASCEND_OP_AGENT_CONFIG")
