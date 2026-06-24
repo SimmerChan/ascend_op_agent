@@ -1,0 +1,3 @@
+[submodule "vendor/cannbot-skills"]
+	path = vendor/cannbot-skills
+	url = https://gitcode.com/cann/cannbot-skills.git
