@@ -23,7 +23,9 @@ from ascend_op_agent.orchestrator.checkpoint import (
     PendingApproval,
     PendingCheckpoint,
 )
+from ascend_op_agent.orchestrator.graphs.new_dev import build_new_dev_graph
 from ascend_op_agent.orchestrator.nodes.common import make_llm_node
+from ascend_op_agent.orchestrator.nodes.hitl import make_hitl_llm_node
 from ascend_op_agent.orchestrator.state import (
     APPEND_FIELDS,
     MERGE_FIELDS,
@@ -65,4 +67,7 @@ __all__ = [
     "entry_node_factory",
     # node factories
     "make_llm_node",
+    "make_hitl_llm_node",
+    # graphs
+    "build_new_dev_graph",
 ]

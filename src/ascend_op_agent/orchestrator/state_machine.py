@@ -218,8 +218,17 @@ class PhaseRunner:
             # HITL 中断
             if "__interrupt__" in update:
                 payload = update["__interrupt__"]
-                self.store.mark_waiting(thread_id, node.name, payload)
                 state["pending_confirmation"] = payload
+                # 先 save state(含 current_phase=node.name + pending_confirmation),
+                # 再 mark_waiting 改 status —— 否则 store.load 返回的 state 会
+                # 滞留在上一节点,resume 误从中断点之前的节点重跑
+                self.store.save(
+                    thread_id,
+                    state,
+                    current_phase=node.name,
+                    status=STATUS_RUNNING,
+                )
+                self.store.mark_waiting(thread_id, node.name, payload)
                 self._emit_phase(node.name, "interrupted")
                 logger.info(
                     f"Node {node.name} interrupted (HITL) thread={thread_id}"
