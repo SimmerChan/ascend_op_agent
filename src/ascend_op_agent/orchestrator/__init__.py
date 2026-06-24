@@ -24,9 +24,14 @@ from ascend_op_agent.orchestrator.checkpoint import (
     PendingApproval,
     PendingCheckpoint,
 )
+from ascend_op_agent.orchestrator.graphs.migration import build_migration_graph
 from ascend_op_agent.orchestrator.graphs.new_dev import build_new_dev_graph
 from ascend_op_agent.orchestrator.nodes.common import make_llm_node
 from ascend_op_agent.orchestrator.nodes.hitl import make_hitl_llm_node
+from ascend_op_agent.orchestrator.nodes.migration import (
+    extract_structured_output,
+    make_cuda_frontend_node,
+)
 from ascend_op_agent.orchestrator.state import (
     APPEND_FIELDS,
     MERGE_FIELDS,
@@ -70,6 +75,10 @@ __all__ = [
     # node factories
     "make_llm_node",
     "make_hitl_llm_node",
+    "make_cuda_frontend_node",
+    # migration helpers
+    "extract_structured_output",
     # graphs
     "build_new_dev_graph",
+    "build_migration_graph",
 ]
