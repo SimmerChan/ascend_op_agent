@@ -142,7 +142,14 @@ class PhaseRunner:
 
         pending = self.store.consume_pending(thread_id)
         if pending is not None:
-            state["pending_confirmation"] = pending.payload
+            # stored pending 是 interrupt 时的 default payload(含 phase/options/...)
+            # explicit payload 是用户 resume 时的决策 —— 二者 merge,explicit 优先
+            base = pending.payload or {}
+            if payload is not None:
+                merged = {**base, **payload}
+                state["pending_confirmation"] = merged
+            else:
+                state["pending_confirmation"] = base
             logger.info(
                 f"PhaseRunner.resume HITL thread={thread_id} phase={pending.phase}"
             )

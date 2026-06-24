@@ -200,7 +200,7 @@ def test_triton_migration_invoke_interrupts_at_design(tmp_path) -> None:
 
 
 def test_triton_migration_resume_completes_all_phases(tmp_path) -> None:
-    """design 批准后 → codegen → review_fix → compile → precision → done。"""
+    """design 批准后 → ... → delivery_mode HITL → resume(sample) → done。"""
     store = CheckpointStore(tmp_path / "ck.db")
     factory = _factory_from(
         [_TRITON_JSON_RESPONSE, "design doc", "kernel.cpp", "LGTM"]
@@ -212,7 +212,8 @@ def test_triton_migration_resume_completes_all_phases(tmp_path) -> None:
         agent_factory=factory,
     )
     runner.invoke("@triton.jit def softmax(...): ...", thread_id="t1")
-    state = runner.resume("t1", payload={"approved": True})
+    runner.resume("t1", payload={"approved": True})
+    state = runner.resume("t1", payload={"mode": "sample"})
 
     expected = [
         "entry",
@@ -222,6 +223,8 @@ def test_triton_migration_resume_completes_all_phases(tmp_path) -> None:
         "review_fix",
         "compile",
         "precision",
+        "delivery_mode",
+        "framework_adapt",
         "done",
     ]
     assert state["phase_history"] == expected
@@ -357,6 +360,7 @@ def test_custom_compile_node_factory_works_for_triton(tmp_path) -> None:
     )
     runner.invoke("triton code", thread_id="t1")
     runner.resume("t1", payload={"approved": True})
+    runner.resume("t1", payload={"mode": "sample"})
 
     state = store.load("t1")
     assert state["compile_result"]["custom"] is True

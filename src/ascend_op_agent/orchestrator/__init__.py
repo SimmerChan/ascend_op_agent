@@ -28,6 +28,11 @@ from ascend_op_agent.orchestrator.graphs.migration import build_migration_graph
 from ascend_op_agent.orchestrator.graphs.new_dev import build_new_dev_graph
 from ascend_op_agent.orchestrator.nodes.common import make_llm_node
 from ascend_op_agent.orchestrator.nodes.hitl import make_hitl_llm_node
+from ascend_op_agent.orchestrator.nodes.delivery import (
+    make_delivery_mode_node,
+    make_framework_adapt_node,
+    recommend_delivery_mode,
+)
 from ascend_op_agent.orchestrator.nodes.migration import (
     extract_structured_output,
     make_cuda_frontend_node,
@@ -78,6 +83,9 @@ __all__ = [
     "make_hitl_llm_node",
     "make_cuda_frontend_node",
     "make_triton_frontend_node",
+    "make_delivery_mode_node",
+    "make_framework_adapt_node",
+    "recommend_delivery_mode",
     # migration helpers
     "extract_structured_output",
     # graphs

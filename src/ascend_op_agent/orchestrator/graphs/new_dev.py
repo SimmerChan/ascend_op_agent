@@ -30,6 +30,10 @@ from ascend_op_agent.orchestrator.cannbot_loader import (
 )
 from ascend_op_agent.orchestrator.checkpoint import CheckpointStore
 from ascend_op_agent.orchestrator.nodes.common import AgentFactory, make_llm_node
+from ascend_op_agent.orchestrator.nodes.delivery import (
+    make_delivery_mode_node,
+    make_framework_adapt_node,
+)
 from ascend_op_agent.orchestrator.nodes.hitl import make_hitl_llm_node
 from ascend_op_agent.orchestrator.state_machine import Node, PhaseCallback, PhaseRunner
 
@@ -200,6 +204,14 @@ def build_new_dev_graph(
             }
         precision_node = Node(name="precision", func=_placeholder_precision)
 
+    # ---- 交付模式(U12)----
+    delivery_mode_node = make_delivery_mode_node(phase="delivery_mode")
+    framework_adapt_node = make_framework_adapt_node(
+        phase="framework_adapt",
+        agent_factory=factory,
+        skill_bundle_text=bundles.get("framework_adapt"),
+    )
+
     def _done_node(state: dict) -> dict:
         return {"__status__": "done"}
 
@@ -211,6 +223,8 @@ def build_new_dev_graph(
         review_fix_node,
         compile_node,
         precision_node,
+        delivery_mode_node,
+        framework_adapt_node,
         Node(name="done", func=_done_node),
     ]
 

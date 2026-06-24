@@ -67,18 +67,23 @@ def _factory() -> FakeAgent:
 
 
 def test_new_dev_runs_all_phases_after_design_approval(tmp_path) -> None:
-    """U9 MVP:design HITL 批准后,全 8 节点顺序跑通,checkpoint 落盘。
+    """U9 MVP:design HITL 批准后,全节点顺序跑通,checkpoint 落盘。
 
     design 是 HITL 节点(必须 invoke → resume 才能跑完)。
+    U12 后新增 delivery_mode HITL,需要再 resume 一次选交付模式。
     """
     store = CheckpointStore(tmp_path / "ck.db")
 
     runner = build_new_dev_graph(store=store, agent_factory=_factory)
     runner.invoke("design a trivial add op", thread_id="t1")
-    state = runner.resume("t1", payload={"approved": True})
+    runner.resume("t1", payload={"approved": True})
+    state = runner.resume("t1", payload={"mode": "sample"})
 
     # 全阶段访问
-    expected = ["entry", "analyze", "design", "codegen", "review_fix", "compile", "precision", "done"]
+    expected = [
+        "entry", "analyze", "design", "codegen", "review_fix",
+        "compile", "precision", "delivery_mode", "framework_adapt", "done",
+    ]
     assert state["phase_history"] == expected
     assert state["current_phase"] == "done"
 
@@ -113,7 +118,8 @@ def test_design_node_interrupts_for_hitl(tmp_path) -> None:
 
 
 def test_resume_after_design_approval_completes_all_phases(tmp_path) -> None:
-    """design 批准后 → codegen → review_fix → compile → precision → done。"""
+    """design 批准后 → codegen → review_fix → compile → precision →
+    delivery_mode HITL → resume(sample) → framework_adapt → done。"""
     store = CheckpointStore(tmp_path / "ck.db")
     runner = build_new_dev_graph(store=store, agent_factory=_factory)
 
@@ -121,23 +127,33 @@ def test_resume_after_design_approval_completes_all_phases(tmp_path) -> None:
     state = runner.invoke("design add op", thread_id="t1")
     assert store.get_status("t1") == STATUS_WAITING_CONFIRM
 
-    # 第二跑:resume with approval
+    # 第二跑:resume with approval → 跑到 delivery_mode HITL 中断
     state = runner.resume("t1", payload={"approved": True})
+    assert state["current_phase"] == "delivery_mode"
+    assert store.get_status("t1") == STATUS_WAITING_CONFIRM
+
+    # 第三跑:resume with mode → 到 done
+    state = runner.resume("t1", payload={"mode": "sample"})
 
     assert state["current_phase"] == "done"
     assert store.get_status("t1") == STATUS_DONE
-    expected = ["entry", "analyze", "design", "codegen", "review_fix", "compile", "precision", "done"]
+    expected = [
+        "entry", "analyze", "design", "codegen", "review_fix",
+        "compile", "precision", "delivery_mode", "framework_adapt", "done",
+    ]
     assert state["phase_history"] == expected
 
 
 def test_pending_confirmation_cleared_after_resume(tmp_path) -> None:
-    """resume 后 pending_confirmation 被节点主动清除。"""
+    """resume 后 pending_confirmation 被节点主动清除(design + delivery_mode 各一次)。"""
     store = CheckpointStore(tmp_path / "ck.db")
     runner = build_new_dev_graph(store=store, agent_factory=_factory)
 
     runner.invoke("design add op", thread_id="t1")
     state = runner.resume("t1", payload={"approved": True})
-
+    # design cleared,delivery_mode 写入(因为 delivery_mode 是新的 HITL)
+    assert state["pending_confirmation"]["phase"] == "delivery_mode"
+    state = runner.resume("t1", payload={"mode": "sample"})
     assert state["pending_confirmation"] is None
 
 
@@ -303,8 +319,11 @@ def test_crash_in_codegen_resumes_correctly(tmp_path) -> None:
         runner1.resume("t1", payload={"approved": True})
 
     assert store.get_status("t1") == "failed"
-    # resume 第二次:codegen 重跑(成功),推进到 done
+    # resume 第二次:codegen 重跑(成功),推进到 delivery_mode HITL
     runner2 = build_new_dev_graph(store=store, agent_factory=crashing_factory)
     state = runner2.resume("t1")
+    assert state["current_phase"] == "delivery_mode"
+    # resume 第三次:选 sample,跑 framework_adapt(skip) + done
+    state = runner2.resume("t1", payload={"mode": "sample"})
     assert state["current_phase"] == "done"
     assert store.get_status("t1") == STATUS_DONE
