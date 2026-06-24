@@ -50,6 +50,12 @@ from ascend_op_agent.orchestrator.state_machine import (
     PhaseRunner,
     entry_node_factory,
 )
+from ascend_op_agent.orchestrator.fix_loop import (
+    ReviewResult,
+    compress_transcript,
+    make_fix_loop_node,
+    run_fix_loop,
+)
 
 __all__ = [
     # cannbot
@@ -88,6 +94,11 @@ __all__ = [
     "recommend_delivery_mode",
     # migration helpers
     "extract_structured_output",
+    # fix loop
+    "ReviewResult",
+    "run_fix_loop",
+    "make_fix_loop_node",
+    "compress_transcript",
     # graphs
     "build_new_dev_graph",
     "build_migration_graph",
