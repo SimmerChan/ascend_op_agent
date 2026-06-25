@@ -56,6 +56,21 @@ from ascend_op_agent.orchestrator.fix_loop import (
     make_fix_loop_node,
     run_fix_loop,
 )
+from ascend_op_agent.orchestrator.npu_exec import (
+    CompileOutcome,
+    NpuExecutor,
+    PrecisionMetrics,
+)
+from ascend_op_agent.orchestrator.nodes.validation import (
+    make_compile_fix_loop_node,
+    make_compile_fix_node,
+    make_precision_fix_loop_node,
+    make_precision_fix_node,
+    make_real_compile_node,
+    make_real_precision_node,
+    operator_path_from_code_result,
+    test_cases_from_state,
+)
 
 __all__ = [
     # cannbot
@@ -99,6 +114,18 @@ __all__ = [
     "run_fix_loop",
     "make_fix_loop_node",
     "compress_transcript",
+    # NPU exec (U13)
+    "NpuExecutor",
+    "CompileOutcome",
+    "PrecisionMetrics",
+    "make_real_compile_node",
+    "make_real_precision_node",
+    "make_compile_fix_node",
+    "make_precision_fix_node",
+    "make_compile_fix_loop_node",
+    "make_precision_fix_loop_node",
+    "operator_path_from_code_result",
+    "test_cases_from_state",
     # graphs
     "build_new_dev_graph",
     "build_migration_graph",
