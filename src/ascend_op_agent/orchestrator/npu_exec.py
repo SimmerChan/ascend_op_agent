@@ -96,19 +96,60 @@ class NpuExecutor:
         archive_dir: Optional[Path | str] = None,
         compile_timeout: int = 300,
         run_timeout: int = 60,
+        ssh_env: Optional[Any] = None,
+        remote_env_setup: str = "",
     ) -> None:
+        """
+        Args:
+            archive_dir: 结果归档目录;None 时不归档
+            compile_timeout: cann_compile 超时秒
+            run_timeout: 算子执行超时秒
+            ssh_env: SSHEnvironment 实例(远程执行);None 时本地 subprocess。
+                远程模式下 operator_path 必须是远程机器上的路径。
+            remote_env_setup: 远程命令前缀(如 ``"source /usr/local/Ascend/
+                ascend-toolkit/set_env.sh && "``),用于在非交互 SSH 会话里
+                加载 CANN 环境变量。本地模式忽略。
+        """
         self.archive_dir = Path(archive_dir) if archive_dir is not None else None
         self.compile_timeout = compile_timeout
         self.run_timeout = run_timeout
+        self.ssh_env = ssh_env
+        self.remote_env_setup = remote_env_setup or ""
+
+    @property
+    def is_remote(self) -> bool:
+        """是否走 SSH 远程执行。"""
+        return self.ssh_env is not None
 
     # ---- 环境检测 ----
 
     @staticmethod
     def is_cann_available() -> bool:
-        """检测 CANN 环境变量是否就绪(硬件门控)。"""
+        """检测本地 CANN 环境变量是否就绪(硬件门控)。
+
+        远程模式请用 ``is_remote_cann_available``。
+        """
         return bool(
             os.environ.get("ASCEND_OPP_PATH") or os.environ.get("CANN_HOME")
         )
+
+    def is_remote_cann_available(self) -> bool:
+        """远程模式:SSH 探测 ASCEND_OPP_PATH 是否就绪。
+
+        非交互 SSH 会话默认不加载 CANN env,需靠 ``remote_env_setup`` 前缀
+        source 工具链脚本。
+        """
+        if self.ssh_env is None:
+            return False
+        cmd = f"{self.remote_env_setup}echo $ASCEND_OPP_PATH"
+        try:
+            result = self.ssh_env.execute(cmd, timeout=15)
+        except Exception as e:
+            logger.warning(f"is_remote_cann_available probe failed: {e}")
+            return False
+        out = (result.stdout or "").strip()
+        # 未 source 时,远程 bash 可能原样回显 "$ASCEND_OPP_PATH" 或空
+        return bool(out) and out != "$ASCEND_OPP_PATH"
 
     # ---- compile ----
 
@@ -120,7 +161,17 @@ class NpuExecutor:
         """调 cann_compile 编译算子。
 
         硬件未就绪时返回 success=False 的 outcome(不抛错)。
+        根据 ``ssh_env`` 自动走本地 subprocess 或远程 SSH。
         """
+        if self.is_remote:
+            return self._compile_remote(operator_path, target)
+        return self._compile_local(operator_path, target)
+
+    def _compile_local(
+        self,
+        operator_path: str,
+        target: str,
+    ) -> CompileOutcome:
         cmd = ["cann_compile", "-target", target, operator_path]
         command_str = " ".join(cmd)
 
@@ -182,6 +233,81 @@ class NpuExecutor:
                 operator_path=operator_path,
                 target=target,
             )
+
+    def _compile_remote(
+        self,
+        operator_path: str,
+        target: str,
+    ) -> CompileOutcome:
+        """SSH 远程编译。
+
+        operator_path 必须是远程机器上的路径。前置 ``remote_env_setup`` 加载 CANN。
+        """
+        # shell-safe 命令(不依赖 list 形式,远程走 bash -c)
+        cann_cmd = f"cann_compile -target {target} {operator_path}"
+        full_cmd = f"{self.remote_env_setup}{cann_cmd}"
+        command_str = full_cmd
+
+        if not operator_path:
+            return CompileOutcome(
+                success=False,
+                command=command_str,
+                stdout="",
+                stderr="operator_path is empty",
+                return_code=2,
+                operator_path=operator_path,
+                target=target,
+            )
+
+        if not self.is_remote_cann_available():
+            return CompileOutcome(
+                success=False,
+                command=command_str,
+                stdout="",
+                stderr=(
+                    "remote CANN env not configured "
+                    "(remote_env_setup 未 source 或 ASCEND_OPP_PATH 缺失)"
+                ),
+                return_code=127,
+                operator_path=operator_path,
+                target=target,
+            )
+
+        try:
+            result = self.ssh_env.execute(  # type: ignore[union-attr]
+                full_cmd, timeout=self.compile_timeout
+            )
+        except Exception as e:
+            return CompileOutcome(
+                success=False,
+                command=command_str,
+                stdout="",
+                stderr=f"SSH execute failed: {e}",
+                return_code=126,
+                operator_path=operator_path,
+                target=target,
+            )
+
+        if getattr(result, "timed_out", False):
+            return CompileOutcome(
+                success=False,
+                command=command_str,
+                stdout="",
+                stderr=f"cann_compile timeout after {self.compile_timeout}s",
+                return_code=124,
+                operator_path=operator_path,
+                target=target,
+            )
+
+        return CompileOutcome(
+            success=result.return_code == 0,
+            command=command_str,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            return_code=result.return_code,
+            operator_path=operator_path,
+            target=target,
+        )
 
     def compile_to_dict(self, operator_path: str, target: str = "npu") -> dict:
         """compile + 归档 + 转 dict(写 ``compile_result`` 字段格式)。"""

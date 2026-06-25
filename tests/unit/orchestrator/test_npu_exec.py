@@ -437,3 +437,181 @@ class _FakeCompletedProcess:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
+
+
+# ---- SSH 远程后端 ----
+
+
+class _FakeSSHEnv:
+    """mock SSHEnvironment:记录 execute 调用,预设返回值队列。
+
+    每次 execute 按 callable key 匹配返回(支持 env 探测与 compile 命令分别 stub)。
+    """
+
+    def __init__(self, responses=None, env_probe_stdout=""):
+        # responses: list[(substring_match, ExecuteResult-like)]
+        self._responses = list(responses) if responses else []
+        self._env_probe_stdout = env_probe_stdout
+        self.captured_commands: list[str] = []
+
+    def execute(self, command, cwd=None, timeout=None, stdin_data=None):
+        self.captured_commands.append(command)
+        # env 探测命令(含 echo $ASCEND_OPP_PATH)
+        if "ASCEND_OPP_PATH" in command:
+            return _FakeExecResult(
+                return_code=0, stdout=self._env_probe_stdout, stderr="", timed_out=False
+            )
+        # 按 substring 匹配预设响应
+        for substr, result in self._responses:
+            if substr in command:
+                return result
+        # 默认成功
+        return _FakeExecResult(return_code=0, stdout="ok", stderr="", timed_out=False)
+
+
+class _FakeExecResult:
+    def __init__(self, return_code, stdout, stderr, timed_out=False):
+        self.return_code = return_code
+        self.stdout = stdout
+        self.stderr = stderr
+        self.success = return_code == 0
+        self.timed_out = timed_out
+
+
+def test_ssh_env_property_is_remote() -> None:
+    """ssh_env 非 None 时 is_remote=True。"""
+    local = NpuExecutor()
+    assert local.is_remote is False
+    remote = NpuExecutor(ssh_env=_FakeSSHEnv())
+    assert remote.is_remote is True
+
+
+def test_is_remote_cann_available_returns_true_when_env_set() -> None:
+    """远程探测 ASCEND_OPP_PATH 非空 → True。"""
+    ssh_env = _FakeSSHEnv(env_probe_stdout="/usr/local/Ascend/ascend-toolkit/latest/opp")
+    executor = NpuExecutor(
+        ssh_env=ssh_env,
+        remote_env_setup="source /usr/local/Ascend/set_env.sh && ",
+    )
+    assert executor.is_remote_cann_available() is True
+    # 探测命令含 remote_env_setup 前缀
+    assert "source /usr/local/Ascend/set_env.sh" in ssh_env.captured_commands[0]
+    assert "ASCEND_OPP_PATH" in ssh_env.captured_commands[0]
+
+
+def test_is_remote_cann_available_returns_false_when_env_unset() -> None:
+    """远程 ASCEND_OPP_PATH 空 / 未展开 → False。"""
+    executor_empty = NpuExecutor(ssh_env=_FakeSSHEnv(env_probe_stdout=""))
+    assert executor_empty.is_remote_cann_available() is False
+
+    executor_unexpanded = NpuExecutor(ssh_env=_FakeSSHEnv(env_probe_stdout="$ASCEND_OPP_PATH"))
+    assert executor_unexpanded.is_remote_cann_available() is False
+
+
+def test_is_remote_cann_available_returns_false_without_ssh_env() -> None:
+    """无 ssh_env 时远程探测恒 False。"""
+    assert NpuExecutor().is_remote_cann_available() is False
+
+
+def test_compile_remote_success() -> None:
+    """SSH 远程编译:env 就绪 + cann_compile returncode=0 → success=True。"""
+    fake_ok = _FakeExecResult(return_code=0, stdout="build ok", stderr="")
+    ssh_env = _FakeSSHEnv(
+        responses=[("cann_compile", fake_ok)],
+        env_probe_stdout="/opt/Ascend/opp",
+    )
+    executor = NpuExecutor(
+        ssh_env=ssh_env,
+        remote_env_setup="source set_env.sh && ",
+    )
+    outcome = executor.compile("/remote/path/op", target="npu")
+    assert outcome.success is True
+    assert outcome.return_code == 0
+    assert outcome.stdout == "build ok"
+    # 命令含 env setup 前缀 + target
+    assert "source set_env.sh" in outcome.command
+    assert "cann_compile -target npu /remote/path/op" in outcome.command
+
+
+def test_compile_remote_failure_propagates_stderr() -> None:
+    """远程 cann_compile returncode=1 → success=False + stderr 透传。"""
+    fake_fail = _FakeExecResult(return_code=1, stdout="", stderr="syntax error line 5")
+    ssh_env = _FakeSSHEnv(
+        responses=[("cann_compile", fake_fail)],
+        env_probe_stdout="/opt/Ascend/opp",
+    )
+    executor = NpuExecutor(ssh_env=ssh_env)
+    outcome = executor.compile("/remote/op")
+    assert outcome.success is False
+    assert outcome.return_code == 1
+    assert "syntax error" in outcome.stderr
+
+
+def test_compile_remote_env_not_ready_returns_127() -> None:
+    """远程 CANN 未 source → success=False return_code=127,不调 cann_compile。"""
+    ssh_env = _FakeSSHEnv(env_probe_stdout="")  # env 未就绪
+    executor = NpuExecutor(ssh_env=ssh_env)
+    outcome = executor.compile("/remote/op")
+    assert outcome.success is False
+    assert outcome.return_code == 127
+    assert "remote CANN env not configured" in outcome.stderr
+    # 不应发出 cann_compile 命令(只发了 env 探测)
+    assert not any("cann_compile" in c for c in ssh_env.captured_commands)
+
+
+def test_compile_remote_empty_path_returns_2() -> None:
+    """远程空 operator_path → return_code=2(不调 SSH)。"""
+    ssh_env = _FakeSSHEnv(env_probe_stdout="/opt/Ascend/opp")
+    executor = NpuExecutor(ssh_env=ssh_env)
+    outcome = executor.compile("")
+    assert outcome.success is False
+    assert outcome.return_code == 2
+    assert ssh_env.captured_commands == []
+
+
+def test_compile_remote_timeout() -> None:
+    """远程 cann_compile 超时(timed_out=True)→ return_code=124。"""
+    fake_timeout = _FakeExecResult(return_code=124, stdout="", stderr="", timed_out=True)
+    ssh_env = _FakeSSHEnv(
+        responses=[("cann_compile", fake_timeout)],
+        env_probe_stdout="/opt/Ascend/opp",
+    )
+    executor = NpuExecutor(ssh_env=ssh_env, compile_timeout=5)
+    outcome = executor.compile("/remote/op")
+    assert outcome.success is False
+    assert outcome.return_code == 124
+    assert "timeout" in outcome.stderr.lower()
+
+
+def test_compile_remote_ssh_exception_returns_126() -> None:
+    """SSH execute 抛异常 → return_code=126,不向上抛。"""
+    class _ExplodingSSHEnv(_FakeSSHEnv):
+        def execute(self, *a, **kw):
+            cmd = a[0] if a else kw.get("command", "")
+            self.captured_commands.append(cmd)
+            if "ASCEND_OPP_PATH" in cmd:
+                return _FakeExecResult(0, "/opt/Ascend/opp", "")
+            raise RuntimeError("SSH connection lost")
+
+    executor = NpuExecutor(ssh_env=_ExplodingSSHEnv())
+    outcome = executor.compile("/remote/op")
+    assert outcome.success is False
+    assert outcome.return_code == 126
+    assert "SSH execute failed" in outcome.stderr
+
+
+def test_compile_remote_uses_remote_env_setup_prefix() -> None:
+    """remote_env_setup 前缀同时注入 env 探测和 compile 命令。"""
+    fake_ok = _FakeExecResult(return_code=0, stdout="ok", stderr="")
+    ssh_env = _FakeSSHEnv(
+        responses=[("cann_compile", fake_ok)],
+        env_probe_stdout="/opt/Ascend/opp",
+    )
+    executor = NpuExecutor(
+        ssh_env=ssh_env,
+        remote_env_setup="source /usr/local/Ascend/ascend-toolkit/set_env.sh && ",
+    )
+    executor.compile("/remote/op")
+    # 两条命令(env 探测 + compile)都应有前缀
+    for cmd in ssh_env.captured_commands:
+        assert "source /usr/local/Ascend/ascend-toolkit/set_env.sh" in cmd
