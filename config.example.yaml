@@ -1,0 +1,40 @@
+# Ascend Op Agent 配置模板
+#
+# 用法:复制到 ~/.ascend_op_agent/config.yaml 后填真实值
+#   cp config.example.yaml ~/.ascend_op_agent/config.yaml
+#
+# 敏感字段(api_key / password)建议放 ~/.ascend_op_agent/.env,
+# 这里用 ${ENV_VAR} 引用。支持 ${ENV_VAR:-default} 语法。
+
+# ---- LLM(此处以 minimax 国内版为例,走 OpenAI 兼容端点)----
+llm:
+  provider: openai  # minimax OpenAI 兼容,直接复用 OpenAIAdapter
+  # 国内版端点(国际版用 https://api.minimaxi.com/v1)
+  api_base: https://api.minimax.chat/v1
+  api_key: ${MINIMAX_API_KEY}  # 从 ~/.ascend_op_agent/.env 读
+  # minimax 国内模型:abab6.5s-chat / abab6.5-chat / MiniMax-Text-01 / MiniMax-M1
+  model: abab6.5s-chat
+  max_retries: 3
+  timeout: 120
+
+# ---- 远程开发环境(910B SSH)----
+remote:
+  host: ${NPU_HOST}        # 910B 机器 IP/hostname
+  user: ${NPU_USER}        # SSH 用户名(HwHiAiUser / root / 自定义)
+  port: 22
+  # 二选一:密钥 或 密码
+  key_path: ${NPU_KEY_PATH:-}   # 如 ~/.ssh/id_rsa,留空则用 password
+  password: ${NPU_PASSWORD:-}   # 走 .env
+  # 若 910B 在容器里(可选)
+  image_name: ""
+  container_name: ""
+
+# ---- 编排器 checkpoint(自研 sqlite3)----
+checkpoint:
+  db_path: ~/.ascend_op_agent/checkpoints.db
+  auto_resume: true
+
+# ---- cannbot skill 仓库(submodule 已提供,通常无需改)----
+# skill_repositories:
+#   - name: cannbot-skills
+#     url: vendor/cannbot-skills
