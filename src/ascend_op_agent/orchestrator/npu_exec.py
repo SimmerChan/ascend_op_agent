@@ -98,28 +98,53 @@ class NpuExecutor:
         run_timeout: int = 60,
         ssh_env: Optional[Any] = None,
         remote_env_setup: str = "",
+        container_name: str = "",
     ) -> None:
         """
         Args:
             archive_dir: 结果归档目录;None 时不归档
-            compile_timeout: cann_compile 超时秒
+            compile_timeout: msopgen compile 超时秒
             run_timeout: 算子执行超时秒
             ssh_env: SSHEnvironment 实例(远程执行);None 时本地 subprocess。
-                远程模式下 operator_path 必须是远程机器上的路径。
+                远程模式下 operator_path 必须是远程机器(或容器内)的路径。
             remote_env_setup: 远程命令前缀(如 ``"source /usr/local/Ascend/
                 ascend-toolkit/set_env.sh && "``),用于在非交互 SSH 会话里
                 加载 CANN 环境变量。本地模式忽略。
+            container_name: 远程开发容器名(如 ``"ops_pt"``);非空时远程命令
+                自动包装 ``docker exec <container> bash -c "..."``。本地忽略。
+                ssh_env 直连容器(容器内跑 sshd)时留空。
         """
         self.archive_dir = Path(archive_dir) if archive_dir is not None else None
         self.compile_timeout = compile_timeout
         self.run_timeout = run_timeout
         self.ssh_env = ssh_env
         self.remote_env_setup = remote_env_setup or ""
+        self.container_name = container_name or ""
 
     @property
     def is_remote(self) -> bool:
         """是否走 SSH 远程执行。"""
         return self.ssh_env is not None
+
+    @property
+    def is_containerized(self) -> bool:
+        """远程是否走 docker exec 进容器。"""
+        return bool(self.container_name)
+
+    # ---- 命令包装 ----
+
+    def _wrap_remote_cmd(self, inner_cmd: str) -> str:
+        """包装远程命令:加 remote_env_setup 前缀 + 可选 docker exec 外壳。
+
+        - inner_cmd: 实际要跑的命令(如 ``msopgen compile -i /path -q``)
+        - 返回:含 source env + (可选)docker exec 的完整命令串
+        """
+        full = f"{self.remote_env_setup}{inner_cmd}"
+        if self.is_containerized:
+            # docker exec 里再起 bash -c,内部用单引号包(避免与外层 SSH 引号冲突)
+            # 注意:inner_cmd 内不应含单引号;调用方需自行转义
+            full = f"docker exec {self.container_name} bash -c '{full}'"
+        return full
 
     # ---- 环境检测 ----
 
@@ -134,14 +159,14 @@ class NpuExecutor:
         )
 
     def is_remote_cann_available(self) -> bool:
-        """远程模式:SSH 探测 ASCEND_OPP_PATH 是否就绪。
+        """远程模式:SSH(可选进容器)探测 ASCEND_OPP_PATH 是否就绪。
 
         非交互 SSH 会话默认不加载 CANN env,需靠 ``remote_env_setup`` 前缀
         source 工具链脚本。
         """
         if self.ssh_env is None:
             return False
-        cmd = f"{self.remote_env_setup}echo $ASCEND_OPP_PATH"
+        cmd = self._wrap_remote_cmd("echo $ASCEND_OPP_PATH")
         try:
             result = self.ssh_env.execute(cmd, timeout=15)
         except Exception as e:
@@ -158,10 +183,18 @@ class NpuExecutor:
         operator_path: str,
         target: str = "npu",
     ) -> CompileOutcome:
-        """调 cann_compile 编译算子。
+        """调 msopgen compile 编译算子工程。
+
+        CANN 9.1.0 起没有独立 ``cann_compile`` 二进制,统一走
+        ``msopgen compile -i <project> -q``。芯片型号(soc_version)由
+        算子工程内的 ``arch_config.ini`` / CMakeLists 决定,不在命令行传。
 
         硬件未就绪时返回 success=False 的 outcome(不抛错)。
-        根据 ``ssh_env`` 自动走本地 subprocess 或远程 SSH。
+        根据 ``ssh_env`` 自动走本地 subprocess 或远程 SSH(可选进容器)。
+
+        Args:
+            operator_path: 算子工程根目录(含 op_host/op_kernel/CMakeLists)
+            target: 保留参数(兼容旧签名),msopgen 流程不用,工程内配置决定
         """
         if self.is_remote:
             return self._compile_remote(operator_path, target)
@@ -172,8 +205,9 @@ class NpuExecutor:
         operator_path: str,
         target: str,
     ) -> CompileOutcome:
-        cmd = ["cann_compile", "-target", target, operator_path]
-        command_str = " ".join(cmd)
+        # msopgen compile -i <project> -q(target 由工程内 soc_version 决定)
+        cann_cmd = f"msopgen compile -i {operator_path} -q"
+        command_str = cann_cmd
 
         if not operator_path or not Path(operator_path).exists():
             return CompileOutcome(
@@ -199,7 +233,7 @@ class NpuExecutor:
 
         try:
             result = subprocess.run(
-                cmd,
+                ["bash", "-c", cann_cmd],
                 capture_output=True,
                 text=True,
                 timeout=self.compile_timeout,
@@ -218,7 +252,7 @@ class NpuExecutor:
                 success=False,
                 command=command_str,
                 stdout="",
-                stderr=f"cann_compile timeout after {self.compile_timeout}s",
+                stderr=f"msopgen compile timeout after {self.compile_timeout}s",
                 return_code=124,
                 operator_path=operator_path,
                 target=target,
@@ -228,7 +262,7 @@ class NpuExecutor:
                 success=False,
                 command=command_str,
                 stdout="",
-                stderr="cann_compile binary not found in PATH",
+                stderr="bash not found in PATH",
                 return_code=127,
                 operator_path=operator_path,
                 target=target,
@@ -239,13 +273,14 @@ class NpuExecutor:
         operator_path: str,
         target: str,
     ) -> CompileOutcome:
-        """SSH 远程编译。
+        """SSH 远程编译(可选进容器)。
 
-        operator_path 必须是远程机器上的路径。前置 ``remote_env_setup`` 加载 CANN。
+        operator_path 必须是远程机器/容器内的路径。前置 ``remote_env_setup``
+        加载 CANN;``container_name`` 非空时整个命令包进 docker exec。
         """
-        # shell-safe 命令(不依赖 list 形式,远程走 bash -c)
-        cann_cmd = f"cann_compile -target {target} {operator_path}"
-        full_cmd = f"{self.remote_env_setup}{cann_cmd}"
+        # msopgen compile -i <project> -q(target 由工程内 soc_version 决定)
+        cann_cmd = f"msopgen compile -i {operator_path} -q"
+        full_cmd = self._wrap_remote_cmd(cann_cmd)
         command_str = full_cmd
 
         if not operator_path:
@@ -293,7 +328,7 @@ class NpuExecutor:
                 success=False,
                 command=command_str,
                 stdout="",
-                stderr=f"cann_compile timeout after {self.compile_timeout}s",
+                stderr=f"msopgen compile timeout after {self.compile_timeout}s",
                 return_code=124,
                 operator_path=operator_path,
                 target=target,

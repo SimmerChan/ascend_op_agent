@@ -171,6 +171,94 @@ Agent 支持两种工具调用格式：
 - Node.js >= 16（TUI 前端）
 - ChromaDB（向量存储，记忆系统）
 
+## 910B 远程开发环境（192.168.9.105）
+
+算子编译/验证的实际硬件。本地编排，远程编译。
+
+### 拓扑
+
+```
+本地 Mac (darwin)
+  └─ ssh root@192.168.9.105         # 已配免密登录
+       └─ server105 宿主机
+            └─ docker exec ops_pt    # 开发容器
+                 ├─ 工作目录: /home/hsl/ops_agent
+                 ├─ CANN: cann-9.1.0 (aarch64)
+                 └─ NPU: 910B3 × 8 卡
+```
+
+### 关键事实（2026-06-25 实测）
+
+| 项 | 值 |
+|------|------|
+| SSH 登录 | `ssh root@192.168.9.105`（免密） |
+| 宿主机 hostname | server105 |
+| 开发容器 | `ops_pt`（docker，常驻） |
+| 容器工作目录 | `/home/hsl/ops_agent` |
+| CANN 版本 | cann-9.1.0，innerversion V100R001C25B114 |
+| set_env.sh | `/usr/local/Ascend/ascend-toolkit/set_env.sh` |
+| 芯片 | 910B3（8 卡，64G HBM/卡），soc_version=`Ascend910B3` |
+| 架构 | aarch64（容器与芯片原生 ARM） |
+
+### 算子编译命令（重要）
+
+**CANN 9.1.0 没有 `cann_compile` 二进制** —— `agent/tools/npu_tool.py` 和早期
+`NpuExecutor` 假设的 `cann_compile -target npu` 命令在此环境不存在。真实编译流程：
+
+```bash
+# 在容器内（每次 docker exec 是新 session，必须先 source）
+docker exec ops_pt bash -c "
+  source /usr/local/Ascend/ascend-toolkit/set_env.sh &&
+  msopgen compile -i <operator_project_dir> -q
+"
+```
+
+- `msopgen gen`：从算子定义生成工程骨架（CMakeLists + op_host/op_kernel）
+- `msopgen compile -i <project> -q`：编译算子工程（替代假设的 cann_compile）
+- `msopgen sim`：仿真运行
+
+### SSH 进入容器执行命令的模板
+
+```bash
+# 只读探查
+ssh root@192.168.9.105 'docker exec ops_pt bash -c "
+  source /usr/local/Ascend/ascend-toolkit/set_env.sh > /dev/null 2>&1;
+  <命令>
+"'
+
+# 看芯片状态
+ssh root@192.168.9.105 'docker exec ops_pt bash -c "
+  source /usr/local/Ascend/ascend-toolkit/set_env.sh;
+  npu-smi info
+"'
+```
+
+### 坑：非交互 shell 不加载 CANN env
+
+`bash -lc` / `docker exec` 默认非交互，**不会自动 source `set_env.sh`**，导致
+`ASCEND_OPP_PATH` 空、`msopgen`/`cann_compile` 不在 PATH。任何远程命令必须显式
+`source /usr/local/Ascend/ascend-toolkit/set_env.sh &&` 前置。
+
+`NpuExecutor(remote_env_setup="source .../set_env.sh && ")` 即为此设计。
+
+### 硬件冒烟测试
+
+环境变量驱动的 hardware-gated 测试（本地无 env 自动 skip）：
+
+```bash
+# 配置（写 ~/.ascend_op_agent/.env）
+NPU_HOST=192.168.9.105
+NPU_USER=root
+NPU_CANN_SETUP=/usr/local/Ascend/ascend-toolkit/set_env.sh
+# 容器拓扑需额外包装 docker exec（见 NpuExecutor 集成说明）
+
+pytest -m hardware tests/integration/test_ssh_compile_smoke.py -v
+```
+
+> 注：当前 `test_ssh_compile_smoke.py` 假设直接 SSH 进开发环境，910B 的
+> 容器拓扑（ssh→server105→docker exec ops_pt）需在 SSHEnvironment 上加一层
+> docker exec 包装，或用 RemoteConfig.container_name。待 U13 集成时处理。
+
 ## 调试
 
 ```bash

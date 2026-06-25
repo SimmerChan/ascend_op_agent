@@ -93,11 +93,15 @@ def msop(operator_path: str, analyze: bool = True) -> str:
 
 
 def cann_compile(operator_path: str, target: str = "npu") -> str:
-    """Run CANN compilation for an operator.
+    """Run CANN compilation for an operator project.
+
+    Uses ``msopgen compile`` (CANN 9.1.0+ 标准;早期版本的独立 ``cann_compile``
+    二进制已废弃)。芯片型号由算子工程内的 ``arch_config.ini`` / CMakeLists
+    (soc_version) 决定,不在命令行传。
 
     Args:
-        operator_path: Path to operator source
-        target: Compilation target (default: npu)
+        operator_path: Path to operator project (含 op_host/op_kernel/CMakeLists)
+        target: 保留参数(兼容旧调用),msopgen 流程不用
 
     Returns:
         Compilation result or error message
@@ -111,7 +115,8 @@ def cann_compile(operator_path: str, target: str = "npu") -> str:
         return "警告: CANN 环境未配置（ASCEND_OPP_PATH 或 CANN_HOME 未设置）。请先 source cann脚本。"
 
     try:
-        args = ['cann_compile', '-target', target, operator_path]
+        # msopgen compile -i <project> -q(quiet 模式跳过交互)
+        args = ['msopgen', 'compile', '-i', operator_path, '-q']
 
         result = subprocess.run(
             args,
@@ -129,7 +134,7 @@ def cann_compile(operator_path: str, target: str = "npu") -> str:
         return "错误: 编译超时（5分钟）"
 
     except FileNotFoundError:
-        return "错误: cann_compile 未安装。请安装 CANN 工具包。"
+        return "错误: msopgen 未安装。请安装 CANN 工具包并 source set_env.sh。"
 
     except Exception as e:
         return f"错误: {str(e)}"
