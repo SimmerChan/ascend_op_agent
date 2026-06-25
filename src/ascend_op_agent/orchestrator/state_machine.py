@@ -178,9 +178,11 @@ class PhaseRunner:
     def _emit_phase(
         self, phase: str, event: str, error: Optional[str] = None
     ) -> None:
+        # 统一传 dict(失败时打包 {"error": str}),避免回调收到 str 期望 dict
+        payload: dict = {} if error is None else {"error": error}
         if self._phase_callback is not None:
             try:
-                self._phase_callback(phase, event, error)
+                self._phase_callback(phase, event, payload)
             except Exception as e:
                 logger.warning(f"phase_callback error: {e}")
 

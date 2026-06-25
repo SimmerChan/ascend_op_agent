@@ -155,7 +155,18 @@ def build_new_dev_graph(
         task_prompt_template=(
             "你是 Ascend C 算子 developer。基于已确认的 DESIGN.md 生成 AscendC kernel:\n\n"
             "{state}\n\n"
-            "输出:kernel.cpp + op.cpp 文件内容。"
+            "【关键:必须使用 file_write 工具落盘,不是把代码塞进 assistant 文本】\n"
+            "用 file_write 工具(参数 path=绝对路径,content=文件内容)按以下清单逐个写文件:\n"
+            "  1. {operator_dir}/op_kernel.cpp  —— AscendC kernel 实现(必含 #include "
+            "\"kernel_operator.h\";Init/Process 接口)\n"
+            "  2. {operator_dir}/op_host.cpp    —— tiling 函数 + shape 推导 + op 算子注册\n"
+            "  3. {operator_dir}/CMakeLists.txt —— 至少含 add_ops 子目录、target_include_directories "
+            "指 include/, target_link_libraries 含 ascendc\n"
+            "  4. {operator_dir}/build.sh       —— bash 入口,内部跑 cmake -B build -DPKG "
+            "ascend910b && cmake --build build -j 8(可执行权限 chmod +x)\n"
+            "  5. {operator_dir}/op_kernel.ini  —— [opinfo] 段,op_name/op_type 等元信息\n\n"
+            "写完所有 5 个文件后,回 'codegen done'(一行)。\n"
+            "operator_dir 默认 = /tmp/e2e_ops_local/op_add (用户 task 里的目标路径)。"
         ),
         skill_bundle_text=bundles.get("codegen"),
         agent_factory=factory,
