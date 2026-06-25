@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class CompileOutcome:
-    """cann_compile 单次调用结果。"""
+    """build.sh 单次编译调用结果。"""
 
     success: bool
     command: str
@@ -45,7 +45,7 @@ class CompileOutcome:
     stderr: str
     return_code: int
     operator_path: str
-    target: str
+    soc_version: str
 
 
 @dataclass
@@ -181,33 +181,45 @@ class NpuExecutor:
     def compile(
         self,
         operator_path: str,
-        target: str = "npu",
+        soc_version: str = "ascend910b",
+        cores: int = 8,
     ) -> CompileOutcome:
-        """调 msopgen compile 编译算子工程。
+        """调 ``bash build.sh --soc=<soc_version>`` 编译 AscendC 算子工程。
 
-        CANN 9.1.0 起没有独立 ``cann_compile`` 二进制,统一走
-        ``msopgen compile -i <project> -q``。芯片型号(soc_version)由
-        算子工程内的 ``arch_config.ini`` / CMakeLists 决定,不在命令行传。
+        AscendC 新式工程(op_host/op_kernel + CMakeLists + build.sh)的编译入口
+        是工程自带的 ``build.sh``(内部封装 cmake + opc)。芯片型号通过
+        ``--soc`` 参数传(910B3 → ``ascend910b``;A5/950 → ``ascend950``;
+        910A → ``ascend910a``)。非 AscendC 老式 TBE 工程才用 msopgen compile。
 
         硬件未就绪时返回 success=False 的 outcome(不抛错)。
         根据 ``ssh_env`` 自动走本地 subprocess 或远程 SSH(可选进容器)。
 
         Args:
-            operator_path: 算子工程根目录(含 op_host/op_kernel/CMakeLists)
-            target: 保留参数(兼容旧签名),msopgen 流程不用,工程内配置决定
+            operator_path: 算子工程根目录(含 build.sh/op_host/op_kernel)
+            soc_version: 目标芯片型号(默认 ``ascend910b`` 对应 910B3)
+            cores: 编译线程数(build.sh -j 参数)
         """
         if self.is_remote:
-            return self._compile_remote(operator_path, target)
-        return self._compile_local(operator_path, target)
+            return self._compile_remote(operator_path, soc_version, cores)
+        return self._compile_local(operator_path, soc_version, cores)
+
+    @staticmethod
+    def _build_compile_cmd(
+        operator_path: str,
+        soc_version: str,
+        cores: int,
+    ) -> str:
+        """构造编译命令:cd 进工程 + bash build.sh --soc=<soc> -j<n>。"""
+        return f"cd {operator_path} && bash build.sh --soc={soc_version} -j{cores}"
 
     def _compile_local(
         self,
         operator_path: str,
-        target: str,
+        soc_version: str,
+        cores: int,
     ) -> CompileOutcome:
-        # msopgen compile -i <project> -q(target 由工程内 soc_version 决定)
-        cann_cmd = f"msopgen compile -i {operator_path} -q"
-        command_str = cann_cmd
+        compile_cmd = self._build_compile_cmd(operator_path, soc_version, cores)
+        command_str = compile_cmd
 
         if not operator_path or not Path(operator_path).exists():
             return CompileOutcome(
@@ -217,7 +229,7 @@ class NpuExecutor:
                 stderr=f"operator_path not found: {operator_path}",
                 return_code=2,
                 operator_path=operator_path,
-                target=target,
+                soc_version=soc_version,
             )
 
         if not self.is_cann_available():
@@ -228,12 +240,12 @@ class NpuExecutor:
                 stderr="CANN env not configured (ASCEND_OPP_PATH / CANN_HOME missing)",
                 return_code=127,
                 operator_path=operator_path,
-                target=target,
+                soc_version=soc_version,
             )
 
         try:
             result = subprocess.run(
-                ["bash", "-c", cann_cmd],
+                ["bash", "-c", compile_cmd],
                 capture_output=True,
                 text=True,
                 timeout=self.compile_timeout,
@@ -245,17 +257,17 @@ class NpuExecutor:
                 stderr=result.stderr,
                 return_code=result.returncode,
                 operator_path=operator_path,
-                target=target,
+                soc_version=soc_version,
             )
         except subprocess.TimeoutExpired:
             return CompileOutcome(
                 success=False,
                 command=command_str,
                 stdout="",
-                stderr=f"msopgen compile timeout after {self.compile_timeout}s",
+                stderr=f"build.sh timeout after {self.compile_timeout}s",
                 return_code=124,
                 operator_path=operator_path,
-                target=target,
+                soc_version=soc_version,
             )
         except FileNotFoundError:
             return CompileOutcome(
@@ -265,22 +277,22 @@ class NpuExecutor:
                 stderr="bash not found in PATH",
                 return_code=127,
                 operator_path=operator_path,
-                target=target,
+                soc_version=soc_version,
             )
 
     def _compile_remote(
         self,
         operator_path: str,
-        target: str,
+        soc_version: str,
+        cores: int,
     ) -> CompileOutcome:
         """SSH 远程编译(可选进容器)。
 
         operator_path 必须是远程机器/容器内的路径。前置 ``remote_env_setup``
         加载 CANN;``container_name`` 非空时整个命令包进 docker exec。
         """
-        # msopgen compile -i <project> -q(target 由工程内 soc_version 决定)
-        cann_cmd = f"msopgen compile -i {operator_path} -q"
-        full_cmd = self._wrap_remote_cmd(cann_cmd)
+        compile_cmd = self._build_compile_cmd(operator_path, soc_version, cores)
+        full_cmd = self._wrap_remote_cmd(compile_cmd)
         command_str = full_cmd
 
         if not operator_path:
@@ -291,7 +303,7 @@ class NpuExecutor:
                 stderr="operator_path is empty",
                 return_code=2,
                 operator_path=operator_path,
-                target=target,
+                soc_version=soc_version,
             )
 
         if not self.is_remote_cann_available():
@@ -305,7 +317,7 @@ class NpuExecutor:
                 ),
                 return_code=127,
                 operator_path=operator_path,
-                target=target,
+                soc_version=soc_version,
             )
 
         try:
@@ -320,7 +332,7 @@ class NpuExecutor:
                 stderr=f"SSH execute failed: {e}",
                 return_code=126,
                 operator_path=operator_path,
-                target=target,
+                soc_version=soc_version,
             )
 
         if getattr(result, "timed_out", False):
@@ -331,7 +343,7 @@ class NpuExecutor:
                 stderr=f"msopgen compile timeout after {self.compile_timeout}s",
                 return_code=124,
                 operator_path=operator_path,
-                target=target,
+                soc_version=soc_version,
             )
 
         return CompileOutcome(
@@ -341,12 +353,17 @@ class NpuExecutor:
             stderr=result.stderr,
             return_code=result.return_code,
             operator_path=operator_path,
-            target=target,
+            soc_version=soc_version,
         )
 
-    def compile_to_dict(self, operator_path: str, target: str = "npu") -> dict:
+    def compile_to_dict(
+        self,
+        operator_path: str,
+        soc_version: str = "ascend910b",
+        cores: int = 8,
+    ) -> dict:
         """compile + 归档 + 转 dict(写 ``compile_result`` 字段格式)。"""
-        outcome = self.compile(operator_path, target=target)
+        outcome = self.compile(operator_path, soc_version=soc_version, cores=cores)
         result = {
             "success": outcome.success,
             "command": outcome.command,
@@ -354,7 +371,7 @@ class NpuExecutor:
             "stderr": outcome.stderr,
             "return_code": outcome.return_code,
             "operator_path": outcome.operator_path,
-            "target": outcome.target,
+            "soc_version": outcome.soc_version,
         }
         self._archive("compile", result)
         return result

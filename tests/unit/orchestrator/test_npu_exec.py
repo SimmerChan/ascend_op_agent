@@ -208,7 +208,7 @@ def test_compile_success_mock_subprocess(tmp_path) -> None:
     assert outcome.success is True
     assert outcome.return_code == 0
     assert outcome.stdout == "build ok"
-    assert "msopgen" in outcome.command
+    assert "build.sh" in outcome.command
 
 
 def test_compile_failure_mock_subprocess(tmp_path) -> None:
@@ -240,7 +240,7 @@ def test_compile_timeout(tmp_path) -> None:
     with patch("ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available",
                return_value=True), \
          patch("ascend_op_agent.orchestrator.npu_exec.subprocess.run",
-               side_effect=sp.TimeoutExpired(cmd="msopgen compile", timeout=1)):
+               side_effect=sp.TimeoutExpired(cmd="bash build.sh", timeout=1)):
         outcome = executor.compile(str(operator_path))
     assert outcome.success is False
     assert outcome.return_code == 124
@@ -517,27 +517,27 @@ def test_compile_remote_success() -> None:
     """SSH 远程编译:env 就绪 + cann_compile returncode=0 → success=True。"""
     fake_ok = _FakeExecResult(return_code=0, stdout="build ok", stderr="")
     ssh_env = _FakeSSHEnv(
-        responses=[("msopgen", fake_ok)],
+        responses=[("build.sh", fake_ok)],
         env_probe_stdout="/opt/Ascend/opp",
     )
     executor = NpuExecutor(
         ssh_env=ssh_env,
         remote_env_setup="source set_env.sh && ",
     )
-    outcome = executor.compile("/remote/path/op", target="npu")
+    outcome = executor.compile("/remote/path/op")
     assert outcome.success is True
     assert outcome.return_code == 0
     assert outcome.stdout == "build ok"
     # 命令含 env setup 前缀 + target
     assert "source set_env.sh" in outcome.command
-    assert "msopgen compile -i /remote/path/op -q" in outcome.command
+    assert "bash build.sh --soc=ascend910b -j8" in outcome.command
 
 
 def test_compile_remote_failure_propagates_stderr() -> None:
     """远程 cann_compile returncode=1 → success=False + stderr 透传。"""
     fake_fail = _FakeExecResult(return_code=1, stdout="", stderr="syntax error line 5")
     ssh_env = _FakeSSHEnv(
-        responses=[("msopgen", fake_fail)],
+        responses=[("build.sh", fake_fail)],
         env_probe_stdout="/opt/Ascend/opp",
     )
     executor = NpuExecutor(ssh_env=ssh_env)
@@ -556,7 +556,7 @@ def test_compile_remote_env_not_ready_returns_127() -> None:
     assert outcome.return_code == 127
     assert "remote CANN env not configured" in outcome.stderr
     # 不应发出 cann_compile 命令(只发了 env 探测)
-    assert not any("msopgen" in c for c in ssh_env.captured_commands)
+    assert not any("build.sh" in c for c in ssh_env.captured_commands)
 
 
 def test_compile_remote_empty_path_returns_2() -> None:
@@ -573,7 +573,7 @@ def test_compile_remote_timeout() -> None:
     """远程 cann_compile 超时(timed_out=True)→ return_code=124。"""
     fake_timeout = _FakeExecResult(return_code=124, stdout="", stderr="", timed_out=True)
     ssh_env = _FakeSSHEnv(
-        responses=[("msopgen", fake_timeout)],
+        responses=[("build.sh", fake_timeout)],
         env_probe_stdout="/opt/Ascend/opp",
     )
     executor = NpuExecutor(ssh_env=ssh_env, compile_timeout=5)
@@ -604,7 +604,7 @@ def test_compile_remote_uses_remote_env_setup_prefix() -> None:
     """remote_env_setup 前缀同时注入 env 探测和 compile 命令。"""
     fake_ok = _FakeExecResult(return_code=0, stdout="ok", stderr="")
     ssh_env = _FakeSSHEnv(
-        responses=[("msopgen", fake_ok)],
+        responses=[("build.sh", fake_ok)],
         env_probe_stdout="/opt/Ascend/opp",
     )
     executor = NpuExecutor(
@@ -632,8 +632,8 @@ def test_wrap_remote_cmd_no_container() -> None:
         ssh_env=_FakeSSHEnv(),
         remote_env_setup="source set_env.sh && ",
     )
-    wrapped = executor._wrap_remote_cmd("msopgen compile -i /p -q")
-    assert wrapped == "source set_env.sh && msopgen compile -i /p -q"
+    wrapped = executor._wrap_remote_cmd("bash build.sh --soc=ascend910b -j8")
+    assert wrapped == "source set_env.sh && bash build.sh --soc=ascend910b -j8"
 
 
 def test_wrap_remote_cmd_with_container() -> None:
@@ -643,17 +643,17 @@ def test_wrap_remote_cmd_with_container() -> None:
         remote_env_setup="source set_env.sh && ",
         container_name="ops_pt",
     )
-    wrapped = executor._wrap_remote_cmd("msopgen compile -i /p -q")
+    wrapped = executor._wrap_remote_cmd("bash build.sh --soc=ascend910b -j8")
     assert wrapped == (
-        "docker exec ops_pt bash -c 'source set_env.sh && msopgen compile -i /p -q'"
+        "docker exec ops_pt bash -c 'source set_env.sh && bash build.sh --soc=ascend910b -j8'"
     )
 
 
 def test_compile_remote_wraps_with_docker_exec() -> None:
-    """容器模式:compile 命令外层 docker exec,内层 source + msopgen。"""
+    """容器模式:compile 命令外层 docker exec,内层 source + build.sh。"""
     fake_ok = _FakeExecResult(return_code=0, stdout="ok", stderr="")
     ssh_env = _FakeSSHEnv(
-        responses=[("msopgen", fake_ok)],
+        responses=[("build.sh", fake_ok)],
         env_probe_stdout="/opt/Ascend/opp",  # env 探测也要进容器
     )
     executor = NpuExecutor(
@@ -661,13 +661,13 @@ def test_compile_remote_wraps_with_docker_exec() -> None:
         remote_env_setup="source set_env.sh && ",
         container_name="ops_pt",
     )
-    outcome = executor.compile("/home/hsl/op", target="npu")
+    outcome = executor.compile("/home/hsl/op")
     assert outcome.success is True
     # 所有发出的命令(env 探测 + compile)都应被 docker exec ops_pt 包裹
     for cmd in ssh_env.captured_commands:
         assert cmd.startswith("docker exec ops_pt bash -c '")
-    # compile 命令含 msopgen + 工程路径
-    compile_cmd = [c for c in ssh_env.captured_commands if "msopgen" in c]
+    # compile 命令含 build.sh + 工程路径
+    compile_cmd = [c for c in ssh_env.captured_commands if "build.sh" in c]
     assert len(compile_cmd) == 1
     assert "/home/hsl/op" in compile_cmd[0]
 

@@ -158,7 +158,7 @@ def test_ssh_compile_real_operator() -> None:
         remote_env_setup=f"source {cann_setup} && ",
         container_name=container or "",
     )
-    outcome = executor.compile(operator_path, target="npu")
+    outcome = executor.compile(operator_path, soc_version="ascend910b")
 
     print(f"\n=== compile outcome ===\n{outcome}")
     assert outcome.success, (

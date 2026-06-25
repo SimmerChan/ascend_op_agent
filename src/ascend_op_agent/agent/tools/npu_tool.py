@@ -92,16 +92,17 @@ def msop(operator_path: str, analyze: bool = True) -> str:
         return f"错误: {str(e)}"
 
 
-def cann_compile(operator_path: str, target: str = "npu") -> str:
-    """Run CANN compilation for an operator project.
+def cann_compile(operator_path: str, target: str = "ascend910b") -> str:
+    """Run CANN compilation for an AscendC operator project.
 
-    Uses ``msopgen compile`` (CANN 9.1.0+ 标准;早期版本的独立 ``cann_compile``
-    二进制已废弃)。芯片型号由算子工程内的 ``arch_config.ini`` / CMakeLists
-    (soc_version) 决定,不在命令行传。
+    Uses the project's ``build.sh``(AscendC 新式工程标准入口,内部封装
+    cmake + opc)。早期 CANN 的独立 ``cann_compile`` 二进制和 ``msopgen compile``
+    (老式 TBE 工程)都不适用于 AscendC 工程。
 
     Args:
-        operator_path: Path to operator project (含 op_host/op_kernel/CMakeLists)
-        target: 保留参数(兼容旧调用),msopgen 流程不用
+        operator_path: Path to operator project (含 build.sh/op_host/op_kernel)
+        target: 目标芯片 soc_version(910B3 → ``ascend910b``;
+            A5/950 → ``ascend950``;910A → ``ascend910a``)
 
     Returns:
         Compilation result or error message
@@ -109,17 +110,21 @@ def cann_compile(operator_path: str, target: str = "npu") -> str:
     if not os.path.exists(operator_path):
         return f"错误: 路径不存在: {operator_path}"
 
+    build_sh = os.path.join(operator_path, "build.sh")
+    if not os.path.exists(build_sh):
+        return f"错误: 工程内未找到 build.sh: {build_sh}(非 AscendC 工程结构)"
+
     # Check if CANN is activated
     cann_home = os.environ.get('ASCEND_OPP_PATH') or os.environ.get('CANN_HOME')
     if not cann_home:
         return "警告: CANN 环境未配置（ASCEND_OPP_PATH 或 CANN_HOME 未设置）。请先 source cann脚本。"
 
     try:
-        # msopgen compile -i <project> -q(quiet 模式跳过交互)
-        args = ['msopgen', 'compile', '-i', operator_path, '-q']
+        # cd 进工程 + bash build.sh --soc=<soc_version> -j8
+        cmd = f"cd {operator_path} && bash build.sh --soc={target} -j8"
 
         result = subprocess.run(
-            args,
+            ["bash", "-c", cmd],
             capture_output=True,
             text=True,
             timeout=300,  # 5 minutes for compilation
@@ -128,13 +133,13 @@ def cann_compile(operator_path: str, target: str = "npu") -> str:
         if result.returncode == 0:
             return result.stdout if result.stdout else "编译成功"
         else:
-            return f"编译错误:\n{result.stderr}"
+            return f"编译错误(return_code={result.returncode}):\n{result.stderr}"
 
     except subprocess.TimeoutExpired:
         return "错误: 编译超时（5分钟）"
 
     except FileNotFoundError:
-        return "错误: msopgen 未安装。请安装 CANN 工具包并 source set_env.sh。"
+        return "错误: bash 未找到。请检查运行环境。"
 
     except Exception as e:
         return f"错误: {str(e)}"
@@ -180,18 +185,21 @@ MSOP_SCHEMA = {
 # Schema for cann_compile
 CANN_COMPILE_SCHEMA = {
     "name": "cann_compile",
-    "description": "运行 CANN 编译命令编译算子。",
+    "description": "运行 AscendC 算子工程 build.sh 编译(内部封装 cmake+opc)。",
     "parameters": {
         "type": "object",
         "properties": {
             "operator_path": {
                 "type": "string",
-                "description": "算子源文件路径"
+                "description": "算子工程根目录(需含 build.sh/op_host/op_kernel)"
             },
             "target": {
                 "type": "string",
-                "description": "编译目标平台",
-                "default": "npu"
+                "description": (
+                    "目标芯片 soc_version(910B3 → ascend910b;"
+                    " A5/950 → ascend950;910A → ascend910a)"
+                ),
+                "default": "ascend910b"
             }
         },
         "required": ["operator_path"]
