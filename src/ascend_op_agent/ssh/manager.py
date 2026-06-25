@@ -517,12 +517,17 @@ class SSHEnvironment(BaseEnvironment):
     ) -> str:
         """包装命令
 
-        注入：
-        1. source 快照文件（恢复环境变量）
+        注入:
+        1. source 快照文件(恢复环境变量)
         2. cd 到目标目录
         3. 执行命令
-        4. 保存快照（持久化环境变量变更）
-        5. 打印CWD标记（追踪目录变化）
+        4. 保存快照(持久化环境变量变更)
+        5. 打印 CWD 标记(追踪目录变化)
+
+        关键:eval 的 exit code 必须在最后用 `exit $eval_exit` 显式传递,否则
+        SSH 通道读到的 channel exit status 是 printf 那一行(始终 0),真实失败被吞。
+        e2e 2026-06-25 复现:NpuExecutor 报 return_code=0,但 docker exec 内层
+        报 'bash: build.sh: No such file or directory'(stderr 还在,return_code 丢了)。
         """
         parts = []
 
@@ -533,17 +538,24 @@ class SSHEnvironment(BaseEnvironment):
         # 2. cd 到目标目录
         parts.append(f"builtin cd {shlex.quote(cwd)} || exit 126")
 
-        # 3. 执行命令
+        # 3. 执行命令(eval 内部命令的 exit code 才是用户真正关心的)
         escaped_cmd = command.replace("'", "'\\''")
         parts.append(f"eval '{escaped_cmd}'")
 
-        # 4. 保存快照
+        # 4. 捕获 eval 的 exit code(必须在 export 之前,否则被 export 0 覆盖)
+        parts.append("_hermes_eval_exit=$?")
+
+        # 5. 保存快照(不影响 exit)
         if self._snapshot_ready:
             parts.append(f"export -p > {self._snapshot_path} 2>/dev/null || true")
 
-        # 5. 打印CWD标记
+        # 6. 打印CWD标记
         marker = f"{self.CWD_MARKER_PREFIX}{self._session_id}"
         parts.append(f"printf '\\n{marker}%s{self.CWD_MARKER_SUFFIX}\\n' \"$(pwd -P)\"")
+
+        # 7. 用 eval 的 exit code 作为整个 wrapper 的 exit(printf 成功 = 0,
+        #    会冲掉真实失败,必须显式 exit 修正)
+        parts.append("exit $_hermes_eval_exit")
 
         return "\n".join(parts)
 
