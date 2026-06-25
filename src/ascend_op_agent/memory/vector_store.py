@@ -59,7 +59,9 @@ class VectorStore:
             persist_dir = cfg.vector_store.persist_dir
 
         self._embedding_dimension = embedding_dimension
-        self.persist_dir = Path(persist_dir)
+        # 显式 expanduser —— 默认值 "~/.ascend_op_agent/vector_db" 不展开会
+        # 在 CWD 下建出字面量 ~/ 目录(同 session_manager/checkpoint 模式)
+        self.persist_dir = Path(persist_dir).expanduser()
         self.persist_dir.mkdir(parents=True, exist_ok=True)
 
         self.collection_skills = collection_skills

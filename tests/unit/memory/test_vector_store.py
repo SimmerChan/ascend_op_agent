@@ -14,7 +14,9 @@
 
 """VectorStore单元测试"""
 
+import os
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -30,6 +32,30 @@ class TestVectorStore:
             store = VectorStore(persist_dir=tmpdir)
 
             assert store.persist_dir.exists()
+
+    def test_tilde_persist_dir_is_expanded(self, monkeypatch, tmp_path):
+        """`~/...` 形式的 persist_dir 必须被 expanduser —— 否则在 CWD 下建出
+        字面量 '~' 目录(回归:之前因缺 .expanduser() 在项目根产生过 '~/' 噪声)。
+
+        通过 monkeypatch 把 HOME 指到 tmp_path,然后传 '~/.ascend_op_agent/vector_db',
+        验证:
+        1. 实际目录建在 $HOME/.ascend_op_agent/vector_db(不在 CWD)
+        2. 不产生 CWD 下的 '~' 目录
+        """
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setattr(Path, "cwd", classmethod(lambda cls: tmp_path))
+
+        # 干净工作目录:不应有 '~' 目录
+        assert not (tmp_path / "~").exists()
+
+        store = VectorStore(persist_dir="~/.ascend_op_agent/vector_db")
+
+        # persist_dir 应被展开到 $HOME
+        assert str(store.persist_dir) == str(tmp_path / ".ascend_op_agent" / "vector_db")
+        assert store.persist_dir.exists()
+        assert store.persist_dir.is_absolute()
+        # 不应在 CWD 下留下字面量 '~' 目录
+        assert not (tmp_path / "~").exists()
 
     def test_add_and_search_skill_vectors(self):
         """测试添加和搜索Skill向量"""
