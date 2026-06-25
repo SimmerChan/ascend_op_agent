@@ -119,10 +119,33 @@ def make_llm_node(
             if items:
                 new_memory_pools[pool] = list(items)
 
-        return {
+        # 8. 从 agent._tool_calls_log 抓 file_write 落盘的文件,合并到 code_result。
+        # 解决 e2e 暴露的 Gap 1:_conversation_history 不存 tool args,
+        # 编排器拿不到 file_write 实际路径(commit 1783f9b 记录)。
+        code_result = dict(state.get("code_result") or {})
+        existing_files = list(code_result.get("files") or [])
+        existing_paths = {f.get("path") for f in existing_files if isinstance(f, dict)}
+        new_files = [
+            {
+                "path": entry["args"].get("path", ""),
+                "content": entry["args"].get("content", ""),
+                "tool": entry["name"],
+            }
+            for entry in getattr(agent, "_tool_calls_log", [])
+            if entry.get("name") == "file_write"
+            and entry.get("args", {}).get("path")
+            and entry["args"]["path"] not in existing_paths
+        ]
+        if new_files:
+            code_result["files"] = existing_files + new_files
+
+        update = {
             "messages": [{"role": "assistant", "content": response}],
             "memory_pools": new_memory_pools,
             "last_phase_result": {"phase": phase, "response": response},
         }
+        if new_files:
+            update["code_result"] = code_result
+        return update
 
     return Node(name=phase, func=_node)

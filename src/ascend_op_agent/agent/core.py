@@ -88,6 +88,10 @@ class AIAgent:
 
         self._llm_client = LLMClient(config.llm)
         self._conversation_history: list[dict[str, str]] = []
+        # 工具调用 side-channel:每次 LLM 触发工具执行时记录一行(供编排器
+        # 提取结构化结果,如 file_write 实际写到的路径)。不进 _conversation_history
+        # 以保持 P0-2 同形契约。
+        self._tool_calls_log: list[dict] = []
         self._max_iterations = 10
         self._current_iteration = 0
         self._current_session_id: Optional[str] = None
@@ -348,6 +352,13 @@ class AIAgent:
             result = tool.execute(**args)
             result_str = str(result)
 
+            # side-channel:供编排器提取(编排器拿不到 _conversation_history 里的 args)
+            self._tool_calls_log.append({
+                "name": tool_name,
+                "args": args,
+                "result": result_str,
+            })
+
             # 记录工具调用
             tool_entry_id = str(uuid.uuid4())
             self._safe_append(ToolEntry(
@@ -446,6 +457,13 @@ class AIAgent:
 
             result = tool.execute(**tool_call_info.arguments)
             result_str = str(result)
+
+            # side-channel:供编排器提取
+            self._tool_calls_log.append({
+                "name": tool_call_info.tool_name,
+                "args": dict(tool_call_info.arguments),
+                "result": result_str,
+            })
 
             # 记录工具调用
             tool_entry_id = str(uuid.uuid4())
