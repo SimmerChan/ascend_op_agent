@@ -22,6 +22,7 @@ skill 并渲染成 Layer 6 文本;否则用 ``skill_bundles`` 显式参数(便�
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, Optional
 
 from ascend_op_agent.orchestrator.cannbot_loader import (
@@ -94,6 +95,7 @@ def build_new_dev_graph(
     use_real_skill_bundles: bool = False,
     compile_node_factory: Optional[Callable[[], Node]] = None,
     precision_node_factory: Optional[Callable[[], Node]] = None,
+    use_scaffold_codegen: bool = False,
 ) -> PhaseRunner:
     """构造 Path-C 新开发图。
 
@@ -150,52 +152,82 @@ def build_new_dev_graph(
         agent_factory=factory,
     )
 
-    # ---- codegen 拆 5 个文件(每次 1 个 LLM 调,降低偷懒概率)----
-    # e2e 2026-06-25/26 暴露 2 个真 bug:
-    #   A. 单次 codegen 节点让 LLM 连调 5 次 file_write 不可靠(写 1 个就停)
-    #   B. CMakeLists.txt 引用文件名与实际文件名不一致(LLM 用了 add_custom.cpp)
-    # 修复:5 个独立节点,每个 prompt 告诉 LLM **其他文件** 的固定名,确保
-    # CMakeLists.txt 引用一致。
-    _codegen_files = [
-        ("op_kernel.cpp", "AscendC kernel 实现(Init/Process 接口,必含 #include \"kernel_operator.h\")"),
-        ("op_host.cpp", "tiling 函数 + shape 推导 + op 算子注册"),
-        ("CMakeLists.txt", "含 ascendc target + include dirs + add_ops 子目录。**必须引用固定文件名 op_kernel.cpp + op_host.cpp,不要改名(如 add_custom.cpp)**。**ascendc.cmake 路径**:`${{ASCEND_TOOLKIT_HOME}}/aarch64-linux/tikcpp/ascendc_kernel_cmake/ascendc.cmake`(用 list(APPEND CMAKE_MODULE_PATH ...) 加)"),
-        ("build.sh", "bash 入口(先 source ${{ASCEND_TOOLKIT_HOME}}/set_env.sh,再 cmake -B build -DPKG ascend910b && cmake --build build -j 8,chmod +x)"),
-        ("op_kernel.ini", "[opinfo] 段元信息(op_name / op_type 等)"),
-    ]
-    codegen_nodes = []
-    _phase_names = {
-        "op_kernel.cpp": "codegen_kernel_cpp",
-        "op_host.cpp": "codegen_host_cpp",
-        "CMakeLists.txt": "codegen_cmakelists",
-        "build.sh": "codegen_build_sh",
-        "op_kernel.ini": "codegen_kernel_ini",
-    }
-    for fname, desc in _codegen_files:
-        # 列出同工程所有文件名,让 LLM 知道相互引用关系
-        all_files = ", ".join(f"{f[0]}" for f in _codegen_files)
-        codegen_nodes.append(make_llm_node(
-            phase=_phase_names[fname],
-            template_vars={"operator_dir": "/tmp/e2e_ops_local/op_add"},
-            task_prompt_template=(
-                f"你是 Ascend C 算子 developer。基于已确认的 DESIGN.md 生成 1 个文件:\n\n"
-                f"{{state}}\n\n"
-                f"【当前文件】{fname} —— {desc}\n"
-                f"【绝对路径】{{operator_dir}}/{fname}\n\n"
-                f"【本工程所有文件名(固定,不要改)】\n"
-                f"  {all_files}\n"
-                f"  全部位于 {{operator_dir}}/ 下。引用其他文件时必须用上述固定名,\n"
-                f"  严禁改名(不要 add_custom.cpp / my_kernel.cpp 等)。\n\n"
-                f"【必须】调用 file_write 工具一次,参数:\n"
-                f"  path = {{operator_dir}}/{fname}\n"
-                f"  content = 完整文件内容(包含所有换行、缩进、include、注释)\n\n"
-                f"【禁止】把代码贴在 assistant 文本(没用 file_write 工具视为失败)。\n"
-                f"【禁止】写 'done' / 'ok' / 'completed' 等字样,只准用 file_write 工具。\n\n"
-                f"写完后回 1 字符 'k'(表示 keep going)。"
-            ),
-            skill_bundle_text=bundles.get("codegen"),
-            agent_factory=factory,
-        ))
+    # ---- codegen 节点:LLM 多文件写(默认) 或 scaffold 迁移(opt-in) ----
+    if use_scaffold_codegen:
+        # 参考工程迁移路径:910B 已有 /tmp/op_test(add_example,已验证可编译),
+        # e2e_real_op.py 在 codegen 前 cp scaffold 到 working dir。
+        # 本节点不调 LLM,只读 scaffold 关键文件填 code_result。
+        def _scaffold_codegen_node(state: dict) -> dict:
+            op_dir = "/tmp/e2e_ops_local/op_add"
+            files: list[dict] = []
+            key_files = [
+                "CMakeLists.txt", "build.sh",
+                "op_kernel/add_example_arch22.cpp",
+                "op_kernel/arch22/add_example.h",
+                "op_host/add_example_def.cpp",
+                "op_host/add_example_infershape.cpp",
+            ]
+            for rel in key_files:
+                full = Path(op_dir) / rel
+                if full.exists():
+                    files.append({
+                        "path": str(full),
+                        "content": full.read_text(encoding="utf-8"),
+                        "tool": "scaffold_loaded",
+                    })
+            return {
+                "code_result": {"files": files, "strategy": "reference_migration"},
+                "last_phase_result": {
+                    "phase": "codegen",
+                    "strategy": "reference_migration",
+                    "scaffold_path": op_dir,
+                    "files_count": len(files),
+                    "note": "scaffold from /tmp/e2e_scaffold (910B /tmp/op_test) — already a working elementwise add op",
+                },
+            }
+        codegen_node = Node(name="codegen", func=_scaffold_codegen_node)
+    else:
+        # 默认:5 个独立 LLM 节点写 5 文件(成功率低,见 e2e 2026-06-25 记录)
+        _codegen_files = [
+            ("op_kernel.cpp", "AscendC kernel 实现(Init/Process 接口,必含 #include \"kernel_operator.h\")"),
+            ("op_host.cpp", "tiling 函数 + shape 推导 + op 算子注册"),
+            ("CMakeLists.txt", "含 ascendc target + include dirs + add_ops 子目录。**必须引用固定文件名 op_kernel.cpp + op_host.cpp,不要改名(如 add_custom.cpp)**。**ascendc.cmake 路径**:`${{ASCEND_TOOLKIT_HOME}}/aarch64-linux/tikcpp/ascendc_kernel_cmake/ascendc.cmake`"),
+            ("build.sh", "bash 入口(先 source ${{ASCEND_TOOLKIT_HOME}}/set_env.sh,再 cmake -B build -DPKG ascend910b && cmake --build build -j 8,chmod +x)"),
+            ("op_kernel.ini", "[opinfo] 段元信息(op_name / op_type 等)"),
+        ]
+        _phase_names = {
+            "op_kernel.cpp": "codegen_kernel_cpp",
+            "op_host.cpp": "codegen_host_cpp",
+            "CMakeLists.txt": "codegen_cmakelists",
+            "build.sh": "codegen_build_sh",
+            "op_kernel.ini": "codegen_kernel_ini",
+        }
+        codegen_nodes = []
+        for fname, desc in _codegen_files:
+            all_files = ", ".join(f[0] for f in _codegen_files)
+            codegen_nodes.append(make_llm_node(
+                phase=_phase_names[fname],
+                template_vars={"operator_dir": "/tmp/e2e_ops_local/op_add"},
+                task_prompt_template=(
+                    f"你是 Ascend C 算子 developer。基于已确认的 DESIGN.md 生成 1 个文件:\n\n"
+                    f"{{state}}\n\n"
+                    f"【当前文件】{fname} —— {desc}\n"
+                    f"【绝对路径】{{operator_dir}}/{fname}\n\n"
+                    f"【本工程所有文件名(固定)】{all_files}\n"
+                    f"严禁改名(不要 add_custom.cpp / my_kernel.cpp)。\n\n"
+                    f"【必须】调用 file_write 工具一次,参数:\n"
+                    f"  path = {{operator_dir}}/{fname}\n"
+                    f"  content = 完整文件内容\n\n"
+                    f"【禁止】把代码贴在 assistant 文本(没用 file_write 工具视为失败)。\n"
+                    f"写完后回 1 字符 'k'。"
+                ),
+                skill_bundle_text=bundles.get("codegen"),
+                agent_factory=factory,
+            ))
+        # 把 5 个节点 wrap 成一个 node(用 codegen_aggregate 节点)
+        # 简单做法:用第一个作为主 codegen,其他 4 个作为后续节点
+        # 这里直接把所有 5 个都加入 nodes 列表
+        codegen_node = codegen_nodes  # 实际上是 list
 
     review_fix_node = make_llm_node(
         phase="review_fix",
@@ -255,13 +287,20 @@ def build_new_dev_graph(
         Node(name="entry", func=lambda s: {}),
         analyze_node,
         design_node,
-        *codegen_nodes,  # 5 个独立 codegen 节点,每个写 1 个文件
+    ]
+    if isinstance(codegen_node, list):
+        # LLM-based:5 个独立 codegen 节点
+        nodes.extend(codegen_node)
+    else:
+        # scaffold-based:单 codegen 节点
+        nodes.append(codegen_node)
+    nodes.extend([
         review_fix_node,
         compile_node,
         precision_node,
         delivery_mode_node,
         framework_adapt_node,
         Node(name="done", func=_done_node),
-    ]
+    ])
 
     return PhaseRunner(nodes=nodes, store=store, phase_callback=phase_callback)

@@ -15,6 +15,7 @@ mock agent_factory 避开真实 LLM 调用。
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -66,6 +67,34 @@ def _factory() -> FakeAgent:
 # ---- 全阶段跑通 ----
 
 
+def test_scaffold_codegen_single_node_path(tmp_path) -> None:
+    """参考工程迁移路径:use_scaffold_codegen=True 时,codegen 是 1 个节点,
+    从 scaffold 读关键文件填 code_result(不调 LLM,见 e2e 2026-06-25 LLM 行为
+    不可靠 55% 失败率的兜底)。"""
+    store = CheckpointStore(tmp_path / "ck.db")
+    runner = build_new_dev_graph(
+        store=store, agent_factory=_factory, use_scaffold_codegen=True,
+    )
+    # 准备 scaffold 目录让节点能读到
+    import os
+    scaffold_op = Path("/tmp/e2e_ops_local/op_add")
+    if not scaffold_op.exists():
+        # 跑这个单测时没有 scaffold,只验证 phase_history 顺序对就行
+        pass
+
+    runner.invoke("design a trivial add op", thread_id="t1")
+    runner.resume("t1", payload={"approved": True})
+    state = runner.resume("t1", payload={"mode": "sample"})
+
+    # scaffold 路径只 1 个 codegen 节点
+    expected = [
+        "entry", "analyze", "design", "codegen", "review_fix",
+        "compile", "precision", "delivery_mode", "framework_adapt", "done",
+    ]
+    assert state["phase_history"] == expected
+    assert state["current_phase"] == "done"
+
+
 def test_new_dev_runs_all_phases_after_design_approval(tmp_path) -> None:
     """U9 MVP:design HITL 批准后,全节点顺序跑通,checkpoint 落盘。
 
@@ -79,7 +108,7 @@ def test_new_dev_runs_all_phases_after_design_approval(tmp_path) -> None:
     runner.resume("t1", payload={"approved": True})
     state = runner.resume("t1", payload={"mode": "sample"})
 
-    # 全阶段访问(codegen 拆 5 个独立节点,各写 1 个文件)
+    # 全阶段访问(codegen 默认 5 个独立 LLM 节点)
     expected = [
         "entry", "analyze", "design",
         "codegen_kernel_cpp", "codegen_host_cpp", "codegen_cmakelists",

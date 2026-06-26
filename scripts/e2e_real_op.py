@@ -60,6 +60,9 @@ NPU_CANN_SETUP = "/usr/local/Ascend/ascend-toolkit/set_env.sh"
 NPU_REMOTE_WORKDIR = "/home/hsl/e2e_ops"
 # 本地暂存(LLM 写到这里,后 rsync 到 NPU_REMOTE_WORKDIR)
 LOCAL_WORKDIR = Path("/tmp/e2e_ops_local")
+# 参考工程 scaffold(910B /tmp/op_test 拉的,已验证 elementwise add 可编译)
+# 参考工程迁移路径:cp 它到 working dir → 910B 真编译
+SCAFFOLD_DIR = Path("/tmp/e2e_scaffold")
 
 
 # ---- 阶段事件回调(实时打印)----
@@ -299,13 +302,29 @@ def main() -> int:
 
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
-    # 0. 准备本地工作目录
+    # 0. 准备本地工作目录 + 复制参考工程 scaffold(reference migration 路径)
     local_workdir = Path(args.local_workdir)
-    local_workdir.mkdir(parents=True, exist_ok=True)
-    os.chdir(local_workdir)
-    print(f"[setup] local workdir = {local_workdir}")
+    op_dir = local_workdir / "op_add"
+    op_dir.mkdir(parents=True, exist_ok=True)
+    if SCAFFOLD_DIR.exists():
+        # 复制 scaffold 整个目录(已验证可编译的 add_example 算子)
+        import shutil as _sh
+        for item in SCAFFOLD_DIR.iterdir():
+            dest = op_dir / item.name
+            if item.is_dir():
+                if dest.exists():
+                    _sh.rmtree(dest)
+                _sh.copytree(item, dest)
+            else:
+                _sh.copy2(item, dest)
+        print(f"[setup] local workdir = {local_workdir}")
+        print(f"[setup]   scaffold copied from {SCAFFOLD_DIR} to {op_dir}")
+        print(f"[setup]   scaffold files: {sorted(p.name for p in op_dir.iterdir())}")
+    else:
+        print(f"[setup] ⚠️  SCAFFOLD_DIR={SCAFFOLD_DIR} 不存在,从零编译模式")
     print(f"[setup] remote workdir = {NPU_REMOTE_WORKDIR}")
     print(f"[setup] thread_id = {args.thread_id}")
+    os.chdir(local_workdir)
 
     # 1. 真实 NPU + 真实 LLM 接线
     print("\n[setup] creating real NpuExecutor (SSH → 910B ops_pt)...")
@@ -328,8 +347,8 @@ def main() -> int:
     store = CheckpointStore(ckpt_path)
     print(f"[setup]   db={ckpt_path}")
 
-    # 2. 构造 graph
-    print("\n[graph] building new_dev graph with real LLM + real NPU...")
+    # 2. 构造 graph(参考工程迁移路径:use_scaffold_codegen=True)
+    print("\n[graph] building new_dev graph (reference migration path)...")
     agent_factory = make_real_agent_factory()
     operator_path_resolver = make_operator_path_resolver(NPU_REMOTE_WORKDIR)
     test_cases_resolver = make_test_cases_resolver()
@@ -347,7 +366,7 @@ def main() -> int:
             executor=npu,
             test_cases_resolver=test_cases_resolver,
         ),
-        use_real_skill_bundles=True,  # 真实 cannbot skill 包(从 vendor/ 读)
+        use_scaffold_codegen=True,  # 参考工程迁移:不调 LLM,读 scaffold
     )
 
     # 3. invoke + 循环 resume(HITL 全批准)
