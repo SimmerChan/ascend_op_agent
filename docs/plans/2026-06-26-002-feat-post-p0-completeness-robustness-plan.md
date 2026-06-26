@@ -165,6 +165,41 @@ class SkillLoad:
 
 ## Implementation Units
 
+### U0.5. msOpUT 路径 spike（U1 前的可行性验证）
+
+**Goal**: 在 U1 实施前，先在 910B 上手动跑 `msoput --help` + 试调 `<operator_path>/build_out/test_main`，捕获 stdout 格式样本，输出一份「U1 spec 校准报告」
+
+**Requirements**: R1 前置（U1 不能在不确定 msOpUT 行为的情况下开工）
+
+**Dependencies**: 910B msOpUT 路径 + /tmp/op_test 已知可用（commit 4d49fd9 验证过 build.sh）
+
+**Files**:
+- New: `docs/e2e/2026-06-26-msoput-spike-report.md`（U0.5 输出：CLI flags、stdout sample、test_main 实际参数）
+- Modify: `tests/integration/test_ssh_compile_smoke.py` 加 `test_msoput_path_discovery` 一次性探查
+
+**Approach**:
+- 在 910B 容器内手动执行：
+  1. `which msoput` → 确认路径
+  2. `msoput --help` → 列出所有 CLI flags
+  3. `ls /tmp/op_test/build_out/` → 确认 test_main 是否生成
+  4. `/tmp/op_test/build_out/test_main --help`（如果存在）→ 列出算子测试 flags
+  5. 用 `add_example_custom` 跑 1 个 trivial test case（input=[0,0,0]），捕获 stdout
+- 解析 stdout 找 actuals 的位置（npy 文件路径？stdout 字段？）
+- 输出报告：test_main 接受什么参数、outputs 是什么格式、是否需要 aclnn 入口
+
+**Patterns to follow**: 已有 `docs/e2e/2026-06-26-e2e-reference-migration.md` 记录 910B 验证产物
+
+**Test scenarios**:
+- Happy: test_main 存在 + 接受 CLI flags + 输出可解析 → U1 spec 确认
+- Error: test_main 不存在 → U1 需重新设计（不用 msOpUT，改用 msOpRun + atc）
+- Edge: test_main 在 build_out/ 不在 /bin → U1 路径前缀调整
+
+**Verification**: U0.5 报告明确说明「U1 应使用 test_main path = X, flags = [Y], actuals parsing = Z」。如果失败,plan U1 重写。
+
+---
+
+### U1. NpuExecutor.run_operator：910B 上跑算子拿 actual 数组
+
 ### U1. NpuExecutor.run_operator：910B 上跑算子拿 actual 数组
 
 **Goal**: NpuExecutor 新增 `run_operator(operator_path, op_name, test_cases)` 方法，本地或 910B 调 msOpUT 跑算子，返回 `list[np.ndarray]` actuals
@@ -299,9 +334,9 @@ class SkillLoad:
 
 ---
 
-### U5. LLM micro-modification 节点（基于 scaffold）
+### U5. LLM micro-modification 节点（基于 scaffold，加 broadcasting）
 
-**Goal**: 在 codegen 之后加一个节点，LLM 用 1 次 `file_write` 改 1 个 kernel 文件（如把 add 改成 multiply）。Verification 用真 NPU 编译 + 乘法 precision（不是子串匹配）。文件 content 含目标关键字作为中间 smoke（防止 LLM 写"语法对但语义错"的代码）。
+**Goal**: 在 codegen 之后加一个节点，LLM 用 1 次 `file_write` 改 1 个 kernel 文件，**加 broadcasting 支持**（从 elementwise add 升级到支持 broadcast shapes 的 add）。Verification 用真 NPU 编译 + broadcasting precision（不是 demo，是真功能扩展）。文件 content 含目标关键字作为中间 smoke（防止 LLM 写"语法对但语义错"的代码）。
 
 **Requirements**: R3
 
@@ -315,7 +350,7 @@ class SkillLoad:
 **Approach**:
 - 节点流程：
   1. 从 `state["code_result"]["files"]` 找 `target_file`（如 `op_kernel/add_example_arch22.cpp`）
-  2. 构造 prompt：嵌入文件 content + 改造指令（"把这个算子改成 multiply，把 Add 改成 Mul"）
+  2. 构造 prompt：嵌入文件 content + 改造指令（"给这个 add 算子加 broadcasting 支持：当两个输入 shape 不同时（如 [16,16] 和 [1,16]）也能正确广播相加"）
   3. 调 LLM
   4. 抓 `_tool_calls_log` 的 file_write（与 make_llm_node 同 pattern）
   5. 更新 `state["code_result"]["files"]`（替换原 file entry）
@@ -326,13 +361,13 @@ class SkillLoad:
 **Patterns to follow**: `make_llm_node`（`nodes/common.py:37-159`）+ `make_real_compile_node` 的 resolver 模式（`validation.py:29-51`）
 
 **Test scenarios**:
-- Happy: LLM 调 file_write 改 `op_kernel/add_example_arch22.cpp`（add→multiply）→ state.code_result.files 该项被替换
+- Happy: LLM 调 file_write 改 `op_kernel/add_example_arch22.cpp`（加 broadcasting 支持）→ state.code_result.files 该项被替换 + content 含 broadcast 处理逻辑
 - Edge: LLM 调 file_write 但 path 不在 target_file 列表 → 视为 no-op + warning
 - Failure: LLM 没调 file_write → micro_mod_result.success=False, phase 标 failed
 - Multi-file: LLM 调 2 次 file_write（target_file + 别处）→ target_file 替换 + 别的追加
 - 真实: 910B 上 scaffold=add 改 multiply，重编译 success，precision 验证乘法正确
 
-**Verification**: e2e micro-mod 任务（add→multiply）后 `state["code_result"]["files"][target_file]["content"]` 含 "Mul" 关键字，910B 重编译 + 乘法 precision 验证通过
+**Verification**: e2e micro-mod 任务（add 加 broadcasting）后 `state["code_result"]["files"][target_file]["content"]` 含 broadcast 处理代码，910B 重编译 + 1 个 broadcast test case（[16,16] + [1,16]）precision 验证通过（cos_sim > 0.999）
 
 ---
 
@@ -435,12 +470,12 @@ class SkillLoad:
 ## Phased Delivery
 
 ```
-Week1: U1 (910B 真实 e2e, 风险最大, 单独跑) || U2 + U3 (无 910B 依赖, 可并行)
+Week1: U0.5 (msOpUT spike) + U1 (依赖 U0.5) || U2 + U3 (无 910B 依赖, 可并行)
 Week2: U4 (U1 完成后) + U5
 Week3: U6 + U7
 Week4: 集成加固 + 文档 + 验收
 
-U1 在 Week1 独立跑（910B 硬件依赖 + msOpUT 路径未端到端验证过），U2 和 U3 在 Week1 并行（纯软件），U4 等 U1 完成后启动（U4 依赖 U1 的 NPU 跑算子能力）。
+U0.5 spike 在 Week1 Day 1-2 跑，输出 U1 spec 校准报告。U1 启动依赖 U0.5 输出（避免在 msOpUT 路径未验证情况下开发）。U2/U3 Week1 并行。U4 Week2 启动（U4 依赖 U1）。U5/U6/U7 Week2-3 推进。
 ```
 
 **U1-U3 是基础**（其他都依赖）。U4-U5 是节点层增强。U6 是接入层。U7 是验收。
