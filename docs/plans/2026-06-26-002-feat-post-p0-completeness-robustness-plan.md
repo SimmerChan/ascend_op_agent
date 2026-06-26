@@ -333,21 +333,23 @@ class SkillLoad:
 
 ### U5. LLM micro-modification 节点（基于 scaffold，加 broadcasting）
 
-**Goal**: 在 codegen 之后加一个节点，LLM 用 1 次 `file_write` 改 1 个 kernel 文件，**加 broadcasting 支持**（从 elementwise add 升级到支持 broadcast shapes 的 add）。Verification 用真 NPU 编译 + broadcasting precision（不是 demo，是真功能扩展）。文件 content 含目标关键字作为中间 smoke（防止 LLM 写"语法对但语义错"的代码）。
+**Goal**: 在 codegen 之后加一个节点，**多文件** micro-mod（LLM 调 1+ 次 `file_write` 改多个文件，如加 broadcasting 需改 kernel + op_host infershape + op_kernel.ini）。Verification 用真 NPU 编译 + broadcasting precision（不是 demo，是真功能扩展）。文件 content 含目标关键字作为中间 smoke（防止 LLM 写"语法对但语义错"的代码）。**默认 opt-in (False)** 避免 55% LLM 失败率污染 P0 验收；U7 e2e 显式 `--with-micro-mod` 启用。
 
 **Requirements**: R3
 
 **Dependencies**: U0（scaffold 路径）+ U2（共享 `make_llm_node._node` 跑完后的 tool_calls_log 扫描钩子，U2 抓 file_read 检测 skill 使用，U5 抓 file_write 抓 kernel 修改）+ `make_llm_node`（已有）+ `_tool_calls_log`（已有）+ 现有 `analyze_node` / `design_node` / `codegen_node` / `review_fix_node`（均来自 `build_new_dev_graph`，U5 不创建新节点，只插入一个 micro_mod 节点）
 
 **Files**:
-- Create: `src/ascend_op_agent/orchestrator/nodes/micro_mod.py`（`make_micro_mod_node(phase, target_file, instruction, agent_factory, template_vars)` 工厂，**默认 True** 即在 new_dev 图中默认启用，理由：R3 是 P0-必须演示的 LLM 能力）
-- Modify: `src/ascend_op_agent/orchestrator/graphs/new_dev.py` 加 `micro_mod_node: Optional[Node]` 参数（**默认 True**）；插入到 `review_fix_node` 之前（在 codegen 之后）
+- Create: `src/ascend_op_agent/orchestrator/nodes/micro_mod.py`（`make_micro_mod_node(phase, target_files: list, instruction, agent_factory, template_vars)` 工厂，**多文件**版本，**默认 False**：opt-in，避免 55% LLM 失败率污染 P0 验收）
+- Modify: `src/ascend_op_agent/orchestrator/graphs/new_dev.py` 加 `micro_mod_node: Optional[Node]` 参数（**默认 False**：opt-in，避免 55% LLM 失败率污染 P0 验收）；插入到 `review_fix_node` 之前（在 codegen 之后）
+- Modify: `frontend/src/hooks/useRPC.ts` + `frontend/src/App.tsx`（U6 通知桥需要前端 hook 接受新事件类型：U2 的 `skill.usage` 事件复用 `agent.progress` 加 discriminator 字段，前端需要支持 `event: 'skill.usage'` 字段分发到不同 UI 区域）
 - Test: `tests/unit/orchestrator/test_micro_mod.py` 新增
 
 **Approach**:
-- 节点流程：
-  1. 从 `state["code_result"]["files"]` 找 `target_file`（如 `op_kernel/add_example_arch22.cpp`）
-  2. 构造 prompt：嵌入文件 content + 改造指令（"给这个 add 算子加 broadcasting 支持：当两个输入 shape 不同时（如 [16,16] 和 [1,16]）也能正确广播相加"）
+- 节点流程（多文件版本）：
+  1. 从 `state["code_result"]["files"]` 找 `target_files: list`（如 `["op_kernel/add_example_arch22.cpp", "op_host/add_example_infershape.cpp", "op_kernel.ini"]`，broadcasting 需这 3 个）
+  2. 构造 prompt：嵌入多文件 content + 改造指令（"给这个 add 算子加 broadcasting 支持：kernel 接受 2 个不同 shape 的输入..."）
+  3. LLM 调多次 `file_write` 改各文件（每文件 1 次）
   3. 调 LLM
   4. 抓 `_tool_calls_log` 的 file_write（与 make_llm_node 同 pattern）
   5. 更新 `state["code_result"]["files"]`（替换原 file entry）
@@ -378,6 +380,7 @@ class SkillLoad:
 
 **Files**:
 - Modify: `src/ascend_op_agent/backend.py:_setup_agent` 初始化 Orchestrator（store + agent_factory + use_scaffold_codegen=True），配置 `phase_callback` 推 `agent.progress` 通知
+- Modify: `frontend/src/hooks/useRPC.ts` + `frontend/src/App.tsx`（前端 hook 接受 U2 的 `skill.usage` 事件，复用 `agent.progress` 加 discriminator 字段 `{event: 'skill.usage', payload: {...}}`，TUI 显示 skill chips）
 - Modify: `src/ascend_op_agent/backend.py:_handle_run_conversation` 路由：输入以 `op:` 开头 → `runner.invoke(user_input, thread_id=...)`；否则 fallback `_agent_wrapper.run_conversation_async`
 - Modify: `src/ascend_op_agent/backend.py:_handle_session_resume_with_input` 移除 `if _orchestrator is None` 短路（line 198-208），真调 `orchestrator.resume`
 - ~~Modify: `src/ascend_op_agent/config.py:RemoteConfig` 加 `use_orchestrator: bool = False`~~ （删除：只用 `op:` 前缀，不引入 config flag；reviewer P0 反馈：避免双路由）
