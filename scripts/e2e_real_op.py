@@ -120,14 +120,89 @@ def make_npu_executor() -> NpuExecutor:
 # ---- operator_path_resolver:从 code_result.files 取工程根目录 + rsync 到 NPU ----
 
 
+def _extract_files_from_messages(messages: list[dict]) -> list[dict]:
+    """fallback:从 LLM 的 assistant 文本里抽代码块(LLM tool calling 不可靠时用)。
+
+    支持 3 种格式(任一即可):
+    1. ```cpp\\n// /tmp/op/op_kernel.cpp\\n<content>\\n```
+       (Markdown 代码块,首行是文件路径注释)
+    2. ```\\n=== FILE: /tmp/op/op_kernel.cpp ===\\n<content>\\n=== END FILE ===\\n```
+    3. ```\\n# File: /tmp/op/op_kernel.cpp\\n<content>\\n```
+
+    返回 ``[{"path": ..., "content": ...}, ...]`` —— 与 file_write 抓取同形。
+    """
+    import re
+    extracted: list[dict] = []
+    seen_paths: set[str] = set()
+    # 1) 收集所有 assistant 文本(倒序:最后一条优先)
+    texts: list[str] = []
+    for m in reversed(messages):
+        if m.get("role") == "assistant":
+            content = str(m.get("content", ""))
+            # 去掉 tool_call 行
+            if "tool_call" not in content or len(content) > 100:
+                texts.append(content)
+    # 2) Markdown 代码块提取
+    code_block_re = re.compile(
+        r"```(?:cpp|c\+\+|python|bash|sh|text|cmake)?\s*\n(?P<body>.*?)\n```",
+        re.DOTALL,
+    )
+    # 文件路径识别(3 种格式)
+    path_patterns = [
+        re.compile(r"//\s*([/\w.\-]+\.(?:cpp|h|py|sh|txt|ini|cmake))", re.IGNORECASE),
+        re.compile(r"#\s*File:\s*([/\w.\-]+\.(?:cpp|h|py|sh|txt|ini|cmake))", re.IGNORECASE),
+        re.compile(r"=== FILE:\s*([/\w.\-]+\.(?:cpp|h|py|sh|txt|ini|cmake))", re.IGNORECASE),
+    ]
+    for text in texts:
+        for m in code_block_re.finditer(text):
+            body = m.group("body")
+            file_path = None
+            for pat in path_patterns:
+                pm = pat.search(body[:300])  # 路径注释通常在前 300 字符
+                if pm:
+                    file_path = pm.group(1)
+                    break
+            if not file_path or file_path in seen_paths:
+                continue
+            # 剥离第一行(就是路径注释行,无论格式 // path / // File: path / # File: path / === FILE: path)
+            lines = body.split("\n")
+            stripped_lines: list[str] = []
+            path_line_stripped = False
+            for line in lines:
+                if not path_line_stripped and any(
+                    pat.match(line) for pat in path_patterns
+                ):
+                    path_line_stripped = True
+                    continue
+                stripped_lines.append(line)
+            content = "\n".join(stripped_lines).strip()
+            if not content:
+                continue
+            seen_paths.add(file_path)
+            extracted.append({"path": file_path, "content": content, "tool": "code_block_extracted"})
+    return extracted
+
+
 def make_operator_path_resolver(remote_workdir: str):
     """返回 (state) -> str(远程 operator_path,供 build.sh 跑)。"""
 
     def _resolve(state: dict) -> str:
         code_result = state.get("code_result") or {}
         files = code_result.get("files") or []
+        # Fallback:LLM 没调 file_write 时,从 assistant 文本里抽代码块
+        # (LLM tool calling 不可靠,见 e2e 2026-06-25 第二次跑 0 文件案例)
         if not files:
-            raise ValueError("code_result.files 为空,codegen 阶段没写代码")
+            extracted = _extract_files_from_messages(state.get("messages", []))
+            if not extracted:
+                raise ValueError(
+                    "code_result.files 为空,且 assistant 文本里也抽不到代码块。"
+                    "LLM 既没用 file_write 也没输出 markdown 代码块。"
+                )
+            print(f"[fallback] 从 assistant 文本抽出 {len(extracted)} 个文件:")
+            for f in extracted:
+                print(f"  - {f['path']} ({len(f['content'])} chars)")
+            state["code_result"] = dict(code_result, files=extracted)
+            files = extracted
         # 第一个文件所在目录
         first = files[0]["path"]
         local_dir = str(Path(first).parent)
