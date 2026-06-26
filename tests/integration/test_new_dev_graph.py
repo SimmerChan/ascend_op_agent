@@ -79,10 +79,13 @@ def test_new_dev_runs_all_phases_after_design_approval(tmp_path) -> None:
     runner.resume("t1", payload={"approved": True})
     state = runner.resume("t1", payload={"mode": "sample"})
 
-    # 全阶段访问
+    # 全阶段访问(codegen 拆 5 个独立节点,各写 1 个文件)
     expected = [
-        "entry", "analyze", "design", "codegen", "review_fix",
-        "compile", "precision", "delivery_mode", "framework_adapt", "done",
+        "entry", "analyze", "design",
+        "codegen_kernel_cpp", "codegen_host_cpp", "codegen_cmakelists",
+        "codegen_build_sh", "codegen_kernel_ini",
+        "review_fix", "compile", "precision",
+        "delivery_mode", "framework_adapt", "done",
     ]
     assert state["phase_history"] == expected
     assert state["current_phase"] == "done"
@@ -138,8 +141,11 @@ def test_resume_after_design_approval_completes_all_phases(tmp_path) -> None:
     assert state["current_phase"] == "done"
     assert store.get_status("t1") == STATUS_DONE
     expected = [
-        "entry", "analyze", "design", "codegen", "review_fix",
-        "compile", "precision", "delivery_mode", "framework_adapt", "done",
+        "entry", "analyze", "design",
+        "codegen_kernel_cpp", "codegen_host_cpp", "codegen_cmakelists",
+        "codegen_build_sh", "codegen_kernel_ini",
+        "review_fix", "compile", "precision",
+        "delivery_mode", "framework_adapt", "done",
     ]
     assert state["phase_history"] == expected
 

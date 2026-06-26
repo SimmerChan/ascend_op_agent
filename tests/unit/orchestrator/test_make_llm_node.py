@@ -209,3 +209,64 @@ def test_messages_and_last_phase_result_still_present() -> None:
     assert update["messages"] == [{"role": "assistant", "content": "assistant said X"}]
     assert update["last_phase_result"]["phase"] == "codegen"
     assert update["last_phase_result"]["response"] == "assistant said X"
+
+
+# ---- template_vars ----
+
+
+def test_template_vars_injected_into_prompt() -> None:
+    """template_vars 应被注入 str.format,占位符 {operator_dir} 等可正常替换。"""
+    captured = {}
+
+    class _CapturingAgent(_FakeAgent):
+        def run_conversation(self, user_input, skills_layer_override=None):
+            captured["prompt"] = user_input
+            return "ok"
+
+    node = make_llm_node(
+        phase="codegen",
+        task_prompt_template="write to {operator_dir}/op.cpp",
+        agent_factory=lambda: _CapturingAgent(),
+        template_vars={"operator_dir": "/tmp/e2e/op_add"},
+    )
+    node.func(_base_state())
+    assert captured["prompt"] == "write to /tmp/e2e/op_add/op.cpp"
+
+
+def test_template_vars_none_keeps_original_behavior() -> None:
+    """template_vars=None 时,不引入额外占位符(原行为)。"""
+    captured = {}
+
+    class _CapturingAgent(_FakeAgent):
+        def run_conversation(self, user_input, skills_layer_override=None):
+            captured["prompt"] = user_input
+            return "ok"
+
+    node = make_llm_node(
+        phase="codegen",
+        task_prompt_template="just {user_input}",
+        agent_factory=lambda: _CapturingAgent(),
+        template_vars=None,
+    )
+    node.func(_base_state())
+    assert captured["prompt"] == "just "
+
+
+def test_template_vars_unknown_placeholder_falls_back() -> None:
+    """模板里出现未声明占位符时,降级为原模板(不抛错),让 LLM 瞎填。"""
+    captured = {}
+
+    class _CapturingAgent(_FakeAgent):
+        def run_conversation(self, user_input, skills_layer_override=None):
+            captured["prompt"] = user_input
+            return "ok"
+
+    node = make_llm_node(
+        phase="codegen",
+        task_prompt_template="write to {unknown_var}/x",
+        agent_factory=lambda: _CapturingAgent(),
+        template_vars={"operator_dir": "/tmp/op"},
+    )
+    node.func(_base_state())
+    # 出现未声明占位符 → fallback 整段
+    assert captured["prompt"] == "write to {unknown_var}/x"

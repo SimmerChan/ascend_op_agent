@@ -150,34 +150,45 @@ def build_new_dev_graph(
         agent_factory=factory,
     )
 
-    codegen_node = make_llm_node(
-        phase="codegen",
-        task_prompt_template=(
-            "你是 Ascend C 算子 developer。你的任务是基于已确认的 DESIGN.md "
-            "生成 AscendC 算子工程的 5 个文件。\n\n"
-            "{state}\n\n"
-            "【绝对必须 —— 没有例外】\n"
-            "对下面列出的 5 个文件,每文件调用一次 file_write 工具,参数:\n"
-            "  path = 绝对路径\n"
-            "  content = 文件的完整文本内容(包含所有换行、缩进、include、注释)\n\n"
-            "文件清单(必须全部写完,一个都不能少):\n"
-            "  [1] {operator_dir}/op_kernel.cpp   —— AscendC kernel(Init/Process,含 #include \"kernel_operator.h\")\n"
-            "  [2] {operator_dir}/op_host.cpp     —— tiling + shape 推导 + op 注册\n"
-            "  [3] {operator_dir}/CMakeLists.txt  —— 含 ascendc target + include dirs\n"
-            "  [4] {operator_dir}/build.sh        —— bash 入口(内部 cmake -DPKG ascend910b + cmake --build -j 8)\n"
-            "  [5] {operator_dir}/op_kernel.ini   —— [opinfo] 段元信息\n\n"
-            "operator_dir 默认 = /tmp/e2e_ops_local/op_add (用户 task 指定)。\n\n"
-            "【禁止行为 —— 这些都视为任务失败】\n"
-            "  - 把代码贴在 assistant 文本里(没用 file_write 工具)\n"
-            "  - 用 markdown 代码块代替 file_write 工具\n"
-            "  - 漏写任何一个文件\n"
-            "  - 写 'codegen done' 但没调过 file_write\n\n"
-            "【做完判断】\n"
-            "当且仅当你成功调用了 5 次 file_write(每次返回成功)后,才回 'codegen done'。"
-        ),
-        skill_bundle_text=bundles.get("codegen"),
-        agent_factory=factory,
-    )
+    # ---- codegen 拆 5 个文件(每次 1 个 LLM 调,降低偷懒概率)----
+    # e2e 2026-06-25 暴露:让 LLM 在一次 codegen 节点内连调 5 次 file_write
+    # 不可靠(LLM 写完 1 个就停)。拆成 5 个独立节点,每次只让 LLM 写 1 个
+    # 文件,任务单一时 LLM 工具调用稳定。
+    _codegen_files = [
+        ("op_kernel.cpp", "AscendC kernel 实现(Init/Process 接口,必含 #include \"kernel_operator.h\")"),
+        ("op_host.cpp", "tiling 函数 + shape 推导 + op 算子注册"),
+        ("CMakeLists.txt", "含 ascendc target + include dirs + add_ops 子目录"),
+        ("build.sh", "bash 入口(内部 cmake -B build -DPKG ascend910b && cmake --build build -j 8,chmod +x)"),
+        ("op_kernel.ini", "[opinfo] 段元信息(op_name / op_type 等)"),
+    ]
+    codegen_nodes = []
+    # phase 名要唯一:op_kernel.cpp 和 op_kernel.ini 都含 "op_kernel" 子串,按扩展名区分
+    _phase_names = {
+        "op_kernel.cpp": "codegen_kernel_cpp",
+        "op_host.cpp": "codegen_host_cpp",
+        "CMakeLists.txt": "codegen_cmakelists",
+        "build.sh": "codegen_build_sh",
+        "op_kernel.ini": "codegen_kernel_ini",
+    }
+    for fname, desc in _codegen_files:
+        codegen_nodes.append(make_llm_node(
+            phase=_phase_names[fname],
+            template_vars={"operator_dir": "/tmp/e2e_ops_local/op_add"},
+            task_prompt_template=(
+                f"你是 Ascend C 算子 developer。基于已确认的 DESIGN.md 生成 1 个文件:\n\n"
+                f"{{state}}\n\n"
+                f"【当前文件】{fname} —— {desc}\n"
+                f"【绝对路径】{{operator_dir}}/{fname}\n\n"
+                f"【必须】调用 file_write 工具一次,参数:\n"
+                f"  path = {{operator_dir}}/{fname}\n"
+                f"  content = 完整文件内容(包含所有换行、缩进、include、注释)\n\n"
+                f"【禁止】把代码贴在 assistant 文本(没用 file_write 工具视为失败)。\n"
+                f"【禁止】写 'done' / 'ok' / 'completed' 等字样,只准用 file_write 工具。\n\n"
+                f"写完后回 1 字符 'k'(表示 keep going)。"
+            ),
+            skill_bundle_text=bundles.get("codegen"),
+            agent_factory=factory,
+        ))
 
     review_fix_node = make_llm_node(
         phase="review_fix",
@@ -237,7 +248,7 @@ def build_new_dev_graph(
         Node(name="entry", func=lambda s: {}),
         analyze_node,
         design_node,
-        codegen_node,
+        *codegen_nodes,  # 5 个独立 codegen 节点,每个写 1 个文件
         review_fix_node,
         compile_node,
         precision_node,

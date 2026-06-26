@@ -39,15 +39,20 @@ def make_llm_node(
     task_prompt_template: str,
     skill_bundle_text: Optional[str] = None,
     agent_factory: Optional[AgentFactory] = None,
+    template_vars: Optional[dict] = None,
 ) -> Node:
     """构造 LLM 节点。
 
     Args:
         phase: 阶段名(用作 current_phase / last_phase_result.phase)
         task_prompt_template: 任务 prompt 模板,支持 ``{state}`` ``{user_input}``
-            ``{pending_confirmation}`` 占位符(简单 ``str.format``)
+            ``{pending_confirmation}`` 占位符(简单 ``str.format``)。
+            额外占位符由 ``template_vars`` 注入(任意 key=value,需为 string)。
         skill_bundle_text: 该阶段 cannbot skill 文本(注入 PromptBuilder Layer 6)。
             None 时使用 PromptBuilder 默认 Layer 6
+        template_vars: 额外模板变量(供 ``str.format``),如
+            ``{"operator_dir": "/tmp/e2e_ops_local/op_add"}``。
+            None 时不注入。KeyError 仍触发 fallback(见 _node 内 try)。
         agent_factory: 返回 fresh AIAgent 的工厂(``agent_factory()``)。测试时
             替换为 mock。生产时是 ``lambda: AIAgent(config, ...,
             session_manager=None)``
@@ -97,13 +102,16 @@ def make_llm_node(
                 user_input = first_user.get("content", "")
 
         try:
-            task_prompt = task_prompt_template.format(
-                state=state,
-                user_input=user_input,
-                pending_confirmation=pending,
-            )
+            format_kwargs = {
+                "state": state,
+                "user_input": user_input,
+                "pending_confirmation": pending,
+            }
+            if template_vars:
+                format_kwargs.update(template_vars)
+            task_prompt = task_prompt_template.format(**format_kwargs)
         except KeyError:
-            # 模板里出现了不支持的占位符,降级为原样
+            # 模板里出现了不支持的占位符,降级为原样(LLM 看到字面 {x} 会瞎填)
             task_prompt = task_prompt_template
 
         # 6. 调用 agent(scoped skill 注入 Layer 6)
