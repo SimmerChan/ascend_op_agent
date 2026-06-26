@@ -80,39 +80,39 @@ P0 plan（[2026-06-23-001](2026-06-23-001-feat-op-runtime-engine-plan.md)）14 U
 ```mermaid
 flowchart TB
     subgraph CLI["CLI / RPC"]
-        RUN[ascend-op-agent run op: 实现 add 算子]
-        RESUME[session.resume_with_input]
+        RUN["CLI run op prefix"]
+        RESUME["session resume"]
     end
 
-    subgraph Backend["backend.py: _setup_agent"]
-        WIRE[Orchestrator 接线]
-        AGENT[AgentAsyncWrapper fallback]
+    subgraph Backend["backend _setup_agent"]
+        WIRE["Orchestrator wire"]
+        AGENT["AIAgent fallback"]
     end
 
-    subgraph Orch["PhaseRunner (new_dev / migration)"]
-        ANALYZE[analyze - LLM]
-        DESIGN[design - LLM + HITL]
-        CODEGEN[codegen - scaffold 加载]
-        MICROMOD[micro-mod - LLM 改 1 文件]
-        REVIEW[review_fix - LLM]
-        COMPILE[compile - 910B build.sh]
-        RUN_NPU[run - 910B msOpUT]
-        PRECISION[precision - diff]
-        DELIVERY[delivery_mode - HITL]
-        FRAMEWORK[framework_adapt - LLM]
-        DONE[done]
+    subgraph Orch["PhaseRunner"]
+        ANALYZE["analyze LLM"]
+        DESIGN["design LLM HITL"]
+        CODEGEN["codegen scaffold"]
+        MICROMOD["micro mod LLM opt-in"]
+        REVIEW["review fix LLM"]
+        COMPILE["compile 910B build"]
+        RUN_NPU["run 910B msOpUT"]
+        PRECISION["precision diff"]
+        DELIVERY["delivery HITL"]
+        FRAMEWORK["framework LLM"]
+        DONE["done"]
     end
 
-    subgraph Skills["Skill 层 (cannbot_loader)"]
-        LOAD[build_skill_bundle 选 skills]
-        REG[SkillUsageRegistry 记录]
-        TRACK[signal-1: file_read on cannbot path]
+    subgraph Skills["cannbot_loader"]
+        LOAD["build skill bundle"]
+        REG["SkillUsageRegistry"]
+        TRACK["signal-1 file_read"]
     end
 
-    subgraph NPU["910B ops_pt 容器"]
-        BUILD[bash build.sh --soc=ascend910b]
-        UTEST[msOpUT run]
-        OPS[AscendC kernel binary]
+    subgraph NPU["910B ops_pt container"]
+        BUILD["bash build.sh"]
+        UTEST["msOpUT run"]
+        OPS["AscendC kernel binary"]
     end
 
     RUN --> WIRE
@@ -123,13 +123,13 @@ flowchart TB
     CODEGEN --> MICROMOD
     MICROMOD --> REVIEW
     REVIEW --> COMPILE
-    COMPILE -.compile fail.-> REVIEW
+    COMPILE -->|compile fail| REVIEW
     COMPILE --> BUILD
     BUILD --> OPS
     COMPILE --> RUN_NPU
     RUN_NPU --> UTEST
     RUN_NPU --> PRECISION
-    PRECISION -.fail.-> MICROMOD
+    PRECISION -->|precision fail| MICROMOD
     PRECISION --> DELIVERY
     DELIVERY --> FRAMEWORK
     FRAMEWORK --> DONE
@@ -137,10 +137,12 @@ flowchart TB
     ANALYZE -.-> LOAD
     DESIGN -.-> LOAD
     CODEGEN -.-> LOAD
-    LOAD -.-> REG
+    LOAD --> REG
     MICROMOD -.-> TRACK
     REVIEW -.-> TRACK
 ```
+
+> **渲染注意**：mermaid 节点 label 用引号包裹避免 `:` `()` 等特殊字符解析失败。本图结构清晰展示 5 个 gap 修复的数据流：CLI → backend → PhaseRunner → NPU + Skills 横切关注。
 
 ### Skill 跟踪数据模型
 
