@@ -203,6 +203,40 @@ def make_operator_path_resolver(remote_workdir: str):
                 print(f"  - {f['path']} ({len(f['content'])} chars)")
             state["code_result"] = dict(code_result, files=extracted)
             files = extracted
+
+        # Scaffold fallback:LLM 漏写 build.sh / CMakeLists.txt 时,
+        # 从 910B 已验证的参考工程 /tmp/op_test 拷贝(GPT Engineer / Cursor
+        # 模式:kernel 代码 LLM 写,scaffold 用 reference)。这是 LLM 不知道精确
+        # CANN 路径 + LLM 行为不稳定的混合解决方案。
+        local_dir = str(Path(files[0]["path"]).parent)
+        existing_paths = {Path(f["path"]).name for f in files}
+        missing = {"build.sh", "CMakeLists.txt"} - existing_paths
+        if missing:
+            scaffold_src = "/tmp/op_test"  # 已验证可编译的 add_example 工程
+            if Path(scaffold_src).exists():
+                print(f"[scaffold fallback] 缺 {missing}, 从 {scaffold_src} 拷贝")
+                # 先把 LLM 写的 files 全部保存到 local_dir
+                Path(local_dir).mkdir(parents=True, exist_ok=True)
+                for f in files:
+                    dst = Path(local_dir) / Path(f["path"]).name
+                    dst.write_text(f["content"], encoding="utf-8")
+                # 从 scaffold 拷贝缺失文件(只覆盖缺失的)
+                for fname in missing:
+                    src = Path(scaffold_src) / fname
+                    if src.exists():
+                        dst = Path(local_dir) / fname
+                        if not dst.exists():
+                            shutil.copy2(str(src), str(dst))
+                            print(f"  + {fname} ({src.stat().st_size} bytes)")
+                # 关键:修复 scaffold 的 op_kernel 引用名,改成我们的固定名
+                cmake_file = Path(local_dir) / "CMakeLists.txt"
+                if cmake_file.exists():
+                    txt = cmake_file.read_text(encoding="utf-8")
+                    # 替换可能的 add_example → op_kernel
+                    txt = txt.replace("add_example", "op_kernel")
+                    txt = txt.replace("AddExample", "OpKernel")
+                    cmake_file.write_text(txt, encoding="utf-8")
+
         # 第一个文件所在目录
         first = files[0]["path"]
         local_dir = str(Path(first).parent)

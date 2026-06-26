@@ -151,18 +151,19 @@ def build_new_dev_graph(
     )
 
     # ---- codegen 拆 5 个文件(每次 1 个 LLM 调,降低偷懒概率)----
-    # e2e 2026-06-25 暴露:让 LLM 在一次 codegen 节点内连调 5 次 file_write
-    # 不可靠(LLM 写完 1 个就停)。拆成 5 个独立节点,每次只让 LLM 写 1 个
-    # 文件,任务单一时 LLM 工具调用稳定。
+    # e2e 2026-06-25/26 暴露 2 个真 bug:
+    #   A. 单次 codegen 节点让 LLM 连调 5 次 file_write 不可靠(写 1 个就停)
+    #   B. CMakeLists.txt 引用文件名与实际文件名不一致(LLM 用了 add_custom.cpp)
+    # 修复:5 个独立节点,每个 prompt 告诉 LLM **其他文件** 的固定名,确保
+    # CMakeLists.txt 引用一致。
     _codegen_files = [
         ("op_kernel.cpp", "AscendC kernel 实现(Init/Process 接口,必含 #include \"kernel_operator.h\")"),
         ("op_host.cpp", "tiling 函数 + shape 推导 + op 算子注册"),
-        ("CMakeLists.txt", "含 ascendc target + include dirs + add_ops 子目录"),
-        ("build.sh", "bash 入口(内部 cmake -B build -DPKG ascend910b && cmake --build build -j 8,chmod +x)"),
+        ("CMakeLists.txt", "含 ascendc target + include dirs + add_ops 子目录。**必须引用固定文件名 op_kernel.cpp + op_host.cpp,不要改名(如 add_custom.cpp)**。**ascendc.cmake 路径**:`${{ASCEND_TOOLKIT_HOME}}/aarch64-linux/tikcpp/ascendc_kernel_cmake/ascendc.cmake`(用 list(APPEND CMAKE_MODULE_PATH ...) 加)"),
+        ("build.sh", "bash 入口(先 source ${{ASCEND_TOOLKIT_HOME}}/set_env.sh,再 cmake -B build -DPKG ascend910b && cmake --build build -j 8,chmod +x)"),
         ("op_kernel.ini", "[opinfo] 段元信息(op_name / op_type 等)"),
     ]
     codegen_nodes = []
-    # phase 名要唯一:op_kernel.cpp 和 op_kernel.ini 都含 "op_kernel" 子串,按扩展名区分
     _phase_names = {
         "op_kernel.cpp": "codegen_kernel_cpp",
         "op_host.cpp": "codegen_host_cpp",
@@ -171,6 +172,8 @@ def build_new_dev_graph(
         "op_kernel.ini": "codegen_kernel_ini",
     }
     for fname, desc in _codegen_files:
+        # 列出同工程所有文件名,让 LLM 知道相互引用关系
+        all_files = ", ".join(f"{f[0]}" for f in _codegen_files)
         codegen_nodes.append(make_llm_node(
             phase=_phase_names[fname],
             template_vars={"operator_dir": "/tmp/e2e_ops_local/op_add"},
@@ -179,6 +182,10 @@ def build_new_dev_graph(
                 f"{{state}}\n\n"
                 f"【当前文件】{fname} —— {desc}\n"
                 f"【绝对路径】{{operator_dir}}/{fname}\n\n"
+                f"【本工程所有文件名(固定,不要改)】\n"
+                f"  {all_files}\n"
+                f"  全部位于 {{operator_dir}}/ 下。引用其他文件时必须用上述固定名,\n"
+                f"  严禁改名(不要 add_custom.cpp / my_kernel.cpp 等)。\n\n"
                 f"【必须】调用 file_write 工具一次,参数:\n"
                 f"  path = {{operator_dir}}/{fname}\n"
                 f"  content = 完整文件内容(包含所有换行、缩进、include、注释)\n\n"
