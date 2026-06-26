@@ -70,7 +70,7 @@ P0 plan（[2026-06-23-001](2026-06-23-001-feat-op-runtime-engine-plan.md)）14 U
 - **fix_loop 包装而非替换单节点**：`new_dev.py:243-273` 当前是单 `compile_node` / `precision_node`；改为 `make_compile_fix_loop_node` / `make_precision_fix_loop_node`（validation.py:135-164 已存在）。review_node 简单实现：`lambda state: ReviewResult(clean=state["compile_result"]["success"], fatal=False)`
 - **skill 跟踪只用 signal-1 (tool call)**：tool call 是 LLM 主动读取 skill 文件的硬证据。**不 ship signal-2 fingerprint**（false positive 风险 + calibrate 工作量，reviewer P2 + product P2 一致认为不值得）
 - **fix_loop 累积 messages 修复**：当前 `fix_loop.py:136-140` 手动 merge fix update，**会 drop `messages` 字段**（只 merge `last_phase_result` / `memory_pools`）。修复后用 `_apply_update`（抽成 module-level function）走标准 reducer；否则 fix round 间 LLM 看不到上次 conversation，下一轮 fix 缺乏上下文。**bug 修了能保证 messages 跨轮累积；plan 中"永远不收敛"是软断言，需 U3 的 cross-fix test 实测确认**
-- **backend wire 保留 `_agent_wrapper` fallback**：TUI 用户当前用老 AIAgent path 不会破坏；orchestrator 仅对"算子开发"任务启用（通过输入前缀 `op:` 或 config flag `runtime.use_orchestrator: true` 触发）
+- **backend wire 保留 `_agent_wrapper` fallback**：TUI 用户当前用老 AIAgent path 不会破坏；orchestrator 仅对"算子开发"任务启用（通过输入前缀 `op:` 触发，无 config flag）
 - **skill 跟踪先用 phase_callback ephemeral，checkpoint 持久化放 P1**：实现复杂度低（`SkillUsageRegistry` 单例 + `phase_callback` 推 `skill.usage` 事件），用户能立即看到；持久化到 OpState + CheckpointStore 是 schema 升级，留 P1
 
 ## High-Level Technical Design
@@ -200,13 +200,11 @@ class SkillLoad:
 
 ### U1. NpuExecutor.run_operator：910B 上跑算子拿 actual 数组
 
-### U1. NpuExecutor.run_operator：910B 上跑算子拿 actual 数组
-
 **Goal**: NpuExecutor 新增 `run_operator(operator_path, op_name, test_cases)` 方法，本地或 910B 调 msOpUT 跑算子，返回 `list[np.ndarray]` actuals
 
 **Requirements**: R1
 
-**Dependencies**: U0（910B msOpUT 可用，已在 /tmp/op_test/build 验证）
+**Dependencies**: U0.5（msOpUT 路径 spike 报告，确认 test_main 真实 CLI + stdout 格式）
 
 **Files**:
 - Create: `src/ascend_op_agent/orchestrator/npu_exec.py` 加 `run_operator` / `_run_operator_local` / `_run_operator_remote` 方法（参考 `compile` 的 _compile_local / _compile_remote 结构）
@@ -248,7 +246,6 @@ class SkillLoad:
 - SkillUsageRegistry: 单例类，存 `{thread_id: {phase: SkillLoad}}`；提供 `get_loads(thread_id)` API
 - 加载跟踪：在 `build_skill_bundle(phase, graph)` 末尾加 `SkillUsageRegistry.record_load(thread_id, phase, [s.name for s in skills])`。`thread_id` 从 `state["thread_id"]` 拿
 - 使用跟踪（signal-1）：`_node` 跑完 LLM 后扫 `agent._tool_calls_log`，filter `name == "file_read"` 且 path 前缀匹配 cannbot root（从 `cannbot_loader.CANNBOT_ROOT`）；`record_use(thread_id, phase, used_skill_names)`
-- signal-2 兜底（content fingerprint）：`_node` 跑完对比 `code_result.files[*].content` 与加载的 skill.body 的 n-gram；匹配度 > 0.3 视为 used（可调阈值）
 - `phase_callback(phase, "skill.usage", payload)` 推到前端；前端可在 TUI 显示 "loaded: cuda2ascend-simt, used: [cuda2ascend-simt]"
 
 **Patterns to follow**: 已有 `make_llm_node` 抓 `file_write` 到 `code_result.files`（`nodes/common.py:130-148`）；相同 pattern 抓 `file_read` 到 skill tracking
@@ -445,7 +442,7 @@ class SkillLoad:
 - **Interaction graph**: TUI 用户通过 `agent.run` RPC（无 `op:` 前缀）走原 AIAgent path（兼容）；CLI / 自动化用户用 `op:` 前缀走 Orchestrator（新增能力）
 - **State lifecycle**: `state["code_result"]["files"]` 在 codegen / micro-mod 阶段累积（已有 merge 逻辑）；`state["skill_loads"]` 追加（U2 新增 reducer）
 - **Error propagation**: 节点异常 → checkpoint 存 + phase_callback("failed") + phase 标 failed（已有）；fix_loop 3 轮失败 → status="failed" reason="max_rounds" + state.messages 完整（U3 修复后）
-- **API surface parity**: 新增 `config.runtime.use_orchestrator: bool`（默认 False）；新增 phase_callback 事件 `("skill.usage", payload)`（U2 新增）
+- **API surface parity**: 仅新增 phase_callback 事件 `("skill.usage", payload)`（U2 新增）
 - **Integration coverage**: 跨层场景（backend wire + 910B 真实 run + LLM 改 kernel）需要 e2e 跑（U7 提供）
 - **Unchanged invariants**: AIAgent.run_conversation 签名不变；8 工具不变；CheckpointStore schema 兼容（skill_loads 走新字段）
 
@@ -454,7 +451,7 @@ class SkillLoad:
 | Risk | Mitigation |
 |------|------------|
 | 910B msOpUT 调用路径未验证（首次集成）| U1 跑硬件 e2e，失败时 fallback numpy-only（退化） |
-| backend wire 触碰 TUI 用户 | Fallback 链：默认 `use_orchestrator=False` + 输入前缀 `op:` 才走新路径 |
+| backend wire 触碰 TUI 用户 | Fallback 链：默认走老 AIAgent path，仅输入前缀 `op:` 才走新路径 |
 | fix_loop 修 messages 累积破现有测试 | 旧测试用 mock state 不依赖 messages；U3 单元 + 集成双重验证 |
 | Skill 跟踪的 cannbot root 路径依赖 | `cannbot_loader.CANNBOT_ROOT` 常量化，测试用 tmp_path 覆盖 |
 | 910B 算子 runtime 性能（msOpUT 启动慢）| `compile_timeout` 同量级（5 min），失败 timeout 不挂死 |
