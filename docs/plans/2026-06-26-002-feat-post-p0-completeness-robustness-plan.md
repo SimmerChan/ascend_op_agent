@@ -31,7 +31,7 @@ P0 plan（[2026-06-23-001](2026-06-23-001-feat-op-runtime-engine-plan.md)）14 U
 - **R2 backend Orchestrator 可达**：`ascend-op-agent run` 真走 PhaseRunner（不再是 `U7 fallback` 错误）；`session.resume_with_input` RPC 真实调 `orchestrator.resume(thread_id, payload)`；TUI 仍兼容（fallback 链）
 - **R3 LLM micro-modification**：基于 scaffold 加载，LLM 用 1 次 `file_write` 改 1 个 kernel 文件（如 `add_example_arch22.cpp` 改为 `multiply_example_arch22.cpp`），910B 真编译通过、precision 验证乘法正确
 - **R4 失败路径覆盖**：`new_dev` / `migration` 图接入 fix_loop 包装；故意坏 scaffold → 编译失败 → 3 轮修复 → `status="failed" reason="max_rounds"`；故意坏 kernel → 编译通过 + precision 失败 → precision_fix_loop 触发
-- **R5 Skill 跟踪**：每个 LLM 阶段记录 `loaded_skills: [name1, name2, ...]` + `used_skills: [name]`（基于 tool call 信号：file_read 路径以 `vendor/cannbot-skills/` 开头）；通过 `phase_callback` 实时通知前端。**scope: ephemeral only**（持久化到 checkpoint 是 P1 follow-up）
+- **R5 Skill 跟踪**（P0.5 — observability, not correctness blocker）：每个 LLM 阶段记录 `loaded_skills: [name1, name2, ...]` + `used_skills: [name]`（仅 signal-1：tool call 信号，file_read 路径以 `vendor/cannbot-skills/` 开头）；通过 `phase_callback` 实时通知前端。**scope: ephemeral only, signal-1 only**（signal-2 fingerprint + 持久化 都推到 P1）
 
 **Origin actors:** 算子开发工程师（内部，单人/小团队）
 
@@ -46,7 +46,7 @@ P0 plan（[2026-06-23-001](2026-06-23-001-feat-op-runtime-engine-plan.md)）14 U
 - LLM micro-modification 节点（基于现有 make_llm_node + scaffold）
 - fix_loop 接入 new_dev / migration graph
 - fix_loop messages 累积修复（line 136-140 静默 drop 修复）
-- SkillUsageRegistry + signal-1（tool call）检测 + signal-2（file content fingerprint）兜底
+- SkillUsageRegistry + signal-1（tool call）检测（P0.5 范围）
 - 端到端 e2e 脚本（覆盖 5 个 gap 的真实 910B 验证）
 
 ### Out of scope
@@ -68,7 +68,7 @@ P0 plan（[2026-06-23-001](2026-06-23-001-feat-op-runtime-engine-plan.md)）14 U
 - **NPU 跑算子用 msOpUT 而非自写 runtime harness**：`build.sh` 生成的 `<operator_path>/build_out/test_main` 是 CANN 官方算子测试入口，已支持 aclnn 接口。msOpUT 自带 kernel dispatch、tiling 调度、autotiling；自写 harness 工作量 1 周起步且对 910B kernel binary 加载路径容易出错
 - **micro-modification 是单文件单 file_write 节点**：LLM 改 1 个文件 vs 当前 5 文件 LLM-based codegen（55% 失败率）。任务简单 = LLM 工具调用稳定。复用 `make_llm_node` 框架，加 1 个 `target_file` 参数 + prompt 模板
 - **fix_loop 包装而非替换单节点**：`new_dev.py:243-273` 当前是单 `compile_node` / `precision_node`；改为 `make_compile_fix_loop_node` / `make_precision_fix_loop_node`（validation.py:135-164 已存在）。review_node 简单实现：`lambda state: ReviewResult(clean=state["compile_result"]["success"], fatal=False)`
-- **skill 跟踪优先级 signal-1 (tool call) > signal-2 (content fingerprint)**：tool call 是 LLM 主动读取 skill 文件的硬证据；content fingerprint 是兜底（LLM 把 skill 内容内化到 response 但没显式调用 tool）。signal-3（response text 关键词）太噪不用
+- **skill 跟踪只用 signal-1 (tool call)**：tool call 是 LLM 主动读取 skill 文件的硬证据。**不 ship signal-2 fingerprint**（false positive 风险 + calibrate 工作量，reviewer P2 + product P2 一致认为不值得）
 - **fix_loop 累积 messages 修复**：当前 `fix_loop.py:136-140` 手动 merge fix update，**会 drop `messages` 字段**（只 merge `last_phase_result` / `memory_pools`）。修复后用 `_apply_update`（抽成 module-level function）走标准 reducer；否则 fix round 间 LLM 看不到上次 conversation，下一轮 fix 缺乏上下文。**bug 修了能保证 messages 跨轮累积；plan 中"永远不收敛"是软断言，需 U3 的 cross-fix test 实测确认**
 - **backend wire 保留 `_agent_wrapper` fallback**：TUI 用户当前用老 AIAgent path 不会破坏；orchestrator 仅对"算子开发"任务启用（通过输入前缀 `op:` 或 config flag `runtime.use_orchestrator: true` 触发）
 - **skill 跟踪先用 phase_callback ephemeral，checkpoint 持久化放 P1**：实现复杂度低（`SkillUsageRegistry` 单例 + `phase_callback` 推 `skill.usage` 事件），用户能立即看到；持久化到 OpState + CheckpointStore 是 schema 升级，留 P1
