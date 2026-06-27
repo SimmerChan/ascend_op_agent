@@ -253,3 +253,143 @@ def test_setup_agent_initializes_checkpoint_store(tmp_path, monkeypatch) -> None
     mod._setup_agent(config_path=None)
     assert mod._checkpoint_store is not None
     assert mod._checkpoint_store.db_path.exists()
+
+
+# ---- U6: op: 前缀路由 + Orchestrator wire ----
+
+
+def test_op_prefix_routes_to_orchestrator_when_wired(backend_module) -> None:
+    """U6: agent.run RPC 带 ``op:`` 前缀 → 调 orchestrator.invoke,不走 AIAgent fallback。"""
+        # use backend_module._handle_run_conversation(已注入 fixture)
+
+    saved = backend_module._orchestrator
+    mock_orch = MagicMock()
+    mock_orch.invoke.return_value = {
+        "current_phase": "done",
+        "pending_confirmation": None,
+        "messages": [],
+    }
+    backend_module._orchestrator = mock_orch
+    backend_module._agent_wrapper = MagicMock()  # avoid Agent not initialized bail
+    try:
+        resp = asyncio.run(backend_module._handle_run_conversation("op: 实现 add 算子"))
+        assert resp["status"] == "completed"
+        assert resp["data"]["current_phase"] == "done"
+        assert resp["data"]["thread_id"]
+        mock_orch.invoke.assert_called_once()
+        args, kwargs = mock_orch.invoke.call_args
+        assert args[0] == "op: 实现 add 算子"
+        assert "thread_id" in kwargs
+    finally:
+        backend_module._orchestrator = saved
+
+
+def test_op_prefix_interrupted_when_pending_confirmation(backend_module) -> None:
+    """U6: orchestrator 中断(HITL)→ status=interrupted + pending_confirmation 透传。"""
+        # use backend_module._handle_run_conversation(已注入 fixture)
+
+    saved = backend_module._orchestrator
+    mock_orch = MagicMock()
+    mock_orch.invoke.return_value = {
+        "current_phase": "design",
+        "pending_confirmation": {"phase": "design", "options": ["approve", "reject"]},
+        "messages": [{"role": "assistant", "content": "请确认"}],
+    }
+    backend_module._orchestrator = mock_orch
+    backend_module._agent_wrapper = MagicMock()  # avoid Agent not initialized bail
+    try:
+        resp = asyncio.run(backend_module._handle_run_conversation("op: 实现 add 算子"))
+        assert resp["status"] == "interrupted"
+        assert resp["data"]["current_phase"] == "design"
+        assert resp["data"]["pending_confirmation"]["phase"] == "design"
+        assert resp["data"]["messages_count"] == 1
+    finally:
+        backend_module._orchestrator = saved
+
+
+def test_op_prefix_falls_back_when_orchestrator_none(backend_module) -> None:
+    """U6: orchestrator 不可用(None)→ fallback 老 AIAgent path(不抛)。"""
+        # use backend_module._handle_run_conversation(已注入 fixture)
+
+    saved_orch = backend_module._orchestrator
+    backend_module._orchestrator = None
+    saved_wrapper = backend_module._agent_wrapper
+    mock_wrapper = MagicMock()
+    from unittest.mock import AsyncMock
+    mock_wrapper.run_conversation_async = AsyncMock(
+        return_value={"status": "completed", "response": "fallback path", "data": {}}
+    )
+    backend_module._agent_wrapper = mock_wrapper
+    try:
+        resp = asyncio.run(backend_module._handle_run_conversation("op: 实现 add 算子"))
+        assert resp["status"] == "completed"
+        mock_wrapper.run_conversation_async.assert_called_once_with("op: 实现 add 算子")
+    finally:
+        backend_module._orchestrator = saved_orch
+        backend_module._agent_wrapper = saved_wrapper
+
+
+def test_non_op_prefix_skips_orchestrator(backend_module) -> None:
+    """U6: 老 TUI 输入(无 op: 前缀)→ 走老 AIAgent path,orchestrator 不调。"""
+        # use backend_module._handle_run_conversation(已注入 fixture)
+
+    saved_orch = backend_module._orchestrator
+    mock_orch = MagicMock()
+    backend_module._orchestrator = mock_orch
+    saved_wrapper = backend_module._agent_wrapper
+    mock_wrapper = MagicMock()
+    from unittest.mock import AsyncMock
+    mock_wrapper.run_conversation_async = AsyncMock(
+        return_value={"status": "completed", "response": "legacy", "data": {}}
+    )
+    backend_module._agent_wrapper = mock_wrapper
+    try:
+        resp = asyncio.run(backend_module._handle_run_conversation("帮我查一下 CANN 文档"))
+        assert resp["status"] == "completed"
+        mock_wrapper.run_conversation_async.assert_called_once()
+        mock_orch.invoke.assert_not_called()
+    finally:
+        backend_module._orchestrator = saved_orch
+        backend_module._agent_wrapper = saved_wrapper
+
+
+def test_op_prefix_orchestrator_exception_returns_error(backend_module) -> None:
+    """U6: orchestrator.invoke 抛异常 → status=error,不 crash。"""
+        # use backend_module._handle_run_conversation(已注入 fixture)
+
+    saved = backend_module._orchestrator
+    mock_orch = MagicMock()
+    mock_orch.invoke.side_effect = RuntimeError("compile fail boom")
+    backend_module._orchestrator = mock_orch
+    backend_module._agent_wrapper = MagicMock()  # avoid Agent not initialized bail
+    try:
+        resp = asyncio.run(backend_module._handle_run_conversation("op: 实现 add 算子"))
+        assert resp["status"] == "error"
+        assert "compile fail boom" in resp["data"]["message"]
+        assert resp["data"]["thread_id"]
+    finally:
+        backend_module._orchestrator = saved
+
+
+def test_session_resume_real_orchestrator_when_wired(backend_module) -> None:
+    """U6: session.resume_with_input → 真调 orchestrator.resume(无 None 短路)。"""
+        # use backend_module._handle_session_resume_with_input(已注入 fixture)
+
+    saved = backend_module._orchestrator
+    mock_orch = MagicMock()
+    mock_orch.resume.return_value = {
+        "current_phase": "compile",
+        "pending_confirmation": None,
+        "messages": [],
+    }
+    backend_module._orchestrator = mock_orch
+    try:
+        resp = asyncio.run(backend_module._handle_session_resume_with_input(
+            "thread-abc", payload={"approved": True}
+        ))
+        assert resp["status"] == "completed"
+        mock_orch.resume.assert_called_once_with(
+            "thread-abc", payload={"approved": True}
+        )
+    finally:
+        backend_module._orchestrator = saved

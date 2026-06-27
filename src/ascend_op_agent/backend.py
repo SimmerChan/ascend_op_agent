@@ -73,6 +73,9 @@ def _consume_stderr(stderr_file, log_path: str) -> None:
 async def _handle_run_conversation(user_input: str) -> AgentResponse:
     """处理 agent.run 请求
 
+    U6: 输入以 ``op:`` 开头 → 走 Orchestrator PhaseRunner(算子开发任务);
+    否则 fallback 老 AIAgent path(保持 TUI 兼容)。
+
     Args:
         user_input: 用户输入
 
@@ -84,6 +87,31 @@ async def _handle_run_conversation(user_input: str) -> AgentResponse:
             status="error",
             response=None,
             data={"message": "Agent not initialized"}
+        )
+
+    # U6: op: 前缀路由 → Orchestrator
+    if _orchestrator is not None and isinstance(user_input, str) and user_input.startswith("op:"):
+        import uuid as _uuid
+        thread_id = _uuid.uuid4().hex[:12]
+        try:
+            state = _orchestrator.invoke(user_input, thread_id=thread_id)
+        except Exception as e:
+            logging.exception(f"op.run orchestrator.invoke failed (thread={thread_id})")
+            return AgentResponse(
+                status="error",
+                response=None,
+                data={"message": str(e), "thread_id": thread_id},
+            )
+        pending = state.get("pending_confirmation")
+        return AgentResponse(
+            status="interrupted" if pending is not None else "completed",
+            response=None,
+            data={
+                "thread_id": thread_id,
+                "current_phase": state.get("current_phase"),
+                "pending_confirmation": pending,
+                "messages_count": len(state.get("messages", [])),
+            },
         )
 
     return await _agent_wrapper.run_conversation_async(user_input)
@@ -183,9 +211,10 @@ async def _handle_session_resume_with_input(
     thread_id: str,
     payload: dict | None = None,
 ) -> AgentResponse:
-    """处理 session.resume_with_input 请求(U7)。
+    """处理 session.resume_with_input 请求(U7 + U6)。
 
     HITL 恢复:把用户确认 payload 注入 pending_confirmation 并续跑。
+    U6 修复:orchestrator 真接进去,不再有 None 短路。
 
     Args:
         thread_id: 要恢复的 thread
@@ -201,9 +230,8 @@ async def _handle_session_resume_with_input(
             response=None,
             data={
                 "message": (
-                    "Orchestrator not wired (U7 fallback: only CheckpointStore is "
-                    "initialized; Orchestrator graph ships in U9). "
-                    "Use op.run for new threads."
+                    "Orchestrator not wired (build_new_dev_graph init 失败或未 import). "
+                    "检查 config.remote / NpuExecutor SSH 状态"
                 )
             },
         )
@@ -293,8 +321,131 @@ def _setup_agent(config_path: str | None = None) -> None:
         f"(auto_resume={config.checkpoint.auto_resume})"
     )
 
+    # U6: 实例化 Orchestrator(_orchestrator 从 None 转为 PhaseRunner)。
+    # 输入前缀 ``op:`` 触发新 path(算子开发任务);TUI 老输入仍走 _agent_wrapper。
+    # 不重建 _agent_wrapper,不打破 TUI 兼容。
+    global _orchestrator
+    _orchestrator = _build_orchestrator(
+        config=config,
+        tool_registry=tool_registry,
+        prompt_builder=prompt_builder,
+        context_engine=context_engine,
+        memory_store=memory_store,
+        checkpoint_store=_checkpoint_store,
+    )
+    if _orchestrator is not None:
+        logging.info("Orchestrator initialized (op: prefix → PhaseRunner path)")
+
     # 启动时检测 pending(pending != done 的 checkpoint)
     _resume_pending_check(config.checkpoint.auto_resume)
+
+
+def _build_orchestrator(
+    config,
+    tool_registry,
+    prompt_builder,
+    context_engine,
+    memory_store,
+    checkpoint_store,
+):
+    """构造 Orchestrator PhaseRunner(U6)。
+
+    失败优雅:NpuExecutor SSH 不可用时返回 None(回退 op: 路由失败报错)。
+    """
+    try:
+        from ascend_op_agent.orchestrator import (
+            NpuExecutor,
+            build_new_dev_graph,
+        )
+        from ascend_op_agent.orchestrator.nodes.validation import (
+            make_real_compile_node,
+            make_real_precision_node,
+        )
+        from ascend_op_agent.ssh.manager import SSHEnvironment
+    except Exception as e:
+        logging.warning(f"_build_orchestrator: import failed ({e}), op: 路由不可用")
+        return None
+
+    # NpuExecutor:从 config.remote 配 SSH(可选)
+    ssh_env = None
+    remote_env_setup = ""
+    container_name = ""
+    if getattr(config, "remote", None):
+        r = config.remote
+        if r.host and r.user:
+            try:
+                ssh_env = SSHEnvironment(
+                    host=r.host, user=r.user, port=int(getattr(r, "port", 22) or 22),
+                    timeout=60,
+                )
+            except Exception as e:
+                logging.warning(f"NpuExecutor SSH 初始化失败({e}),NPU 跑算子将不可用")
+            if getattr(r, "env_setup", None):
+                remote_env_setup = f"source {r.env_setup} > /dev/null 2>&1 && "
+            container_name = getattr(r, "container_name", "") or ""
+
+    from pathlib import Path
+    npu = NpuExecutor(
+        ssh_env=ssh_env,
+        remote_env_setup=remote_env_setup,
+        container_name=container_name,
+        archive_dir=Path("/tmp/e2e_ops_archive"),
+    )
+
+    def _orchestrator_agent_factory():
+        """Orchestrator 用的 fresh AIAgent —— session_manager=None(编排器 owns 持久化)。"""
+        from ascend_op_agent.agent.core import AIAgent
+        return AIAgent(
+            config=config,
+            tool_registry=tool_registry,
+            prompt_builder=prompt_builder,
+            context_engine=context_engine,
+            memory_store=memory_store,
+            session_manager=None,
+        )
+
+    def _operator_path_resolver(state: dict) -> str:
+        """算子工程根目录:从 state 读,fallback e2e 默认路径。"""
+        op = state.get("operator_path")
+        if op:
+            return op
+        return "/tmp/e2e_ops_local/op_add"
+
+    def _operator_name_resolver(state: dict) -> str:
+        """算子名:op_info.name → unknown。"""
+        info = state.get("op_info") or {}
+        return info.get("name", "add_example")
+
+    def _phase_callback(phase: str, event: str, payload):
+        """PhaseRunner → 推 agent.progress 通知(U8 既有通知桥复用)。"""
+        try:
+            _server.send_notification(
+                "agent.progress",
+                {"phase": phase, "event": event, "payload": payload or {}},
+            )
+        except Exception as e:
+            logging.warning(f"orchestrator phase_callback send failed: {e}")
+
+    try:
+        return build_new_dev_graph(
+            store=checkpoint_store,
+            agent_factory=_orchestrator_agent_factory,
+            phase_callback=_phase_callback,
+            use_real_skill_bundles=True,
+            use_scaffold_codegen=True,
+            compile_node_factory=lambda: make_real_compile_node(
+                executor=npu,
+                operator_path_resolver=_operator_path_resolver,
+            ),
+            precision_node_factory=lambda: make_real_precision_node(
+                executor=npu,
+                operator_path_resolver=_operator_path_resolver,
+                operator_name_resolver=_operator_name_resolver,
+            ),
+        )
+    except Exception as e:
+        logging.warning(f"build_new_dev_graph 失败({e}),orchestrator 不可用")
+        return None
 
 
 def _resume_pending_check(auto_resume: bool) -> None:
