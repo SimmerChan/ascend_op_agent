@@ -62,10 +62,14 @@ def _build_phase_2_agent_factory(
 def _resolve_skill_bundles(
     skill_bundles: Optional[dict[str, str]],
     use_real_skill_bundles: bool,
-) -> dict[str, Optional[str]]:
+) -> tuple[dict[str, Optional[str]], dict[str, list[str]]]:
     """合并显式 skill_bundles 参数和真实 cannbot 加载。
 
     优先级:显式参数 > 真实加载。允许调用方对单阶段 override。
+
+    Returns:
+        (bundle_texts, bundle_names) —— 文本注入 LLM Layer 6;名字供 U2
+        SkillUsageRegistry 跟踪(只有真实加载的 bundle 有名字,显式 override 无)。
     """
     resolved: dict[str, Optional[str]] = {
         "analyze": None,
@@ -73,18 +77,20 @@ def _resolve_skill_bundles(
         "codegen": None,
         "review_fix": None,
     }
+    names: dict[str, list[str]] = {}
 
     if use_real_skill_bundles:
         for phase, key in _NEW_DEV_PHASE_TO_BUNDLE_KEY.items():
             skills = build_skill_bundle(phase=key[1], graph=key[0])
             resolved[phase] = render_skill_bundle_text(skills, phase=phase)
+            names[phase] = [s.name for s in skills]
 
-    # 显式 override
+    # 显式 override(覆盖文本,但名字保留真实加载的 —— 显式文本无名字可提取)
     if skill_bundles:
         for phase, text in skill_bundles.items():
             resolved[phase] = text
 
-    return resolved
+    return resolved, names
 
 
 def build_new_dev_graph(
@@ -116,7 +122,7 @@ def build_new_dev_graph(
         PhaseRunner —— invoke/resume 入口
     """
     factory = _build_phase_2_agent_factory(agent_factory)
-    bundles = _resolve_skill_bundles(skill_bundles, use_real_skill_bundles)
+    bundles, bundle_names = _resolve_skill_bundles(skill_bundles, use_real_skill_bundles)
 
     # ---- LLM 节点(用 make_llm_node / make_hitl_llm_node) ----
     analyze_node = make_llm_node(
@@ -129,6 +135,7 @@ def build_new_dev_graph(
             "本阶段只产 OpInfo,不写代码。"
         ),
         skill_bundle_text=bundles.get("analyze"),
+        skill_names=bundle_names.get("analyze"),
         agent_factory=factory,
     )
 
@@ -149,6 +156,7 @@ def build_new_dev_graph(
         ),
         interrupt_payload_builder=_design_payload_builder,
         skill_bundle_text=bundles.get("design"),
+        skill_names=bundle_names.get("design"),
         agent_factory=factory,
     )
 
@@ -222,6 +230,7 @@ def build_new_dev_graph(
                     f"写完后回 1 字符 'k'。"
                 ),
                 skill_bundle_text=bundles.get("codegen"),
+                skill_names=bundle_names.get("codegen"),
                 agent_factory=factory,
             ))
         # 把 5 个节点 wrap 成一个 node(用 codegen_aggregate 节点)
@@ -237,6 +246,7 @@ def build_new_dev_graph(
             "输出:问题列表 + 修复建议(如有);无问题时返回 LGTM。"
         ),
         skill_bundle_text=bundles.get("review_fix"),
+        skill_names=bundle_names.get("review_fix"),
         agent_factory=factory,
     )
 

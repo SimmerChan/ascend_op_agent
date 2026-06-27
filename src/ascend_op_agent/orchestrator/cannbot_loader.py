@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import re
+import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -213,6 +215,162 @@ def build_skill_bundle(
         except (FileNotFoundError, ValueError):
             continue
     return skills
+
+
+# ---- U2: SkillUsageRegistry(signal-1 加载/使用跟踪) ----
+
+
+@dataclass
+class SkillLoad:
+    """单次 phase 的 skill 加载/使用记录。
+
+    loaded_skills: 该阶段从 SKILL_BUNDLES 表加载的 skill 名(graph 决定)
+    used_skills: LLM 实际读了 skill 文件的(signal-1: file_read 路径匹配 cannbot root)
+    """
+
+    thread_id: str
+    phase: str
+    skill_names: list[str]
+    used_skills: list[str]
+    timestamp: float
+
+    def to_dict(self) -> dict:
+        return {
+            "thread_id": self.thread_id,
+            "phase": self.phase,
+            "skill_names": list(self.skill_names),
+            "used_skills": list(self.used_skills),
+            "timestamp": self.timestamp,
+        }
+
+
+class SkillUsageRegistry:
+    """线程安全的 skill 加载/使用注册表(单例,ephemeral —— P0 不持久化)。
+
+    signal-1 only:file_read 工具调用且 path 匹配 ``CANNBOT_ROOT`` 视为"使用"。
+    持久化到 checkpoint 是 P1 follow-up(plan R5 scope)。
+
+    用法:
+      - make_llm_node._node 跑完 LLM 后,扫 ``agent._tool_calls_log`` 抽 file_read
+        path 匹配 cannbot root → record_use
+      - record_load 记录该阶段 SKILL_BUNDLES 加载了哪些 skill(显式)
+      - phase_callback("skill.usage", payload) 推前端实时显示
+    """
+
+    _instance: Optional["SkillUsageRegistry"] = None
+    _instance_lock = threading.Lock()
+
+    def __init__(self) -> None:
+        # {thread_id: {phase: SkillLoad}}
+        self._records: dict[str, dict[str, SkillLoad]] = {}
+        self._lock = threading.Lock()
+
+    @classmethod
+    def instance(cls) -> "SkillUsageRegistry":
+        """进程级单例。"""
+        if cls._instance is None:
+            with cls._instance_lock:
+                if cls._instance is None:
+                    cls._instance = cls()
+        return cls._instance
+
+    def record_load(
+        self, thread_id: str, phase: str, skill_names: list[str]
+    ) -> None:
+        """记录某 phase 加载的 skill 名(显式,来自 SKILL_BUNDLES)。
+
+        幂等:同 (thread_id, phase) 重复调用覆盖 skill_names,不重复 append。
+        used_skills 保留已有值(record_use 之后调用 record_load 不会清空 used)。
+        """
+        if not thread_id or not phase:
+            return
+        with self._lock:
+            phase_map = self._records.setdefault(thread_id, {})
+            existing = phase_map.get(phase)
+            if existing is None:
+                phase_map[phase] = SkillLoad(
+                    thread_id=thread_id,
+                    phase=phase,
+                    skill_names=list(skill_names),
+                    used_skills=[],
+                    timestamp=time.time(),
+                )
+            else:
+                existing.skill_names = list(skill_names)
+
+    def record_use(
+        self, thread_id: str, phase: str, used_skills: list[str]
+    ) -> None:
+        """记录 LLM 实际使用的 skill(signal-1: file_read 路径匹配)。
+
+        若该 phase 未 record_load 过,自动建一个空 skill_names 的记录。
+        """
+        if not thread_id or not phase:
+            return
+        with self._lock:
+            phase_map = self._records.setdefault(thread_id, {})
+            existing = phase_map.get(phase)
+            if existing is None:
+                phase_map[phase] = SkillLoad(
+                    thread_id=thread_id,
+                    phase=phase,
+                    skill_names=[],
+                    used_skills=list(used_skills),
+                    timestamp=time.time(),
+                )
+            else:
+                existing.used_skills = list(used_skills)
+
+    def get_loads(self, thread_id: str) -> list[SkillLoad]:
+        """返回某 thread 的所有 phase 记录(按 phase 字典序)。"""
+        with self._lock:
+            phase_map = self._records.get(thread_id, {})
+            return [phase_map[k] for k in sorted(phase_map.keys())]
+
+    def clear(self, thread_id: Optional[str] = None) -> None:
+        """清空(测试用)。thread_id=None 清全部。"""
+        with self._lock:
+            if thread_id is None:
+                self._records.clear()
+            else:
+                self._records.pop(thread_id, None)
+
+
+def extract_used_skills(
+    tool_calls_log: list[dict], cannbot_root: Optional[Path] = None
+) -> list[str]:
+    """signal-1:从 agent._tool_calls_log 抽 LLM 实际读了哪些 skill。
+
+    判定:file_read 工具调用,且 ``args.path`` 在 ``cannbot_root`` 子树内。
+    skill 名取 path 相对 cannbot_root 的第一段(如 ``cuda2ascend-simt``)。
+
+    去重保序。无匹配返回空 list。
+    """
+    root = Path(cannbot_root).resolve() if cannbot_root is not None else CANNBOT_ROOT
+    used: list[str] = []
+    seen: set[str] = set()
+    for entry in tool_calls_log or []:
+        if entry.get("name") != "file_read":
+            continue
+        path_str = (entry.get("args") or {}).get("path", "")
+        if not path_str:
+            continue
+        try:
+            p = Path(path_str).resolve()
+        except (OSError, ValueError):
+            continue
+        if not _is_within(p, root):
+            continue
+        # 相对 root 的第一段 = skill 名(cuda2ascend-simt / triton-op-coding ...)
+        try:
+            rel = p.relative_to(root)
+            skill_name = rel.parts[0] if rel.parts else ""
+        except ValueError:
+            continue
+        if skill_name and skill_name not in seen:
+            seen.add(skill_name)
+            used.append(skill_name)
+    return used
 
 
 def render_skill_bundle_text(

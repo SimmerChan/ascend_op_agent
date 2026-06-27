@@ -31,6 +31,7 @@ def make_hitl_llm_node(
     interrupt_payload_builder: PayloadBuilder,
     skill_bundle_text: Optional[str] = None,
     agent_factory: Optional[AgentFactory] = None,
+    skill_names: Optional[list[str]] = None,
 ) -> Node:
     """构造 HITL LLM 节点。
 
@@ -42,6 +43,7 @@ def make_hitl_llm_node(
             (如 ``{"phase":"design","design_doc":..., "options":["approve","reject"]}``)
         skill_bundle_text: cannbot skill 文本(传给 make_llm_node)
         agent_factory: AIAgent 工厂
+        skill_names: cannbot skill 名(传给 make_llm_node 做 U2 跟踪)
 
     Returns:
         Node —— 第一次产 __interrupt__,resume 时推进
@@ -51,6 +53,7 @@ def make_hitl_llm_node(
         task_prompt_template=task_prompt_template,
         skill_bundle_text=skill_bundle_text,
         agent_factory=agent_factory,
+        skill_names=skill_names,
     )
 
     def _hitl_node(state: dict) -> dict:

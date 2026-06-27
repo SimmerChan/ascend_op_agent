@@ -40,6 +40,7 @@ def make_llm_node(
     skill_bundle_text: Optional[str] = None,
     agent_factory: Optional[AgentFactory] = None,
     template_vars: Optional[dict] = None,
+    skill_names: Optional[list[str]] = None,
 ) -> Node:
     """构造 LLM 节点。
 
@@ -56,6 +57,9 @@ def make_llm_node(
         agent_factory: 返回 fresh AIAgent 的工厂(``agent_factory()``)。测试时
             替换为 mock。生产时是 ``lambda: AIAgent(config, ...,
             session_manager=None)``
+        skill_names: 该阶段加载的 cannbot skill 名(供 U2 SkillUsageRegistry 跟踪)。
+            None 时不记录 skill 使用。配合 skill_bundle_text 使用 —— 文本注入 LLM,
+            名字记入 registry。
 
     Returns:
         Node —— PhaseRunner 直接消费
@@ -154,6 +158,37 @@ def make_llm_node(
         }
         if new_files:
             update["code_result"] = code_result
+
+        # 9. U2: SkillUsageRegistry 跟踪(signal-1)。
+        # 加载侧:skill_names 显式记录(SKILL_BUNDLES 决定的)。
+        # 使用侧:扫 _tool_calls_log 的 file_read 路径匹配 cannbot root。
+        # 写入 registry(ephemeral,phase_callback 实时通知前端在 U6 接)。
+        if skill_names is not None:
+            try:
+                from ascend_op_agent.orchestrator.cannbot_loader import (
+                    SkillUsageRegistry,
+                    extract_used_skills,
+                )
+
+                thread_id = state.get("thread_id", "")
+                used = extract_used_skills(
+                    list(getattr(agent, "_tool_calls_log", []))
+                )
+                reg = SkillUsageRegistry.instance()
+                reg.record_load(thread_id, phase, skill_names)
+                reg.record_use(thread_id, phase, used)
+                # 写入 update 供 U6 phase_callback 透传(同 thread 跨节点累积)
+                update["skill_loads"] = {
+                    "phase": phase,
+                    "skill_names": list(skill_names),
+                    "used_skills": used,
+                }
+            except Exception as e:  # 跟踪不应阻塞主流程
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    f"skill tracking failed (phase={phase}): {e}"
+                )
+
         return update
 
     return Node(name=phase, func=_node)
