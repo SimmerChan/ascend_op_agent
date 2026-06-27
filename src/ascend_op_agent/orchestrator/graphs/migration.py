@@ -75,6 +75,8 @@ def build_migration_graph(
     use_real_skill_bundles: bool = False,
     compile_node_factory: Optional[Callable[[], Node]] = None,
     precision_node_factory: Optional[Callable[[], Node]] = None,
+    compile_fix_loop_node_factory: Optional[Callable[[], Node]] = None,
+    precision_fix_loop_node_factory: Optional[Callable[[], Node]] = None,
 ) -> PhaseRunner:
     """构造 Path-B 迁移图。
 
@@ -177,7 +179,10 @@ def build_migration_graph(
     )
 
     # ---- compile / precision(占位,U13 替换) ----
-    if compile_node_factory is not None:
+    # U3: 优先用 fix_loop 包装(review+fix 闭环,跨轮 messages 走 reducer)
+    if compile_fix_loop_node_factory is not None:
+        compile_node = compile_fix_loop_node_factory()
+    elif compile_node_factory is not None:
         compile_node = compile_node_factory()
     else:
         def _placeholder_compile(state: dict) -> dict:
@@ -192,7 +197,9 @@ def build_migration_graph(
             }
         compile_node = Node(name="compile", func=_placeholder_compile)
 
-    if precision_node_factory is not None:
+    if precision_fix_loop_node_factory is not None:
+        precision_node = precision_fix_loop_node_factory()
+    elif precision_node_factory is not None:
         precision_node = precision_node_factory()
     else:
         def _placeholder_precision(state: dict) -> dict:

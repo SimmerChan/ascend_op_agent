@@ -20,7 +20,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from ascend_op_agent.orchestrator.state_machine import Node
+from ascend_op_agent.orchestrator.state_machine import Node, apply_update
 
 
 logger = logging.getLogger(__name__)
@@ -133,11 +133,9 @@ def run_fix_loop(
         # 跑 fix
         update = fix_func(state, review.issues)
         # 把 fix update 应用到 state(让下一轮 review 看到修复后的产物)
-        for key, value in update.items():
-            if isinstance(value, dict) and isinstance(state.get(key), dict):
-                state[key] = {**state[key], **value}
-            else:
-                state[key] = value
+        # U3: 走 module-level apply_update reducer(messages 正确 extend 而非覆盖,
+        # 修复跨轮 conversation 历史丢失 bug;见 state_machine.apply_update)
+        apply_update(state, update)
 
         logger.info(f"fix_loop[{kind}] round={rounds} applied fix, re-reviewing")
 

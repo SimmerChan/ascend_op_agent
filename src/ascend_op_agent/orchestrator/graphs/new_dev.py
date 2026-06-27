@@ -102,6 +102,8 @@ def build_new_dev_graph(
     compile_node_factory: Optional[Callable[[], Node]] = None,
     precision_node_factory: Optional[Callable[[], Node]] = None,
     use_scaffold_codegen: bool = False,
+    compile_fix_loop_node_factory: Optional[Callable[[], Node]] = None,
+    precision_fix_loop_node_factory: Optional[Callable[[], Node]] = None,
 ) -> PhaseRunner:
     """构造 Path-C 新开发图。
 
@@ -117,6 +119,11 @@ def build_new_dev_graph(
             None 时用占位(返回 success=True)
         precision_node_factory: 自定义 precision 节点工厂(U13 注入);
             None 时用占位
+        compile_fix_loop_node_factory: U3 注入真 compile fix_loop 包装
+            (review_node 检查 compile_result,fix_node 调 LLM 修);非 None 时
+            替代单 compile_node 接入图。None 保持单节点行为(向后兼容)
+        precision_fix_loop_node_factory: 同上,precision fix_loop 包装替代
+            precision_node
 
     Returns:
         PhaseRunner —— invoke/resume 入口
@@ -251,7 +258,12 @@ def build_new_dev_graph(
     )
 
     # ---- 确定性节点:compile / precision(占位,U13 替换) ----
-    if compile_node_factory is not None:
+    # U3: 优先用 fix_loop 包装节点(review+fix 闭环,跨轮 messages 走 reducer 不丢历史);
+    #     退而用单节点(compile_node_factory / precision_node_factory);
+    #     最后用占位
+    if compile_fix_loop_node_factory is not None:
+        compile_node = compile_fix_loop_node_factory()
+    elif compile_node_factory is not None:
         compile_node = compile_node_factory()
     else:
         def _placeholder_compile(state: dict) -> dict:
@@ -267,7 +279,9 @@ def build_new_dev_graph(
             }
         compile_node = Node(name="compile", func=_placeholder_compile)
 
-    if precision_node_factory is not None:
+    if precision_fix_loop_node_factory is not None:
+        precision_node = precision_fix_loop_node_factory()
+    elif precision_node_factory is not None:
         precision_node = precision_node_factory()
     else:
         def _placeholder_precision(state: dict) -> dict:

@@ -315,3 +315,79 @@ def test_compress_transcript_keeps_short_content_unchanged_in_middle() -> None:
     out = compress_transcript(msgs, keep_last_n=2)
     # 中间 = msgs[1],content 短
     assert out[1] == {"role": "user", "content": "short middle msg"}
+
+
+# ---- U3: messages 跨轮累积(apply_update reducer 修复回归) ----
+
+
+def test_run_fix_loop_messages_preserved_across_rounds() -> None:
+    """U3 bug fix:fix 节点返回 messages → state.messages 正确 extend 而非覆盖。
+
+    之前 fix_loop 手写 merge 对 list 字段做 state[key]=value 覆盖,丢历史;
+    修复后走 apply_update reducer(messages ∈ APPEND_FIELDS → extend)。
+    """
+    rounds_seen: list[list] = []
+
+    def review(state):
+        # 第 3 轮才 clean
+        clean = len(state.get("messages", [])) >= 2
+        return ReviewResult(clean=clean, raw_response="r")
+
+    def fix(_state, _issues):
+        return {"messages": [{"role": "assistant", "content": f"fix attempt"}]}
+
+    result = run_fix_loop({}, "compile", review, fix, max_rounds=3)
+    assert result["status"] == "done"
+
+
+def test_run_fix_loop_messages_accumulate_not_overwrite() -> None:
+    """U3: 3 轮 fix 各加 1 条 message → state.messages 含 3 条(非最后 1 条)。"""
+    def review(state):
+        return ReviewResult(clean=len(state.get("messages", [])) >= 3, raw_response="r")
+
+    def fix(state, _issues):
+        n = len(state.get("messages", []))
+        return {"messages": [{"role": "assistant", "content": f"fix{n}"}]}
+
+    state: dict = {}
+    result = run_fix_loop(state, "compile", review, fix, max_rounds=5)
+    assert result["status"] == "done"
+    # 3 轮 fix 各 extend 1 条 → messages 含 3 条(非覆盖成 1 条)
+    assert len(state["messages"]) == 3
+    assert [m["content"] for m in state["messages"]] == ["fix0", "fix1", "fix2"]
+
+
+def test_run_fix_loop_memory_pools_dict_level_merge() -> None:
+    """U3: memory_pools ∈ MERGE_FIELDS → dict update(字典级 merge,inner list 整体替换)。
+
+    注意:apply_update 的 merge 语义是"字典级 update",不是"列表累积"。
+    跨轮跨不同 key 的 merge 才会"看起来像累积"(e.g., fix 第 1 轮加 'memory', 第 2 轮加 'user',
+    最终两个 key 都在)。这是 PhaseRunner 的既有语义,U3 只修复 messages 等 APPEND 字段的覆盖 bug。
+    """
+    def review(state):
+        pools = state.get("memory_pools", {})
+        return ReviewResult(clean="user" in pools and "memory" in pools, raw_response="r")
+
+    def fix(state, _issues):
+        pools = state.get("memory_pools", {})
+        # 第 1 轮加 memory,第 2 轮加 user(字典级 merge 累积)
+        if "memory" not in pools:
+            return {"memory_pools": {"memory": ["ctx"]}}
+        return {"memory_pools": {"user": ["ctx-user"]}}
+
+    state: dict = {}
+    result = run_fix_loop(state, "compile", review, fix, max_rounds=5)
+    assert result["status"] == "done"
+    # 两轮跨不同 key 都保留(字典级 merge 行为)
+    assert "memory" in state["memory_pools"]
+    assert "user" in state["memory_pools"]
+
+
+def test_apply_update_module_level_messages_extend() -> None:
+    """apply_update module-level 函数对 messages 走 extend(直接单测 reducer)。"""
+    from ascend_op_agent.orchestrator.state_machine import apply_update
+    state = {"messages": [{"role": "user", "content": "orig"}]}
+    apply_update(state, {"messages": [{"role": "assistant", "content": "new"}]})
+    assert len(state["messages"]) == 2
+    assert state["messages"][0]["content"] == "orig"  # 原始保留
+    assert state["messages"][1]["content"] == "new"

@@ -72,6 +72,30 @@ class Node:
     func: NodeFunc
 
 
+def apply_update(state: dict, update: dict) -> None:
+    """应用 update dict 到 state(走 reducer)—— module-level,供 fix_loop 复用。
+
+    reducer 规则(与 PhaseRunner._apply_update 一致):
+    - APPEND_FIELDS(messages / phase_history):list extend(累积,不覆盖)
+    - MERGE_FIELDS(memory_pools / retry_counts):dict update
+    - 其他:last-write-wins 覆盖
+    - 控制字段(``__interrupt__`` / ``__status__``)不进 state(调用方处理)
+
+    U3 修复:之前 fix_loop 手写 merge 对 list 字段(如 messages)做 ``state[key]=value``
+    覆盖,丢失跨轮 conversation 历史(见 fix_loop.py 旧 136-140)。抽到 module-level
+    后 fix_loop 复用本函数,messages 正确 extend。
+    """
+    for key, value in update.items():
+        if key in ("__interrupt__", "__status__"):
+            continue
+        if key in APPEND_FIELDS:
+            state.setdefault(key, []).extend(value)
+        elif key in MERGE_FIELDS:
+            state.setdefault(key, {}).update(value)
+        else:
+            state[key] = value
+
+
 class PhaseRunner:
     """顺序 DAG 状态机。
 
@@ -187,19 +211,11 @@ class PhaseRunner:
                 logger.warning(f"phase_callback error: {e}")
 
     def _apply_update(self, state: OpState, update: dict) -> None:
-        """应用 update dict 到 state(走 reducer)。
+        """应用 update dict 到 state(走 reducer,委托 module-level apply_update)。
 
         控制字段(``__interrupt__`` / ``__status__``)由调用方处理,不进 state。
         """
-        for key, value in update.items():
-            if key in ("__interrupt__", "__status__"):
-                continue
-            if key in APPEND_FIELDS:
-                state.setdefault(key, []).extend(value)
-            elif key in MERGE_FIELDS:
-                state.setdefault(key, {}).update(value)
-            else:
-                state[key] = value
+        apply_update(state, update)
 
     def _run_from(self, state: OpState, start_index: int) -> OpState:
         thread_id = state["thread_id"]
