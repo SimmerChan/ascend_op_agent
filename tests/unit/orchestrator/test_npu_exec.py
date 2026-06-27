@@ -683,3 +683,155 @@ def test_is_remote_cann_available_probes_inside_container() -> None:
     assert executor.is_remote_cann_available() is True
     assert ssh_env.captured_commands[0].startswith("docker exec ops_pt bash -c '")
     assert "ASCEND_OPP_PATH" in ssh_env.captured_commands[0]
+
+
+# ---- run_st_driver(U1, 基于 2026-06-27 spike) ----
+
+
+# spike 实测 stdout 样本(精简版,见 docs/e2e/2026-06-27-st-driver-spike-report.md)
+_ST_STDOUT_SAMPLE = """========================================
+add_example 算子 ST 测试
+========================================
+模式: Real (NPU)
+测试: FP32 基础加法
+[Real] 测试 - size=6
+  [PASS] MERE=0.00e+00, MARE=0.00e+00 (threshold=1.22e-04, 6 elems)
+测试: INT32 基础加法
+[Real] 测试 - size=6
+  [PASS] 所有 6 个元素一致
+测试: FP32 边界
+[Real] 测试 - size=4
+  [FAIL] MERE=1.50e-03, MARE=2.00e-03 (threshold=1.22e-04, 4 elems)
+========================================
+测试报告
+========================================
+总计: 3
+通过: 2
+失败: 1
+========================================
+"""
+
+
+def test_parse_st_stdout_fp_and_int_and_fail_cases() -> None:
+    """parser 正确解析 FP case (MERE/MARE) + INT case (元素一致) + FAIL case。"""
+    report = NpuExecutor._parse_st_stdout(_ST_STDOUT_SAMPLE, "add_example")
+    assert report["operator_name"] == "add_example"
+    assert report["total_cases"] == 3
+    assert report["passed_cases"] == 2
+    assert report["failed_cases"] == 1
+    cases = report["cases"]
+    assert len(cases) == 3
+    # FP pass case
+    assert cases[0]["passed"] is True
+    assert cases[0]["metrics"]["mere"] == 0.0
+    assert cases[0]["metrics"]["elems"] == 6
+    # INT pass case
+    assert cases[1]["passed"] is True
+    assert cases[1]["metrics"]["dtype"] == "int"
+    # FP fail case
+    assert cases[2]["passed"] is False
+    assert cases[2]["metrics"]["mare"] == 0.002
+
+
+def test_parse_st_stdout_empty_returns_zeros() -> None:
+    """空 stdout → 0 cases,summary 推 0。"""
+    report = NpuExecutor._parse_st_stdout("", "add_example")
+    assert report["total_cases"] == 0
+    assert report["passed_cases"] == 0
+    assert report["failed_cases"] == 0
+    assert report["cases"] == []
+
+
+def test_parse_st_stdout_missing_summary_infers_from_cases() -> None:
+    """无 summary 行时,从 cases 推 total/passed/failed。"""
+    stdout = "  [PASS] MERE=0.00e+00, MARE=0.00e+00 (threshold=1.22e-04, 6 elems)\n"
+    report = NpuExecutor._parse_st_stdout(stdout, "add_example")
+    assert report["total_cases"] == 1
+    assert report["passed_cases"] == 1
+    assert report["failed_cases"] == 0
+
+
+def test_run_st_driver_local_cann_unavailable_returns_failure() -> None:
+    """本地无 CANN env → 降级 failure 报告(success=False),不抛。"""
+    executor = NpuExecutor()
+    with patch.dict("os.environ", {}, clear=False):
+        import os as _os
+        backup = {k: _os.environ.pop(k, None) for k in ("ASCEND_OPP_PATH", "CANN_HOME")}
+        try:
+            report = executor.run_st_driver("/tmp/op", "add_example")
+        finally:
+            for k, v in backup.items():
+                if v is not None:
+                    _os.environ[k] = v
+    assert report["success"] is False
+    assert report["total_cases"] == 0
+    assert "CANN env not configured" in report["error"]
+
+
+def test_run_st_driver_remote_install_fail_returns_failure() -> None:
+    """远程:install op 包失败(rc!=0)→ failure 报告含 install 错误。"""
+    install_fail = _FakeExecResult(return_code=1, stdout="", stderr="install boom")
+    ssh_env = _FakeSSHEnv(
+        responses=[("custom_opp", install_fail)],
+        env_probe_stdout="/opt/Ascend/opp",
+    )
+    executor = NpuExecutor(ssh_env=ssh_env, remote_env_setup="source set_env.sh && ")
+    report = executor.run_st_driver("/home/hsl/op", "add_example")
+    assert report["success"] is False
+    assert "install op package failed" in report["error"]
+    # install 失败 → 不应继续 build/run
+    assert not any("make" in c for c in ssh_env.captured_commands)
+
+
+def test_run_st_driver_remote_build_fail_returns_failure() -> None:
+    """远程:install 成功但 build 失败 → failure 报告含 build 错误。"""
+    install_ok = _FakeExecResult(return_code=0, stdout="SUCCESS", stderr="")
+    build_fail = _FakeExecResult(return_code=2, stdout="", stderr="cmake boom")
+    ssh_env = _FakeSSHEnv(
+        responses=[("custom_opp", install_ok), ("cmake", build_fail)],
+        env_probe_stdout="/opt/Ascend/opp",
+    )
+    executor = NpuExecutor(ssh_env=ssh_env, remote_env_setup="source set_env.sh && ")
+    report = executor.run_st_driver("/home/hsl/op", "add_example")
+    assert report["success"] is False
+    assert "build ST driver failed" in report["error"]
+
+
+def test_run_st_driver_remote_success_parses_stdout() -> None:
+    """远程:全 6 步成功 → PrecisionReport 解析 stdout,success=True。"""
+    install_ok = _FakeExecResult(return_code=0, stdout="SUCCESS", stderr="")
+    build_ok = _FakeExecResult(return_code=0, stdout="Built target", stderr="")
+    # 用全 PASS 的 stdout(无 FAIL case)
+    all_pass_stdout = (
+        "  [PASS] MERE=0.00e+00, MARE=0.00e+00 (threshold=1.22e-04, 6 elems)\n"
+        "总计: 1\n通过: 1\n失败: 0\n"
+    )
+    run_ok = _FakeExecResult(return_code=0, stdout=all_pass_stdout, stderr="")
+    ssh_env = _FakeSSHEnv(
+        responses=[
+            ("custom_opp", install_ok),
+            ("cmake", build_ok),
+            ("test_aclnn", run_ok),
+        ],
+        env_probe_stdout="/opt/Ascend/opp",
+    )
+    executor = NpuExecutor(ssh_env=ssh_env, remote_env_setup="source set_env.sh && ")
+    report = executor.run_st_driver("/home/hsl/op", "add_example")
+    assert report["success"] is True
+    assert report["total_cases"] == 1
+    assert report["passed_cases"] == 1
+    assert report["failed_cases"] == 0
+    assert report["cases"][0]["metrics"]["mere"] == 0.0
+    # LD_LIBRARY_PATH 必须在 run 命令里(spike 坑 3)
+    run_cmd = [c for c in ssh_env.captured_commands if "test_aclnn" in c]
+    assert any("LD_LIBRARY_PATH" in c for c in run_cmd)
+
+
+def test_run_st_driver_remote_empty_path_returns_failure() -> None:
+    """远程空 operator_path → failure(不调 SSH)。"""
+    ssh_env = _FakeSSHEnv(env_probe_stdout="/opt/Ascend/opp")
+    executor = NpuExecutor(ssh_env=ssh_env)
+    report = executor.run_st_driver("", "add_example")
+    assert report["success"] is False
+    assert "operator_path is empty" in report["error"]
+

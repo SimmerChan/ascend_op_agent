@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -470,6 +471,243 @@ class NpuExecutor:
             "cases": cases_out,
         }
         self._archive("precision", report)
+        return report
+
+    # ---- run_st_driver(U1, 基于 2026-06-27 spike 报告) ----
+    #
+    # spike 发现 CANN 9.1.0 不存在 msoput/test_main;真实路径是 scaffold 自带的
+    # 手写 C++ aclnn ST 驱动(tests/st/test_aclnn_<op>.cpp),驱动内部做 NPU 跑 +
+    # CPU golden + MERE/MARE 比对。run_st_driver 编排 install→build→run→parse,
+    # 返回与 run_precision 同形的 PrecisionReport dict(可直接写 precision_node)。
+
+    # ST 驱动 stdout 正则(spike 实测样本,见 docs/e2e/2026-06-27-st-driver-spike-report.md)
+    _ST_FP_CASE_RE = re.compile(
+        r"\[(PASS|FAIL)\]\s+MERE=([\d.eE+-]+),\s*MARE=([\d.eE+-]+)"
+        r"\s*\(threshold=([\d.eE+-]+),\s*(\d+)\s*elems\)"
+    )
+    _ST_INT_CASE_RE = re.compile(
+        r"\[(PASS|FAIL)\]\s+所有\s*(\d+)\s*个元素一致"
+    )
+    _ST_SUMMARY_RE = {
+        "total": re.compile(r"总计:\s*(\d+)"),
+        "passed": re.compile(r"通过:\s*(\d+)"),
+        "failed": re.compile(r"失败:\s*(\d+)"),
+    }
+
+    def run_st_driver(
+        self,
+        operator_path: str,
+        op_name: str = "add_example",
+        soc_version: str = "ascend910b",
+        st_subdir: str = "tests/st",
+    ) -> dict:
+        """跑 scaffold 自带的 C++ aclnn ST 驱动,返回 PrecisionReport dict。
+
+        6 步配方(spike 实测通过):
+          1. install op 包(--force,见 spike 坑 2)
+          2. set LD_LIBRARY_PATH(spike 坑 3)
+          3. cmake + make ST 驱动
+          4. 跑驱动二进制
+          5. 解析 stdout MERE/MARE + 总计/通过/失败
+
+        Args:
+            operator_path: 算子工程根目录(含 build/custom_opp_*.run + tests/st/)
+            op_name: 算子名(决定 vendors 目录 + ST 二进制名)
+            soc_version: 芯片型号(传给 cmake,默认 ascend910b)
+            st_subdir: ST 驱动源码相对目录(默认 tests/st)
+
+        Returns:
+            PrecisionReport dict(operator_name/total_cases/passed_cases/
+            failed_cases/cases) —— 与 run_precision 同形,可直接写 precision_node。
+            失败时 success=False 的降级报告(不抛)。
+        """
+        if self.is_remote:
+            return self._run_st_driver_remote(
+                operator_path, op_name, soc_version, st_subdir
+            )
+        return self._run_st_driver_local(
+            operator_path, op_name, soc_version, st_subdir
+        )
+
+    @staticmethod
+    def _parse_st_stdout(stdout: str, op_name: str) -> dict:
+        """解析 ST 驱动 stdout,产 PrecisionReport dict。
+
+        stdout 锚点(spike 实测):
+          FP case: `  [PASS] MERE=0.00e+00, MARE=0.00e+00 (threshold=1.22e-04, 6 elems)`
+          INT case:`  [PASS] 所有 6 个元素一致`
+          summary: `总计: 10` / `通过: 10` / `失败: 0`
+        """
+        lines = (stdout or "").splitlines()
+        cases: list[dict] = []
+        case_id = 0
+        for line in lines:
+            m = NpuExecutor._ST_FP_CASE_RE.search(line)
+            if m:
+                status, mere, mare, thr, elems = m.groups()
+                cases.append({
+                    "case_id": case_id,
+                    "passed": status == "PASS",
+                    "metrics": {
+                        "mere": float(mere),
+                        "mare": float(mare),
+                        "threshold": float(thr),
+                        "elems": int(elems),
+                    },
+                })
+                case_id += 1
+                continue
+            mi = NpuExecutor._ST_INT_CASE_RE.search(line)
+            if mi:
+                status, elems = mi.groups()
+                cases.append({
+                    "case_id": case_id,
+                    "passed": status == "PASS",
+                    "metrics": {"elems": int(elems), "dtype": "int"},
+                })
+                case_id += 1
+
+        total = passed = failed = None
+        for line in lines:
+            if total is None:
+                mt = NpuExecutor._ST_SUMMARY_RE["total"].search(line)
+                if mt:
+                    total = int(mt.group(1))
+            if passed is None:
+                mp = NpuExecutor._ST_SUMMARY_RE["passed"].search(line)
+                if mp:
+                    passed = int(mp.group(1))
+            if failed is None:
+                mf = NpuExecutor._ST_SUMMARY_RE["failed"].search(line)
+                if mf:
+                    failed = int(mf.group(1))
+
+        # summary 缺失时从 cases 推
+        if total is None:
+            total = len(cases)
+        if passed is None:
+            passed = sum(1 for c in cases if c.get("passed"))
+        if failed is None:
+            failed = total - passed
+
+        return {
+            "operator_name": op_name,
+            "total_cases": total,
+            "passed_cases": passed,
+            "failed_cases": failed,
+            "cases": cases,
+        }
+
+    def _run_st_driver_local(
+        self, operator_path: str, op_name: str, soc_version: str, st_subdir: str
+    ) -> dict:
+        """本地模式跑 ST 驱动(开发机无 CANN 时返回降级报告)。"""
+        if not self.is_cann_available():
+            return self._st_driver_failure(
+                op_name, "CANN env not configured (ASCEND_OPP_PATH / CANN_HOME missing)"
+            )
+        return self._run_st_driver_recipe(
+            operator_path, op_name, soc_version, st_subdir, remote=False
+        )
+
+    def _run_st_driver_remote(
+        self, operator_path: str, op_name: str, soc_version: str, st_subdir: str
+    ) -> dict:
+        """SSH 远程(可选进容器)跑 ST 驱动。"""
+        if not operator_path:
+            return self._st_driver_failure(op_name, "operator_path is empty")
+        if not self.is_remote_cann_available():
+            return self._st_driver_failure(
+                op_name,
+                "remote CANN env not configured (remote_env_setup 未 source 或 ASCEND_OPP_PATH 缺失)",
+            )
+        return self._run_st_driver_recipe(
+            operator_path, op_name, soc_version, st_subdir, remote=True
+        )
+
+    def _run_st_driver_recipe(
+        self,
+        operator_path: str,
+        op_name: str,
+        soc_version: str,
+        st_subdir: str,
+        remote: bool,
+    ) -> dict:
+        """6 步配方的实际执行(install→build→run→parse),本地/远程共用。
+
+        每步用独立的 subprocess/SSH 调用,失败清晰归因(不混在一个 compound 命令里)。
+        """
+        run_path = f"{operator_path}/{st_subdir}/build_st"
+
+        def _exec(cmd: str) -> tuple[bool, str, str, int]:
+            """跑一条命令,返回 (success, stdout, stderr, returncode)。"""
+            try:
+                if remote:
+                    full = self._wrap_remote_cmd(cmd)  # type: ignore[union-attr]
+                    r = self.ssh_env.execute(full, timeout=self.run_timeout)  # type: ignore[union-attr]
+                    rc = r.return_code
+                    return (rc == 0 and not getattr(r, "timed_out", False),
+                            r.stdout or "", r.stderr or "", rc)
+                else:
+                    r = subprocess.run(["bash", "-c", cmd],
+                                       capture_output=True, text=True,
+                                       timeout=self.run_timeout)
+                    return (r.returncode == 0, r.stdout, r.stderr, r.returncode)
+            except Exception as e:
+                logger.warning(f"run_st_driver exec failed: {e}")
+                return (False, "", str(e), 126)
+
+        # Step 1: install op 包(--force,见 spike 坑 2)
+        install_cmd = (
+            f"cd {operator_path}/build && "
+            f"./custom_opp_almalinux_aarch64.run --force"
+        )
+        ok, out, err, rc = _exec(install_cmd)
+        if not ok:
+            return self._st_driver_failure(
+                op_name, f"install op package failed (rc={rc}): {err[:300]}"
+            )
+
+        # Step 2+3: build ST 驱动(cmake + make),用 ASCEND_HOME_PATH(spike 坑 3)
+        vendors_lib = f"$ASCEND_HOME_PATH/opp/vendors/{op_name}_custom/op_api/lib"
+        build_cmd = (
+            f"cd {operator_path}/{st_subdir} && rm -rf build_st && mkdir build_st "
+            f"&& cd build_st && cmake .. && make -j4"
+        )
+        ok, out, err, rc = _exec(build_cmd)
+        if not ok:
+            return self._st_driver_failure(
+                op_name, f"build ST driver failed (rc={rc}): {err[:300]}"
+            )
+
+        # Step 4: 跑 ST 二进制(设 LD_LIBRARY_PATH,spike 坑 3)
+        binary = f"{run_path}/test_aclnn_{op_name}"
+        run_cmd = (
+            f"export LD_LIBRARY_PATH={vendors_lib}:$LD_LIBRARY_PATH && "
+            f"{binary}"
+        )
+        ok, out, err, rc = _exec(run_cmd)
+
+        # Step 5: 解析 stdout(即使 ok=False 也尝试解析 —— 二进制可能 rc!=0 但有部分输出)
+        report = self._parse_st_stdout(out, op_name)
+        report["return_code"] = rc
+        report["success"] = ok and report["passed_cases"] == report["total_cases"]
+        report.setdefault("stderr", err[:500] if err else "")
+        self._archive("precision", report)
+        return report
+
+    @staticmethod
+    def _st_driver_failure(op_name: str, reason: str) -> dict:
+        """ST 驱动失败的降级报告(与 run_precision 同形,便于节点消费)。"""
+        report = {
+            "operator_name": op_name,
+            "total_cases": 0,
+            "passed_cases": 0,
+            "failed_cases": 0,
+            "cases": [],
+            "success": False,
+            "error": reason,
+        }
         return report
 
     # ---- 归档 ----
