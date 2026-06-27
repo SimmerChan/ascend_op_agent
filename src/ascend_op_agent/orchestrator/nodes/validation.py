@@ -56,31 +56,52 @@ def make_real_compile_node(
 
 def make_real_precision_node(
     executor: NpuExecutor,
-    test_cases_resolver,
+    operator_path_resolver,
     operator_name_resolver=None,
     phase: str = "precision",
+    test_cases_resolver=None,  # legacy: deprecated, kept for backward compat
 ) -> Node:
-    """构造真实 precision 节点(numpy diff)。
+    """构造真实 precision 节点(U4:用 NpuExecutor.run_st_driver 跑 ST 驱动)。
+
+    6 步配方由 ST 驱动内置做(910B NPU 跑 + CPU golden + MERE/MARE 比对,
+    见 2026-06-27 spike 报告),节点只需提供 operator_path 即可。
 
     Args:
         executor: NpuExecutor 实例
-        test_cases_resolver: ``callable(state) -> list[dict]`` —— 从 state 抽
-            test_cases(每个含 golden + actual)
-        operator_name_resolver: ``callable(state) -> str`` —— 算 operator_name;
-            None 时从 op_info.name 取,fallback "unknown"
+        operator_path_resolver: ``callable(state) -> str`` —— 算子工程根目录
+            (含 build/custom_opp_*.run + tests/st/)
+        operator_name_resolver: ``callable(state) -> str`` —— 算子名(决定
+            vendors 目录 + ST 二进制名);None 时从 op_info.name 取,fallback "unknown"
         phase: 节点名
+        test_cases_resolver: **deprecated**,保留仅为向后兼容(老测试用)。
+            新代码不要传 —— ST 驱动自己定义 case。
 
     Returns:
-        Node —— 写 ``precision_report`` 字段
+        Node —— 写 ``precision_report`` 字段(run_st_driver 返回的同形 dict)
     """
 
     def _precision(state: dict) -> dict:
-        test_cases = test_cases_resolver(state)
+        operator_path = operator_path_resolver(state)
         if operator_name_resolver is not None:
             name = operator_name_resolver(state)
         else:
             name = (state.get("op_info") or {}).get("name", "unknown")
-        report = executor.run_precision(name, test_cases)
+        # Gate: 编译必须成功才跑(否则 NPU run 无意义)
+        compile_res = state.get("compile_result") or {}
+        if not compile_res.get("success", False):
+            return {
+                "precision_report": {
+                    "operator_name": name,
+                    "total_cases": 0,
+                    "passed_cases": 0,
+                    "failed_cases": 0,
+                    "cases": [],
+                    "success": False,
+                    "error": "compile_not_ready (run_st_driver 跳过)",
+                }
+            }
+        # U4: 调 run_st_driver(NPU 跑 + CPU golden + MERE/MARE 内置)
+        report = executor.run_st_driver(operator_path, op_name=name)
         return {"precision_report": report}
 
     return Node(name=phase, func=_precision)

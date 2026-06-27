@@ -285,7 +285,7 @@ def test_compile_to_dict_archives(tmp_path) -> None:
 
 
 class _FakeExecutor:
-    """mock NpuExecutor:预设 compile_to_dict / run_precision 返回值。"""
+    """mock NpuExecutor:预设 compile_to_dict / run_st_driver / run_precision 返回值。"""
 
     def __init__(self, compile_result=None, precision_report=None):
         self._compile_result = compile_result or {"success": True, "return_code": 0}
@@ -295,6 +295,10 @@ class _FakeExecutor:
 
     def compile_to_dict(self, *a, **kw):
         return self._compile_result
+
+    def run_st_driver(self, operator_path, op_name="add_example", **kw):
+        """U1 新方法,返回同形 PrecisionReport dict。"""
+        return self._precision_report
 
     def run_precision(self, *a, **kw):
         return self._precision_report
@@ -313,31 +317,50 @@ def test_make_real_compile_node_writes_compile_result() -> None:
 
 
 def test_make_real_precision_node_writes_precision_report() -> None:
+    """U4: node 调 executor.run_st_driver(走 ST 驱动),写 precision_report。"""
     executor = _FakeExecutor(precision_report={
-        "operator_name": "softmax", "total_cases": 5, "passed_cases": 5, "failed_cases": 0
+        "operator_name": "softmax", "total_cases": 5, "passed_cases": 5, "failed_cases": 0,
+        "success": True,
     })
     node = make_real_precision_node(
         executor=executor,  # type: ignore[arg-type]
-        test_cases_resolver=lambda s: [{"golden": [1.0], "actual": [1.0]}],
+        operator_path_resolver=lambda s: "/tmp/op_test",
         operator_name_resolver=lambda s: "softmax",
     )
-    update = node.func({})
+    # state 含 compile_result.success=True 通过 gate
+    update = node.func({"compile_result": {"success": True}})
     assert update["precision_report"]["operator_name"] == "softmax"
     assert update["precision_report"]["passed_cases"] == 5
+    assert update["precision_report"]["success"] is True
 
 
 def test_make_real_precision_node_default_name_resolver_falls_back_to_op_info() -> None:
-    """operator_name_resolver=None 时,从 op_info.name 取。"""
+    """U4: operator_name_resolver=None 时,从 op_info.name 取,fallback 'unknown'。"""
     executor = _FakeExecutor(precision_report={
         "operator_name": "unknown", "total_cases": 0, "passed_cases": 0, "failed_cases": 0
     })
     node = make_real_precision_node(
         executor=executor,  # type: ignore[arg-type]
-        test_cases_resolver=lambda s: [],
+        operator_path_resolver=lambda s: "/tmp/op",
     )
-    update = node.func({"op_info": {"name": "my_op"}})
-    # run_precision 收到 "my_op"
+    update = node.func({"op_info": {"name": "my_op"}, "compile_result": {"success": True}})
+    # run_st_driver 收到 "my_op"(resolver 缺省取 op_info.name)
     assert update["precision_report"]["operator_name"] == "unknown"  # mock 固定返回
+
+
+def test_make_real_precision_node_skips_when_compile_failed() -> None:
+    """U4: compile_result.success=False → 跳过 ST 驱动,返回 compile_not_ready。"""
+    executor = _FakeExecutor(precision_report={
+        "operator_name": "x", "total_cases": 99, "passed_cases": 99
+    })
+    node = make_real_precision_node(
+        executor=executor,  # type: ignore[arg-type]
+        operator_path_resolver=lambda s: "/tmp/op",
+    )
+    update = node.func({"compile_result": {"success": False}})
+    # 不调 run_st_driver → mock 报告应被忽略
+    assert update["precision_report"]["total_cases"] == 0
+    assert "compile_not_ready" in update["precision_report"]["error"]
 
 
 # ---- resolver ----
