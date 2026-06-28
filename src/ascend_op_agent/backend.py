@@ -102,6 +102,10 @@ async def _handle_run_conversation(user_input: str) -> AgentResponse:
                 response=None,
                 data={"message": str(e), "thread_id": thread_id},
             )
+        # U8: 把 thread 的 skill 跟踪(SignalUsageRegistry 累积)推给前端
+        # 复用 agent.progress 通知方法,加 discriminator event='skill_usage' 让前端区分
+        # (见 frontend/src/hooks/parseProgress.ts)
+        self._push_skill_usage_to_frontend(thread_id)
         pending = state.get("pending_confirmation")
         return AgentResponse(
             status="interrupted" if pending is not None else "completed",
@@ -115,6 +119,34 @@ async def _handle_run_conversation(user_input: str) -> AgentResponse:
         )
 
     return await _agent_wrapper.run_conversation_async(user_input)
+
+
+def _push_skill_usage_to_frontend(thread_id: str) -> None:
+    """U8: 把 SkillUsageRegistry 里该 thread 的所有 phase 记录推给前端。
+
+    前端 (App.tsx + parseProgress.ts) 看到 event='skill_usage' discriminator
+    → 渲染 chips (loaded: X, used: Y)。ephemeral(registry 不持久化),
+    done 阶段一次推送足够。
+    """
+    try:
+        from ascend_op_agent.orchestrator.cannbot_loader import SkillUsageRegistry
+        loads = SkillUsageRegistry.instance().get_loads(thread_id)
+        for sl in loads:
+            _server.send_notification(
+                "agent.progress",
+                {
+                    "phase": sl.phase,
+                    "event": "skill_usage",
+                    "payload": {
+                        "phase": sl.phase,
+                        "thread_id": thread_id,
+                        "skill_names": sl.skill_names,
+                        "used_skills": sl.used_skills,
+                    },
+                },
+            )
+    except Exception as e:
+        logging.warning(f"_push_skill_usage_to_frontend failed: {e}")
 
 
 async def _handle_session_reset() -> dict:

@@ -19,6 +19,7 @@ import { ProgressBar } from './components/ProgressBar';
 import { MessageList } from './components/MessageList';
 import { StatusBar } from './components/StatusBar';
 import { Spacer } from './components/Spacer';
+import { parseProgressNotification } from './hooks/parseProgress';
 import TextInput from 'ink-text-input';
 
 type AppState = 'idle' | 'running' | 'waiting_confirm' | 'completed' | 'error';
@@ -28,6 +29,13 @@ interface ProgressState {
   tool_name?: string;
   error_code?: string;
   error_message?: string;
+}
+
+// U8: skill 跟踪(cannbot skill 加载/使用记录)前端 state
+interface SkillLoad {
+  phase: string;
+  skill_names: string[];
+  used_skills: string[];
 }
 
 interface ConfirmData {
@@ -40,6 +48,7 @@ export const App: React.FC = () => {
   const [state, setState] = useState<AppState>('idle');
   const [input, setInput] = useState('');
   const [progress, setProgress] = useState<ProgressState>({ stage: 'thinking' });
+  const [skillLoads, setSkillLoads] = useState<SkillLoad[]>([]);
   const [messages, setMessages] = useState<string[]>([]);
   const [confirmData, setConfirmData] = useState<ConfirmData | null>(null);
 
@@ -54,13 +63,42 @@ export const App: React.FC = () => {
       const msg = lastResponse.params?.message as string;
       setMessages(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
     } else if (lastResponse.method === 'agent.progress') {
-      const p = lastResponse.params as { stage?: string; tool_name?: string; error_code?: string; error_message?: string } | undefined;
-      setProgress({
-        stage: (p?.stage as ProgressState['stage']) ?? 'thinking',
-        tool_name: p?.tool_name,
-        error_code: p?.error_code,
-        error_message: p?.error_message
-      });
+      // U8: discriminated 解析(skill.usage 路由到 SkillLoad,其他到 ProgressBar)
+      const parsed = parseProgressNotification(
+        lastResponse.params as Record<string, unknown>
+      );
+      if (parsed.kind === 'skill_usage') {
+        setSkillLoads(prev => {
+          // 合并同 phase 的累积记录(后端可能分多次推 skill.usage)
+          const existing = prev.find(s => s.phase === parsed.phase);
+          if (existing) {
+            return prev.map(s =>
+              s.phase === parsed.phase
+                ? {
+                    phase: s.phase,
+                    skill_names: parsed.skill_names.length ? parsed.skill_names : s.skill_names,
+                    used_skills: parsed.used_skills.length ? parsed.used_skills : s.used_skills,
+                  }
+                : s
+            );
+          }
+          return [
+            ...prev,
+            {
+              phase: parsed.phase,
+              skill_names: parsed.skill_names,
+              used_skills: parsed.used_skills,
+            },
+          ];
+        });
+      } else {
+        setProgress({
+          stage: parsed.stage ?? 'thinking',
+          tool_name: parsed.tool_name,
+          error_code: parsed.error_code,
+          error_message: parsed.error_message,
+        });
+      }
     } else if (lastResponse.method === 'agent.error') {
       const err = lastResponse.params?.message as string;
       setMessages(prev => [...prev, `[ERROR] ${err}`]);
@@ -158,6 +196,23 @@ export const App: React.FC = () => {
 
       {state === 'running' && (
         <ProgressBar stage={progress.stage} tool_name={progress.tool_name} error_message={progress.error_message} />
+      )}
+
+      {/* U8: skill 加载/使用 chips(cannbot skill 跟踪,只在非空时显示) */}
+      {skillLoads.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>skills (cannbot)</Text>
+          {skillLoads.map(s => (
+            <Box key={s.phase} flexDirection="column" marginLeft={2}>
+              <Text>
+                <Text color="cyan">[{s.phase}]</Text> loaded: {s.skill_names.join(', ') || '(none)'}
+              </Text>
+              {s.used_skills.length > 0 && (
+                <Text dimColor>used: {s.used_skills.join(', ')}</Text>
+              )}
+            </Box>
+          ))}
+        </Box>
       )}
 
       {state === 'completed' && (
