@@ -105,7 +105,7 @@ async def _handle_run_conversation(user_input: str) -> AgentResponse:
         # U8: 把 thread 的 skill 跟踪(SignalUsageRegistry 累积)推给前端
         # 复用 agent.progress 通知方法,加 discriminator event='skill_usage' 让前端区分
         # (见 frontend/src/hooks/parseProgress.ts)
-        self._push_skill_usage_to_frontend(thread_id)
+        _push_skill_usage_to_frontend(thread_id)
         pending = state.get("pending_confirmation")
         return AgentResponse(
             status="interrupted" if pending is not None else "completed",
