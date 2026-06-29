@@ -167,9 +167,13 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 - Modify: `src/ascend_op_agent/config.py`（CheckpointConfig 加 schema_version 字段，默认 2，可手动 override 强制 v1 读取）
 
 **Approach**:
-- DB schema: 启动时跑 migration 检测 `PRAGMA table_info(checkpoints)`，缺 `version`/`skill_loads_json` 列时 `ALTER TABLE ADD COLUMN` SQLite-safe migration（baseline v2 + migration from v1）
-- 序列化: `to_checkpoint` 写 `{state, skill_loads: [SkillLoad.to_dict()], version: 2}`；`load_checkpoint` 读 `version=1` 时 `state["skill_loads"] = []` + 写回 v2（lazy migration）
-- 测试: `test_save_v2_loads_skill_loads`, `test_load_v1_migrates_to_v2_on_access`, `test_round_trip_v2_preserves_skill_loads`, `test_corrupt_skill_loads_json_returns_empty`
+- **DB schema: 双列 + WAL + 启动期文件锁**（防 P0 concurrency race）：
+  - `checkpoints` 表加 `skill_loads_json TEXT NOT NULL DEFAULT '[]'` 列（双列：与 state_json 并存，单独查询不需 parse state_json）
+  - 启动期 `flock(.checkpoint.lock)` + `PRAGMA journal_mode=WAL` + 跑 migration；ALTER 后释放锁
+  - N=10 进程同时启动测试不丢
+- 序列化: `to_checkpoint` 写 `{state, skill_loads: [SkillLoad.to_dict()], version: 2}`（双写：state_json 字段 + skill_loads_json 字段保持一致）
+- `load_checkpoint` 读 `version=1` 时 `state["skill_loads"] = []` + 写回 v2（lazy migration）
+- 测试: `test_save_v2_loads_skill_loads`, `test_load_v1_migrates_to_v2_on_access`, `test_round_trip_v2_preserves_skill_loads`, `test_corrupt_skill_loads_json_returns_empty`, `test_10_process_concurrent_migrate_no_data_loss`
 
 **Patterns to follow**: `CheckpointStore.from_config`（现有 lazy init）+ `test_checkpoint.py` 现有测试模式（用 tmp_path）
 
@@ -194,8 +198,8 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 **Dependencies**: U1（skill_loads 持久化到 checkpoint 后可断言屏幕有 chip）
 
 **Files**:
-- Modify: `frontend/package.json`（devDep 加 `vitest@^2`、`ink-testing-library@^4`；test script `vitest run`）
-- Create: `frontend/vitest.config.ts`（vitest 配置，含 `ink-testing-library/ink` plugin）
+- Modify: `frontend/package.json`（devDep 加 `vitest@^2`、`@testing-library/react@^14`、`jsdom@^24`；test script `vitest run`）
+- Create: `frontend/vitest.config.ts`（vitest 配置：environment='jsdom' + setupFiles；**不**需要 ink-testing-library 插件，因其不真实存在）
 - Modify: `frontend/src/App.tsx`（加 `data-testid` 属性给 ProgressBar / skill chips / completed message，便于 ink-testing `lastFrame()` 断言）
 - Create: `frontend/src/__tests__/run-conversation.test.tsx`（vitest 测试，spawn backend + FakeExecutor + 验证 RPC flow）
 - Create: `tests/integration/test_tui_stdin_real.py`（Python 端: subprocess spawn npm test → 验证 frontend 完成 RPC）
@@ -262,7 +266,7 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 **Dependencies**: U2（ink-testing-library 装好）+ U3（stress harness 跑通）
 
 **Files**:
-- Create: `scripts/e2e_tui_real.py`（启 frontend dev + 触发 backend RPC + 断言）
+- Create: `scripts/e2e_tui_real.py`（启 frontend dev + 触发 backend RPC + 断言；**stdin flush 防 hang**：spawn env `PYTHONUNBUFFERED=1` + backend `--unbuffered` flag；用 pexpect 或 select+timeout 30s 读 stdout；EOF detector 触发 `setState('error')`）
 - Modify: `tests/integration/test_e2e_tui_real.py`（Python wrapper）
 
 **Approach**:
