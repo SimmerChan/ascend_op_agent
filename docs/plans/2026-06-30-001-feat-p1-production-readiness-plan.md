@@ -69,7 +69,7 @@ P1 不做：
 
 ## Key Technical Decisions
 
-- **ink-testing-library 装为 devDep**：当前 `frontend/package.json` 无 vitest/jest，**P1 装 ink-testing-library + ink-spinner 适配 + 一个测试 runner**。选 vitest + ink-testing-library（jest 装 React preset 麻烦）。**Alternative Considered**: skip 测试只手动 smoke（P0 阶段就是这么干的）。**Decision**: user 选了"含 TUI stdin 真交互"，必须自动化
+- **ink-testing-library 装为 devDep**：当前 `frontend/package.json` 无 vitest/jest。**P1 装 vitest + @testing-library/react@^14**（ink-testing-library@4 不存在；@testing-library/react 是 Ink 实际兼容的 React 测试库；mock 化设计避免在 Ink 上直接断言 DOM）。**Alternative Considered**: skip 测试只手动 smoke（P0 阶段就是这么干的）。**Decision**: user 选了"含 TUI stdin 真交互"，必须自动化
 - **CheckpointState 加 `version: int` 字段**：当前 CheckpointStore 用 JSON 不分版本，加版本号字段便于迁移。新字段 `skill_loads: list[SkillLoad]`（dataclass 序列化走 `to_dict`）；`from_checkpoint` 读 `version=1` 时降级（无 skill_loads），`version=2` 走全字段。**Alternative**: 用 `pydantic` schema 迁移（P2 太重）
 - **stress harness = `e2e_real_op.py --stress N`**：复用现有 e2e 入口，加 `--stress 20` 模式循环 N 次、累计成功 / stderr 摘要。**Alternative**: 新建 `tests/hardware/stress_910b.py` 独立脚本（P1 复用避免重复；`scripts/` 是给用户跑的入口）
 - **stress 指标 = 累计 pass rate ≥95%**：单次 spike 10/10 没意义；N=20 累计 ≥19/20 是用户可接受门槛（5% 失败 = 1 次空跑，warn 但不阻塞）
@@ -177,8 +177,9 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 - Happy: v2 checkpoint save → load → `state["skill_loads"]` 还原（含 2 条 SkillLoad）
 - Migration: v1 checkpoint 写盘（手工制造无 version 列的 JSON）→ load → 自动 v1→v2 → skill_loads 缺省 []
 - Round-trip: save → load → 数据 hash 一致
-- Edge: 损坏的 `skill_loads_json` JSON → load 返 []，不 crash
+- Edge: 损坏的 `skill_loads_json` JSON → load 返 `[]` + log warn (`was_corrupt=True` 字段标记)，不 crash
 - Multi-thread: N=100 thread × save/load 并发 → 无 race condition（SQLite WAL 模式）
+- Corrupt migration: v1 JSON 字段类型错（state_json 是 list 不是 dict）→ migrate 返 failure 不 crash
 
 **Verification**: `pytest tests/unit/orchestrator/test_checkpoint.py -q` 5+ 测试全过；手工造 v1 老 checkpoint (无 version 列) 用 load → 写入 v2 不丢 state
 
@@ -202,8 +203,10 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 **Approach**:
 - `useBackendProcess` 已存在（observation 4856），但 unit 测试时用 mock 子进程；`run-conversation.test.tsx` 反向 — spawn **真** backend（`python -m ascend_op_agent.backend`）但 mock 内部 LLM/910B
 - 后端 mock 通过 env var `ASCEND_OP_AGENT_CONFIG=mock_config.yaml`（mock LLM API + 无 SSH），backend 进程能跑通 stdin JSON-RPC
-- ink-testing `render(<App backend={spawnProcess}/>)` → `lastFrame()` 含 `data-testid="status-bar"` 的文本断言 `status==='completed'`
-- multi-frame: `rerender` 多次 + `waitUntil()` 助手捕获异步更新（skill.usage push 后 chip 出现）
+- **stdin flush**：`PYTHONUNBUFFERED=1` 在 spawn 时设（避免 backend 进程 stdio 缓冲卡住 TUI 端）
+- **EOF 检测**：App.tsx 在 `useBackendProcess` 返回 EOF 时显式 `setState('error')` 并在屏幕显示 "后端连接断开"（避免 hang）
+- @testing-library/react `render(<App/>)` → `lastFrame()` 含 plain text 断言（Ink 4 无 DOM，`data-testid` 不可靠；用 `screen.getByText('对话完成')` 文本匹配更稳）
+- multi-frame: `rerender` 多次 + `waitFor` 助手捕获异步更新（skill.usage push 后 chip 出现）
 
 **Patterns to follow**: 现有 `tests/integration/test_tui_e2e.py` 的结构（看 frontend structure，但写真正的 RPC）；现有 `useRPC.ts` 的 JSON 解析；观测 5047（agent.progress 通知）已确认 contract
 
@@ -212,7 +215,8 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 - Interrupted (HITL): 后端 `pending_confirmation` 弹出 → screen 显示 "请确认"
 - Error: 后端 inject 异常 → screen 显示 `[ERROR] <msg>` 不挂死
 - Recovery: `session.resume_with_input({"approved": True})` → screen 从 "请确认" 变 "对话完成"
-- Skill chip: 跑完查 `data-testid="skill-chip-design"` 含 `cuda2ascend-simt`
+- Skill chip: 跑完查 `lastFrame()` 含 "loaded: cuda2ascend-simt" 文本
+- EOF: 杀掉 backend 子进程 → screen 显示 "后端连接断开" 不 hang（~3s timeout）
 
 **Verification**: `cd frontend && npm test` → vitest 跑通；output 含 "5 passed" 或类似；同时 `tests/integration/test_tui_stdin_real.py` exit 0
 
@@ -233,10 +237,10 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 
 **Approach**:
 - `--stress N` 默认 None（保持原 e2e 行为）；指定时进入循环模式
-- 每次跑前 `--thread-id ts-$(date +%s)-$run` 避免 thread 冲突
+- 每次跑前 `--thread-id ts-$(date +%s)-$run-${XSTRESS_RUN_ID:-default}` 避免 thread 冲突（XSTRESS_RUN_ID 是 stress 跑用 env var，CI 多 worker 不撞）
 - success 判定: `state["compile_result"]["success"] is True AND state["precision_report"]["success"] is True`（precision_report 来自 U1 run_st_driver 真实跑 910B）
 - 失败摘要: `tail -500 <(compile stderr) + <(precision stderr)` 写到 `$E2E_STRESS_LOG/<run>.log`
-- 循环结尾: `pass / total` 输出 + 阈值检查
+- 循环结尾: 显式打印 `PASS rate X% (N/M)` + 阈值检查（避免"exit 0 silently"歧义）
 
 **Test scenarios**:
 - Argparse: `--stress 5` parsed correctly
