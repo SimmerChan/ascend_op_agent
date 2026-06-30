@@ -281,8 +281,11 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 - Modify: `tests/integration/test_e2e_tui_real.py`（Python wrapper）
 
 **Approach**:
+- **双路验证**（F11 decision）：
+  - **Fast smoke 30s**（pytest 默认 timeout）：FakeExecutor 路径，验证 U2 R1+R4 端到端 + skill chip 数据流
+  - **Real 60s+ stress**：调 U3（e2e_real_op.py --stress N），~10min 跑 N=20 累计 ≥95%
 - 在 conda 环境下 spawn `npm run dev`（开发模式 frontend） + 独立 spawn `python -m ascend_op_agent.backend`（模拟 minimaxi API 时用 mock config）
-- Pipe 模式：用 pexpect 或 pty 模拟 stdin
+- Pipe 模式：用 pexpect 或 pty 模拟 stdin（PYTHONUNBUFFERED=1 已设，pytest-timeout ≥60s）
 - 截屏：通过 frontend 暴露的 test endpoint（vitest dev server 的 API），或读 backend stdout JSON-RPC 直接断言（不真进入 UI，节省复杂度）
 - 6-7 个 fixture 脚本一次性跑（happy / HITL / error / skill chip），run 完输出 P1 验收报告
 
@@ -292,9 +295,9 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 - Backend spawn failure → exit 1 with diagnostic
 - Backend spawn success + agent.run OK → exit 0 + JSON-RPC log ≥ 1 progress event
 - Frontend dev server build OK + vitest run produces 5+ tests pass
-- E2E 真交互: send "op: 实现 add" → wait status_completed ≤ 30s → assert
+- E2E 真交互: send "op: 实现 add" → wait status_completed ≤ 30s (fast) OR ≤10min (real) → assert
 
-**Verification**: `python scripts/e2e_tui_real.py` exit 0 + 输出 backend spawn time + RPC roundtrip count + frontend build success + U2 vitest pass count ≥ 5
+**Verification**: `python scripts/e2e_tui_real.py` exit 0 + 输出 backend spawn time + RPC roundtrip count + frontend build success + U2 vitest pass count ≥ 5 + U3 stress N=20 ≥95% (双指标: first-try ≥80%, with-retry ≥95%)
 
 ---
 
