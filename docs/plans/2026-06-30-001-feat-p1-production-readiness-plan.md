@@ -364,12 +364,12 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 ## Phased Delivery
 
 ```
-Week1: U1 CheckpointState schema v2（最独立,纯 Python,小改）+ U3 stress 模式（同样纯脚本,2-3 天）
+Week1: U1 CheckpointState schema v2 + rollback test（最独立,纯 Python,小改）+ U3 stress 模式（同样纯脚本,2-3 天）
 Week2: U1+U2 顺序（U2 依赖 U1 的 CheckpointStore, 实际 mock 即可但 phase delivery 标顺序清楚）
 Week3: U4 CLI 真 stdin RPC 端到端（依赖 U2, 通过 e2e_tui_real.py 整链路验证）
-Week4: 跑全套 N=20 stress + U2 + U4 终验 + 验收报告
+Week4: 跑全套 N=20 stress + U2 + U4 终验 + U8 ship-ready gate
 
-U1 → U3 并行（独立）,U2 跟随 U1（mock 即可, phase 标顺序）,U4 依赖 U2。
+U1 → U3 并行（独立）,U2 跟随 U1（mock 即可, phase 标顺序）,U4 依赖 U2。U8 依赖 U1-U7 全部。
 ```
 
 ---
