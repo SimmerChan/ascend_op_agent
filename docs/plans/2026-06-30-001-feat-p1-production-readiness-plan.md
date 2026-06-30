@@ -167,16 +167,17 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 - Modify: `src/ascend_op_agent/config.py`（CheckpointConfig 加 schema_version 字段，默认 2，可手动 override 强制 v1 读取）
 
 **Approach**:
-- **DB schema: 双列 + SQLite busy_timeout + BEGIN IMMEDIATE**（round 2 决策：弃用 flock，SQLite 自带并发）：
-  - `checkpoints` 表加 `skill_loads_json TEXT NOT NULL DEFAULT '[]'` 列（双列：与 state_json 并存，单独查询不需 parse state_json）
+- **DB schema: SQLite generated column**（round 2 决策：避免双写 drift）：
+  - `checkpoints` 表加 `skill_loads_json TEXT GENERATED ALWAYS AS (json_extract(state_json, '$.skill_loads')) STORED`（SQLite 3.46+；single source of truth = state_json；skill_loads_json 是计算列，零 drift 风险）
   - `PRAGMA journal_mode=WAL` + `PRAGMA busy_timeout=30000` + `BEGIN IMMEDIATE` 防 SQLITE_BUSY（macOS/Linux 跨平台，无需 OS 文件锁）
   - 启动期 ALTER TABLE ADD COLUMN（atomic migration），不在 lazy on-read
-- **拆 read 与 migrate**（round 2 决策：避免 read+write race）：
-  - `read_checkpoint(thread_id)` — 纯读，无副作用
+- **拆 read 与 migrate + payload 验证**（round 2 决策：避免 read+write race + silent downgrade）：
+  - `read_checkpoint(thread_id)` — 纯读，无副作用；同时检 row.version + payload schema（mismatch 抛 `CheckpointCorruptError`）
   - `load_and_migrate_checkpoint(thread_id)` — 显式 migrate 入口，调用方决定何时跑
-  - `save_checkpoint(...)` — 接受已 migrate 的 v2 state，写入双列
-- 序列化: `to_checkpoint` 写 `{state, skill_loads: [SkillLoad.to_dict()], version: 2}`（双写：state_json + skill_loads_json 保持一致）
-- 测试: `test_save_v2_loads_skill_loads`, `test_load_v1_migrates_to_v2_on_access`, `test_round_trip_v2_preserves_skill_loads`, `test_corrupt_skill_loads_json_returns_empty`, `test_10_process_concurrent_migrate_no_data_loss`, `test_read_checkpoint_no_side_effect`
+  - `save_checkpoint(...)` 实例方法 — 接受已 migrate 的 v2 state，写入 state_json（skill_loads_json 是计算列自动同步）
+  - `CheckpointCorruptError` 抛出时把坏 row 复制到 `.quarantine/{thread_id}-{ts}.json` + ERROR 日志
+- 序列化: `to_checkpoint` 写 `{state, skill_loads: [SkillLoad.to_dict()], version: 2}`（只写 state_json，skill_loads_json 由生成列派生）
+- 测试: `test_save_v2_loads_skill_loads`, `test_load_v1_migrates_to_v2_on_access`, `test_round_trip_v2_preserves_skill_loads`, `test_corrupt_json_raises_checkpoint_corrupt_error_with_quarantine`, `test_10_process_concurrent_migrate_no_data_loss`, `test_read_checkpoint_no_side_effect`, `test_payload_version_mismatch_raises_corrupt_error`
 
 **Patterns to follow**: `CheckpointStore.from_config`（现有 lazy init）+ `test_checkpoint.py` 现有测试模式（用 tmp_path）
 
