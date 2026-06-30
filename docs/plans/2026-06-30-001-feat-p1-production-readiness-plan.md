@@ -203,7 +203,7 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 
 **Files**:
 - Modify: `frontend/package.json`（devDep 加 `vitest@^2`、`ink-testing-library@^4.0.0`、`@testing-library/react@^14` + `react-dom@^18.2.0` + `@types/react-dom@^18.2.0` + `jsdom@^24`；test script `vitest run`）
-- Create: `frontend/vitest.config.ts`（vitest 配置：environment='jsdom' + ink-testing-library setup）
+- Create: `frontend/vitest.config.ts`（vitest 配置：environment='jsdom' + F22 ink-testing-library 默认 TTY mock setup）
 - Modify: `frontend/src/App.tsx`（**不**加 `data-testid`；F17 decision Ink 4 无 DOM，data-testid 不可靠。用 plain text 断言更稳）
 - Create: `tests/integration/test_tui_stdin_real.py`（Python 端: subprocess spawn npm test → 验证 frontend 完成 RPC）
 
@@ -276,8 +276,8 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 **Dependencies**: U2（ink-testing-library 装好；U4 不需 schema 也不需 stress，U1/U3 不依赖）
 
 **Files**:
-- Create: `scripts/e2e_tui_real.py`（启 frontend dev + 触发 backend RPC + 断言；**stdin flush 防 hang**：spawn env `PYTHONUNBUFFERED=1` + backend `--unbuffered` flag；用 pexpect 或 select+timeout 30s 读 stdout；EOF detector 触发 `setState('error')`）
-- Modify: `tests/integration/test_e2e_tui_real.py`（Python wrapper）
+- Create: `scripts/e2e_tui_cli.py`（F18 rename 避开 e2e_tui_real.py 命名冲突；启 frontend dev + 触发 backend RPC + 断言；**stdin flush 防 hang**：spawn env `PYTHONUNBUFFERED=1` + backend `--unbuffered` flag；用 pexpect 或 select+timeout 30s 读 stdout；EOF detector 触发 `setState('error')`；F23 heartbeat + SIGTERM 优雅退出：backend 收到 SIGTERM 调 flush_remaining 推最后 notification + heartbeat event 每 30s 让 App.tsx 区分 stalled vs error）
+- Modify: `tests/integration/test_e2e_tui_cli.py`（Python wrapper）
 
 **Approach**:
 - **双路验证**（F11 decision）：
