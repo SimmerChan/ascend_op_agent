@@ -204,8 +204,7 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 **Files**:
 - Modify: `frontend/package.json`（devDep 加 `vitest@^2`、`ink-testing-library@^4.0.0`、`@testing-library/react@^14` + `react-dom@^18.2.0` + `@types/react-dom@^18.2.0` + `jsdom@^24`；test script `vitest run`）
 - Create: `frontend/vitest.config.ts`（vitest 配置：environment='jsdom' + ink-testing-library setup）
-- Modify: `frontend/src/App.tsx`（加 `data-testid` 属性给 ProgressBar / skill chips / completed message，便于 ink-testing `lastFrame()` 断言）
-- Create: `frontend/src/__tests__/run-conversation.test.tsx`（vitest 测试，spawn backend + FakeExecutor + 验证 RPC flow）
+- Modify: `frontend/src/App.tsx`（**不**加 `data-testid`；F17 decision Ink 4 无 DOM，data-testid 不可靠。用 plain text 断言更稳）
 - Create: `tests/integration/test_tui_stdin_real.py`（Python 端: subprocess spawn npm test → 验证 frontend 完成 RPC）
 
 **Approach**:
@@ -274,7 +273,7 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 
 **Requirements**: R1 + R4 集成验证
 
-**Dependencies**: U2（ink-testing-library 装好）+ U3（stress harness 跑通）
+**Dependencies**: U2（ink-testing-library 装好；U4 不需 schema 也不需 stress，U1/U3 不依赖）
 
 **Files**:
 - Create: `scripts/e2e_tui_real.py`（启 frontend dev + 触发 backend RPC + 断言；**stdin flush 防 hang**：spawn env `PYTHONUNBUFFERED=1` + backend `--unbuffered` flag；用 pexpect 或 select+timeout 30s 读 stdout；EOF detector 触发 `setState('error')`）
@@ -331,11 +330,11 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 
 ```
 Week1: U1 CheckpointState schema v2（最独立,纯 Python,小改）+ U3 stress 模式（同样纯脚本,2-3 天）
-Week2: U2 ink-testing-library 集成（前端依赖装 + 测试写,3-5 天,前端首次有测试）
-Week3: U4 CLI 真 stdin RPC 端到端（依赖 U2 + U3,通过 e2e_tui_real.py 整链路验证）
+Week2: U1+U2 顺序（U2 依赖 U1 的 CheckpointStore, 实际 mock 即可但 phase delivery 标顺序清楚）
+Week3: U4 CLI 真 stdin RPC 端到端（依赖 U2, 通过 e2e_tui_real.py 整链路验证）
 Week4: 跑全套 N=20 stress + U2 + U4 终验 + 验收报告
 
-U1 → U3 并行（独立）,U2 单独（前端新依赖）,U4 依赖 U1+U2+U3。
+U1 → U3 并行（独立）,U2 跟随 U1（mock 即可, phase 标顺序）,U4 依赖 U2。
 ```
 
 ---
