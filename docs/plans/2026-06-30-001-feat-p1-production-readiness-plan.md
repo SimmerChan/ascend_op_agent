@@ -59,11 +59,17 @@ P1 不做：
 - Web websocket 推送、UI 库切换
 
 ### Deferred to Follow-Up Work
-- **schema 升级回滚路径**：v2 → v1 兼容（P2 风险低；如果升级后用户回退老 binary，checkpoint 反序列化失败即可，不再加回滚路径）
+- **F-P1-SCOPE-02: 升级 / 回滚策略**（round 4 决策 — 加 P1 实施项，不仅是 P2 defer）：
+  - 升级 v1→v2：原子（`BEGIN IMMEDIATE` + 检测 version + ALTER + 写回），失败自动 quarantine 坏 row + 不破坏 v1
+  - 回滚 v2→v1：保留 v1 raw backup (`{db}.v1.backup-{ts}` 在每次启动 ALTER 前 copy)；用户回退老 binary 时恢复 `.v1.backup-{ts}` 覆盖
+  - quarantine hard cap 100 文件 + LRU-by-mtime（非 access time）淘汰，防 db 邻接目录无限增长
+  - rollback 测试：单测模拟用户从 v2 binary 回退到 v1，验证 v1 data 仍可读
 - **skill_loads 持久化的 retention 策略**：P0 ephemeral，P2 可加 "保留最近 N 个 thread" 避免 db 膨胀
 - **stress test 并行化**：目前 N=20 串行（~10 min），未来可加 `--stress-parallel` 提升速度（P1 场景下 10 min 可接受）
 - **CI integration**：stress harness + ink-testing 接入 GitHub Actions（需要 secrets 配 910B 凭据 + minimaxi API key；不在 P1）
 - **真实 stdout flushing 验证**：TUI 真 stdin 后 spawn 的子进程 stdout 是否真 flush，单独 e2e 测（U1 含部分，但独立可后续补）
+- **F-P1-SCOPE-08: 单一 boolean ship gate**（round 4 决策）：引入 `--ship-ready` 单一 CLI 检查，组合所有指标 (lint+test+stress+5gap) 输出 0/1 exit code；F13 三态 exit code 内部用但 ship gate 单一返回 0/1
+- **F-P1-FEAS-14: U4.5 真正 SIGTERM flush**（round 4 P0 — 当前设计 hard-kill in-flight）：改用 `loop.add_signal_handler(SIGTERM, _graceful_shutdown)` 让 in-flight 节点先 `await checkpoint + final frame` 再 close（最大 30s），超时后 SIGKILL
 
 ---
 
@@ -169,7 +175,7 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 **Approach**:
 - **DB schema: SQLite generated column**（round 2 决策：避免双写 drift）：
   - `checkpoints` 表加 `skill_loads_json TEXT GENERATED ALWAYS AS (json_extract(state_json, '$.skill_loads')) STORED`（SQLite 3.31+ STORED columns；single source of truth = state_json；skill_loads_json 是计算列，零 drift 风险）
-  - **libsqlite3 版本探测**（F-P1-FEAS-01 round 3 决策）：启动期 `PRAGMA user_version` + `SELECT sqlite_version()`，<3.31 返 `CheckpointSchemaError` + actionable error（"Install Python 3.11+ or use python -m pip install pysqlite3-binary"）。>=3.31 但 <3.46 走 trigger 同步作为 fallback（P2 补 trigger 逻辑）
+  - **libsqlite3 版本探测**（F-P1-FEAS-01 round 3 + F-P1-FEAS-13 round 4 修正）：用 Python `sqlite3.sqlite_version` (string attribute) + `sqlite3.sqlite_version_info` (tuple) — **不是** `PRAGMA user_version`（user-set int 槽）。启动期 `sqlite_version_info >= (3, 31, 0)` 才用 STORED generated column；<3.31 返 `CheckpointSchemaError` + actionable error（"Install Python 3.11+ or pysqlite3-binary"）。>=3.31 但 <3.46 走 trigger 同步作为 fallback（P2 补 trigger 逻辑）
   - `PRAGMA journal_mode=WAL` + `PRAGMA busy_timeout=30000` + `BEGIN IMMEDIATE` 防 SQLITE_BUSY
   - 启动期 ALTER TABLE ADD COLUMN（atomic migration），不在 lazy on-read
 - **PathConfig 多 db 支持**（F-P1-FEAS-02 round 3 决策）：CheckpointConfig 加 `path: Path` 字段（默认 `~/.ascend_op_agent/checkpoints.db`，可 per-run dir 覆盖）。U1 测多 db 场景（n 个 run dir 同时 migrate）不 deadlock，每个 db 独立 BEGIN IMMEDIATE
