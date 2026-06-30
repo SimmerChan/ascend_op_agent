@@ -72,7 +72,7 @@ P1 不做：
 - **ink-testing-library 装为 devDep**：当前 `frontend/package.json` 无 vitest/jest。**P1 装 vitest + ink-testing-library@^4.0.0**（npm 上 2024 发布，零依赖，peerDeps 兼容 Ink 4 + React 18，exports `lastFrame()`）。round 1 round 1 错换为 @testing-library/react（@testing-library/react 在 Ink 4 无 DOM 不可用），round 2 修正。**Alternative Considered**: skip 测试只手动 smoke（P0 阶段就是这么干的）。**Decision**: user 选了"含 TUI stdin 真交互"，必须自动化
 - **CheckpointState 加 `version: int` 字段**：当前 CheckpointStore 用 JSON 不分版本，加版本号字段便于迁移。新字段 `skill_loads: list[SkillLoad]`（dataclass 序列化走 `to_dict`）；`from_checkpoint` 读 `version=1` 时降级（无 skill_loads），`version=2` 走全字段。**Alternative**: 用 `pydantic` schema 迁移（P2 太重）
 - **stress harness = `e2e_real_op.py --stress N`**：复用现有 e2e 入口，加 `--stress 20` 模式循环 N 次、累计成功 / stderr 摘要。**Alternative**: 新建 `tests/hardware/stress_910b.py` 独立脚本（P1 复用避免重复；`scripts/` 是给用户跑的入口）
-- **stress 指标 = 累计 pass rate ≥95%**：单次 spike 10/10 没意义；N=20 累计 ≥19/20 是用户可接受门槛（5% 失败 = 1 次空跑，warn 但不阻塞）
+- **stress 指标 = 累计 pass rate ≥95%（first-try ≥80%）**：F2 disambiguate —— 是 percentage budget（5% failure tolerance），不是 percentile rank。单次 spike 10/10 没意义；N=20 first-try ≥16/20 是 user 接受门槛（per-case transient 占 <20%），with-retry ≥19/20 允许 retry 提 10%
 - **ink-testing-library 集成测用 FakeExecutor**：`useBackendProcess` 启动 backend 子进程但 fake `_setup_agent` 里的 NpuExecutor（避免测试 910B）；通过 monkey-patching 注入 fake agent + 验证 TUI screen 输出
 - **TUI 测试范围聚焦在 screen assertion**：不测打字速度、不测颜色（ink 渲染层），只断言 `lastFrame()` 含特定文本（"loaded:" / "completed" / "请确认" 等）
 
@@ -175,7 +175,7 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
   - `read_checkpoint(thread_id)` — 纯读，无副作用；同时检 row.version + payload schema（mismatch 抛 `CheckpointCorruptError`）
   - `load_and_migrate_checkpoint(thread_id)` — 显式 migrate 入口，调用方决定何时跑
   - `save_checkpoint(...)` 实例方法 — 接受已 migrate 的 v2 state，写入 state_json（skill_loads_json 是计算列自动同步）
-  - `CheckpointCorruptError` 抛出时把坏 row 复制到 `.quarantine/{thread_id}-{ts}.json` + ERROR 日志
+  - `CheckpointCorruptError` 抛出时把坏 row 复制到 `.quarantine/{thread_id}-{ts}.json` + ERROR 日志（F1 hard cap: 保留最近 100 个 quarantine 文件，超出 LRU 淘汰，防止 db 邻接目录无限增长）
 - 序列化: `to_checkpoint` 写 `{state, skill_loads: [SkillLoad.to_dict()], version: 2}`（只写 state_json，skill_loads_json 由生成列派生）
 - 测试: `test_save_v2_loads_skill_loads`, `test_load_v1_migrates_to_v2_on_access`, `test_round_trip_v2_preserves_skill_loads`, `test_corrupt_json_raises_checkpoint_corrupt_error_with_quarantine`, `test_10_process_concurrent_migrate_no_data_loss`, `test_read_checkpoint_no_side_effect`, `test_payload_version_mismatch_raises_corrupt_error`
 
@@ -276,8 +276,8 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 **Dependencies**: U2（ink-testing-library 装好；U4 不需 schema 也不需 stress，U1/U3 不依赖）
 
 **Files**:
-- Create: `scripts/e2e_tui_cli.py`（F18 rename 避开 e2e_tui_real.py 命名冲突；启 frontend dev + 触发 backend RPC + 断言；**stdin flush 防 hang**：spawn env `PYTHONUNBUFFERED=1` + backend `--unbuffered` flag；用 pexpect 或 select+timeout 30s 读 stdout；EOF detector 触发 `setState('error')`；F23 heartbeat + SIGTERM 优雅退出：backend 收到 SIGTERM 调 flush_remaining 推最后 notification + heartbeat event 每 30s 让 App.tsx 区分 stalled vs error）
-- Modify: `tests/integration/test_e2e_tui_cli.py`（Python wrapper）
+- Create: `scripts/e2e_tui_real.py`（F18 round 3 还原改名 — `e2e_tui_real.py` 文件实际不存在，前置 rename 无依据；启 frontend dev + 触发 backend RPC + 断言；**stdin flush 防 hang**：spawn env `PYTHONUNBUFFERED=1` + backend `--unbuffered` flag；用 pexpect 或 select+timeout 30s 读 stdout；EOF detector 触发 `setState('error')`；F23 heartbeat + SIGTERM 优雅退出：backend 收到 SIGTERM 调 flush_remaining 推最后 notification + heartbeat event 每 30s 让 App.tsx 区分 stalled vs error）
+- Modify: `tests/integration/test_e2e_tui_real.py`（Python wrapper）
 
 **Approach**:
 - **双路验证**（F11 decision）：
