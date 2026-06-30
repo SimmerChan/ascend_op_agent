@@ -69,7 +69,7 @@ P1 不做：
 
 ## Key Technical Decisions
 
-- **ink-testing-library 装为 devDep**：当前 `frontend/package.json` 无 vitest/jest。**P1 装 vitest + @testing-library/react@^14**（ink-testing-library@4 不存在；@testing-library/react 是 Ink 实际兼容的 React 测试库；mock 化设计避免在 Ink 上直接断言 DOM）。**Alternative Considered**: skip 测试只手动 smoke（P0 阶段就是这么干的）。**Decision**: user 选了"含 TUI stdin 真交互"，必须自动化
+- **ink-testing-library 装为 devDep**：当前 `frontend/package.json` 无 vitest/jest。**P1 装 vitest + ink-testing-library@^4.0.0**（npm 上 2024 发布，零依赖，peerDeps 兼容 Ink 4 + React 18，exports `lastFrame()`）。round 1 round 1 错换为 @testing-library/react（@testing-library/react 在 Ink 4 无 DOM 不可用），round 2 修正。**Alternative Considered**: skip 测试只手动 smoke（P0 阶段就是这么干的）。**Decision**: user 选了"含 TUI stdin 真交互"，必须自动化
 - **CheckpointState 加 `version: int` 字段**：当前 CheckpointStore 用 JSON 不分版本，加版本号字段便于迁移。新字段 `skill_loads: list[SkillLoad]`（dataclass 序列化走 `to_dict`）；`from_checkpoint` 读 `version=1` 时降级（无 skill_loads），`version=2` 走全字段。**Alternative**: 用 `pydantic` schema 迁移（P2 太重）
 - **stress harness = `e2e_real_op.py --stress N`**：复用现有 e2e 入口，加 `--stress 20` 模式循环 N 次、累计成功 / stderr 摘要。**Alternative**: 新建 `tests/hardware/stress_910b.py` 独立脚本（P1 复用避免重复；`scripts/` 是给用户跑的入口）
 - **stress 指标 = 累计 pass rate ≥95%**：单次 spike 10/10 没意义；N=20 累计 ≥19/20 是用户可接受门槛（5% 失败 = 1 次空跑，warn 但不阻塞）
