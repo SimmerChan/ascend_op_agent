@@ -335,6 +335,37 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 
 ---
 
+### U8. `--ship-ready` 单一 boolean CLI gate（F-P1-SCOPE-08 round 5）
+
+**Goal**: 一键 `python scripts/ship_ready.py` 串行跑 ruff lint + pytest tests/ + U3 stress + U7 5gap verify + U4 CLI 端到端，**输出单一 0/1 exit code**。任何一步失败 = exit 1 + 报告哪步 fail。P1 ship-readiness 唯一 boolean gate。
+
+**Requirements**: R1-R5 全部 (整合)
+
+**Dependencies**: U1-U7 全部（整合 + 单一 gate）
+
+**Files**:
+- Create: `scripts/ship_ready.py`（subprocess.run 顺序跑每个 step，每步 timeout + 捕获 stdout/stderr 关键行 + ✓/✗ 标记 + 累积 error；最后 `print("SHIP READY")` or `print("NOT READY: <failing_step>")` + exit 0/1）
+- Modify: `.github/workflows/ship-ready.yml`（CI dispatch trigger，跑 ship_ready.py）
+
+**Approach**:
+- step 1: `ruff check src/ tests/ scripts/`
+- step 2: `pytest tests/unit/orchestrator/ tests/integration/ -q`（U1/U2/U3/U4/U5/U6/U7 单测 + 集成）
+- step 3: `bash scripts/run_stress.sh 20`（U3 stress N=20 ≥95% first-try ≥80%）
+- step 4: `bash scripts/e2e_tui_real.py`（U4 CLI 端到端 + skill chip 真实数据流）
+- 每步独立 timeout（5min lint / 10min test / 15min stress / 10min e2e）；失败立即 abort + 报告哪步 fail
+- success step 数打印用于透明 (e.g., `Step 3/5: U3 stress PASS (18/20 first-try)`)
+
+**Test scenarios**:
+- Happy: 所有 step PASS → exit 0 + "SHIP READY"
+- Lint fail: 故意 ruff 检查失败 → exit 1 + "NOT READY: lint"
+- Test fail: 故意改错一测 → exit 1 + "NOT READY: unit_test"
+- Stress fail: 故意注入 fail (e.g., mock NpuExecutor 返 failure) → exit 1 + "NOT READY: stress"
+- Skip: `--skip-stress` 跳过 stress（dev fast iteration）
+
+**Verification**: `python scripts/ship_ready.py` exit 0 + CI dispatch 成功触发。P1 ship-readiness 唯一 boolean gate（商业化前必过）。
+
+---
+
 ## System-Wide Impact
 
 - **Interaction graph**: 用户跑 `ascend-op-agent run "op: 实现 add"` → 进程正确 spawn → RPC 流不带 leak；进程退出时 stdin/stdout fd 都 close
