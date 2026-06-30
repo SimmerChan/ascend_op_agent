@@ -167,13 +167,16 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 - Modify: `src/ascend_op_agent/config.py`（CheckpointConfig 加 schema_version 字段，默认 2，可手动 override 强制 v1 读取）
 
 **Approach**:
-- **DB schema: 双列 + WAL + 启动期文件锁**（防 P0 concurrency race）：
+- **DB schema: 双列 + SQLite busy_timeout + BEGIN IMMEDIATE**（round 2 决策：弃用 flock，SQLite 自带并发）：
   - `checkpoints` 表加 `skill_loads_json TEXT NOT NULL DEFAULT '[]'` 列（双列：与 state_json 并存，单独查询不需 parse state_json）
-  - 启动期 `flock(.checkpoint.lock)` + `PRAGMA journal_mode=WAL` + 跑 migration；ALTER 后释放锁
-  - N=10 进程同时启动测试不丢
-- 序列化: `to_checkpoint` 写 `{state, skill_loads: [SkillLoad.to_dict()], version: 2}`（双写：state_json 字段 + skill_loads_json 字段保持一致）
-- `load_checkpoint` 读 `version=1` 时 `state["skill_loads"] = []` + 写回 v2（lazy migration）
-- 测试: `test_save_v2_loads_skill_loads`, `test_load_v1_migrates_to_v2_on_access`, `test_round_trip_v2_preserves_skill_loads`, `test_corrupt_skill_loads_json_returns_empty`, `test_10_process_concurrent_migrate_no_data_loss`
+  - `PRAGMA journal_mode=WAL` + `PRAGMA busy_timeout=30000` + `BEGIN IMMEDIATE` 防 SQLITE_BUSY（macOS/Linux 跨平台，无需 OS 文件锁）
+  - 启动期 ALTER TABLE ADD COLUMN（atomic migration），不在 lazy on-read
+- **拆 read 与 migrate**（round 2 决策：避免 read+write race）：
+  - `read_checkpoint(thread_id)` — 纯读，无副作用
+  - `load_and_migrate_checkpoint(thread_id)` — 显式 migrate 入口，调用方决定何时跑
+  - `save_checkpoint(...)` — 接受已 migrate 的 v2 state，写入双列
+- 序列化: `to_checkpoint` 写 `{state, skill_loads: [SkillLoad.to_dict()], version: 2}`（双写：state_json + skill_loads_json 保持一致）
+- 测试: `test_save_v2_loads_skill_loads`, `test_load_v1_migrates_to_v2_on_access`, `test_round_trip_v2_preserves_skill_loads`, `test_corrupt_skill_loads_json_returns_empty`, `test_10_process_concurrent_migrate_no_data_loss`, `test_read_checkpoint_no_side_effect`
 
 **Patterns to follow**: `CheckpointStore.from_config`（现有 lazy init）+ `test_checkpoint.py` 现有测试模式（用 tmp_path）
 
@@ -198,8 +201,8 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 **Dependencies**: U1（skill_loads 持久化到 checkpoint 后可断言屏幕有 chip）
 
 **Files**:
-- Modify: `frontend/package.json`（devDep 加 `vitest@^2`、`@testing-library/react@^14`、`jsdom@^24`；test script `vitest run`）
-- Create: `frontend/vitest.config.ts`（vitest 配置：environment='jsdom' + setupFiles；**不**需要 ink-testing-library 插件，因其不真实存在）
+- Modify: `frontend/package.json`（devDep 加 `vitest@^2`、`ink-testing-library@^4.0.0`、`@testing-library/react@^14` + `react-dom@^18.2.0` + `@types/react-dom@^18.2.0` + `jsdom@^24`；test script `vitest run`）
+- Create: `frontend/vitest.config.ts`（vitest 配置：environment='jsdom' + ink-testing-library setup）
 - Modify: `frontend/src/App.tsx`（加 `data-testid` 属性给 ProgressBar / skill chips / completed message，便于 ink-testing `lastFrame()` 断言）
 - Create: `frontend/src/__tests__/run-conversation.test.tsx`（vitest 测试，spawn backend + FakeExecutor + 验证 RPC flow）
 - Create: `tests/integration/test_tui_stdin_real.py`（Python 端: subprocess spawn npm test → 验证 frontend 完成 RPC）
