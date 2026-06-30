@@ -245,10 +245,17 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 
 **Approach**:
 - `--stress N` 默认 None（保持原 e2e 行为）；指定时进入循环模式
-- 每次跑前 `--thread-id ts-$(date +%s)-$run-${XSTRESS_RUN_ID:-default}` 避免 thread 冲突（XSTRESS_RUN_ID 是 stress 跑用 env var，CI 多 worker 不撞）
+- 每次跑前 `--thread-id $(hostname)-$$-$(date +%s%N)-$run` 避免 thread 冲突（hostname+pid+纳秒时间，CI 多 worker 不撞；废弃 XSTRESS_RUN_ID env var）
 - success 判定: `state["compile_result"]["success"] is True AND state["precision_report"]["success"] is True`（precision_report 来自 U1 run_st_driver 真实跑 910B）
+- **retry 策略**（F10）：失败重试 1 次（防 SSH transient），但 report 拆双指标：
+  - `first_try_pass_rate = first_try_pass / N`
+  - `final_pass_rate_with_retry = final_pass / N`
+  - ship criterion: `first_try_pass_rate >= 80%` AND `final_pass_rate_with_retry >= 95%`
 - 失败摘要: `tail -500 <(compile stderr) + <(precision stderr)` 写到 `$E2E_STRESS_LOG/<run>.log`
-- 循环结尾: 显式打印 `PASS rate X% (N/M)` + 阈值检查（避免"exit 0 silently"歧义）
+- 循环结尾: 显式打印 `PASS rate X% (first-try) Y% (with-retry) (N/M)` + 三态 exit code:
+  - `first_try_pass_rate >= 80%` AND `final >= 95%` AND `first_try == final` → exit 0 (clean pass)
+  - `first_try_pass_rate >= 80%` AND `final >= 95%` AND `first_try < final` → exit 0 + stderr WARN line (transient recover)
+  - 否则 → exit 1 (real failure)
 
 **Test scenarios**:
 - Argparse: `--stress 5` parsed correctly
