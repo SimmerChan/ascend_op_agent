@@ -168,9 +168,11 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 
 **Approach**:
 - **DB schema: SQLite generated column**（round 2 决策：避免双写 drift）：
-  - `checkpoints` 表加 `skill_loads_json TEXT GENERATED ALWAYS AS (json_extract(state_json, '$.skill_loads')) STORED`（SQLite 3.46+；single source of truth = state_json；skill_loads_json 是计算列，零 drift 风险）
-  - `PRAGMA journal_mode=WAL` + `PRAGMA busy_timeout=30000` + `BEGIN IMMEDIATE` 防 SQLITE_BUSY（macOS/Linux 跨平台，无需 OS 文件锁）
+  - `checkpoints` 表加 `skill_loads_json TEXT GENERATED ALWAYS AS (json_extract(state_json, '$.skill_loads')) STORED`（SQLite 3.31+ STORED columns；single source of truth = state_json；skill_loads_json 是计算列，零 drift 风险）
+  - **libsqlite3 版本探测**（F-P1-FEAS-01 round 3 决策）：启动期 `PRAGMA user_version` + `SELECT sqlite_version()`，<3.31 返 `CheckpointSchemaError` + actionable error（"Install Python 3.11+ or use python -m pip install pysqlite3-binary"）。>=3.31 但 <3.46 走 trigger 同步作为 fallback（P2 补 trigger 逻辑）
+  - `PRAGMA journal_mode=WAL` + `PRAGMA busy_timeout=30000` + `BEGIN IMMEDIATE` 防 SQLITE_BUSY
   - 启动期 ALTER TABLE ADD COLUMN（atomic migration），不在 lazy on-read
+- **PathConfig 多 db 支持**（F-P1-FEAS-02 round 3 决策）：CheckpointConfig 加 `path: Path` 字段（默认 `~/.ascend_op_agent/checkpoints.db`，可 per-run dir 覆盖）。U1 测多 db 场景（n 个 run dir 同时 migrate）不 deadlock，每个 db 独立 BEGIN IMMEDIATE
 - **拆 read 与 migrate + payload 验证**（round 2 决策：避免 read+write race + silent downgrade）：
   - `read_checkpoint(thread_id)` — 纯读，无副作用；同时检 row.version + payload schema（mismatch 抛 `CheckpointCorruptError`）
   - `load_and_migrate_checkpoint(thread_id)` — 显式 migrate 入口，调用方决定何时跑
@@ -203,7 +205,7 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 
 **Files**:
 - Modify: `frontend/package.json`（devDep 加 `vitest@^2`、`ink-testing-library@^4.0.0`、`@testing-library/react@^14` + `react-dom@^18.2.0` + `@types/react-dom@^18.2.0` + `jsdom@^24`；test script `vitest run`）
-- Create: `frontend/vitest.config.ts`（vitest 配置：environment='jsdom' + F22 ink-testing-library 默认 TTY mock setup）
+- Create: `frontend/vitest.config.ts`（vitest 配置：environment='jsdom' + F22 ink-testing-library 默认 TTY mock setup + **F-P1-FEAS-06 round 3 加 `testTimeout: 60_000, hookTimeout: 60_000`**（默认 5s 不够，backend RPC 需 30s+）
 - Modify: `frontend/src/App.tsx`（**不**加 `data-testid`；F17 decision Ink 4 无 DOM，data-testid 不可靠。用 plain text 断言更稳）
 - Create: `tests/integration/test_tui_stdin_real.py`（Python 端: subprocess spawn npm test → 验证 frontend 完成 RPC）
 
@@ -267,6 +269,33 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 
 ---
 
+### U4.5. JSONRPCServer SIGTERM handler + 30s heartbeat（F-P1-FEAS-11 round 3）
+
+**Goal**: 现有 `JSONRPCServer.run()`（`server.py:173`）既无 `loop.add_signal_handler(SIGTERM, ...)` 也无 periodic heartbeat task。F23 round 2 + U4 test 必失败（backend 收不到 SIGTERM → 不会 flush；无 heartbeat → TUI 误判 stalled）。本 unit 补这两条。
+
+**Requirements**: R1 派生（U4 依赖）
+
+**Dependencies**: U1 (state 结构)
+
+**Files**:
+- Modify: `src/ascend_op_agent/backend/rpc/server.py` `JSONRPCServer.run` 入口加 `asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, self._flush_remaining_and_exit)` + `asyncio.create_task(self._heartbeat_loop())` (30s interval)
+- Modify: `src/ascend_op_agent/backend.py:main` 启动后 spawn 1 个 heartbeat task（每 30s 推 `{"event":"heartbeat"}` 给所有 active thread）
+- Test: `tests/unit/orchestrator/test_sigterm_handler.py`（mock asyncio loop 验证 SIGTERM flush + heartbeat 推送）
+
+**Approach**:
+- `_flush_remaining_and_exit` 推最后一帧 `agent.progress` 给所有 in-flight thread + 关闭 stdio（让 TUI EOF detector 立刻收到 close）
+- `_heartbeat_loop` 每 30s 推 `{"phase": "heartbeat", "event": "alive", "payload": {"thread_id": ...}}` 给所有 active thread
+- signal handler 用 `loop.add_signal_handler`（不是 `signal.signal()` — async-safe）
+
+**Test scenarios**:
+- Happy: 心跳 30s 间隔 5 次 → 5 个 event 推送给 active thread
+- SIGTERM: mock loop signal → flush_remaining 推最后 frame + exit 0
+- Edge: 启动期 0 active thread → heartbeat no-op（不报错）
+
+**Verification**: `pytest tests/unit/orchestrator/test_sigterm_handler.py -q` 全过；U4 端到端 60s+ 跑不 hang
+
+---
+
 ### U4. CLI 真 stdin RPC 端到端（spawn backend → 完整链路）
 
 **Goal**: `scripts/e2e_tui_real.py` — 启动 frontend/dev，spawn 真 backend 子进程，模拟用户输入 `op: 实现 add 算子` 到 backend stdin，监听 stdout → agent.progress → 断言屏幕 + 检查 chip 显示 + 最后 task_done
@@ -276,7 +305,7 @@ print(f"PASS rate {pass_rate:.0%} ({pass_count}/{N})")
 **Dependencies**: U2（ink-testing-library 装好；U4 不需 schema 也不需 stress，U1/U3 不依赖）
 
 **Files**:
-- Create: `scripts/e2e_tui_real.py`（F18 round 3 还原改名 — `e2e_tui_real.py` 文件实际不存在，前置 rename 无依据；启 frontend dev + 触发 backend RPC + 断言；**stdin flush 防 hang**：spawn env `PYTHONUNBUFFERED=1` + backend `--unbuffered` flag；用 pexpect 或 select+timeout 30s 读 stdout；EOF detector 触发 `setState('error')`；F23 heartbeat + SIGTERM 优雅退出：backend 收到 SIGTERM 调 flush_remaining 推最后 notification + heartbeat event 每 30s 让 App.tsx 区分 stalled vs error）
+- Create: `scripts/e2e_tui_real.py`（F-P1-FEAS-05 round 3 决策：e2e spawn 1 个 backend 进程 + 启 frontend dev，**避免双 backend 进程 pipes 冲突**。F18 round 3 还原文件名（rename 无据）。设 `BACKEND_PID` env var 让 `useBackendProcess` 复用现 PID。**stdin flush 防 hang**：spawn env `PYTHONUNBUFFERED=1` + backend `--unbuffered` flag；用 pexpect 或 select+timeout 30s 读 stdout；EOF detector 触发 `setState('error')`；依赖 U4.5 SIGTERM handler + heartbeat）
 - Modify: `tests/integration/test_e2e_tui_real.py`（Python wrapper）
 
 **Approach**:
