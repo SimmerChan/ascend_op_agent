@@ -298,59 +298,248 @@ def main() -> int:
     ))
     parser.add_argument("--thread-id", default=f"e2e-{int(time.time())}")
     parser.add_argument("--local-workdir", default=str(LOCAL_WORKDIR))
+    # U3: stress mode 累计 dual metric (first-try ≥80% + with-retry ≥95%)
+    parser.add_argument("--stress", type=int, default=None,
+                        help="stress mode: 循环 N 次,统计 first-try + with-retry 双指标"
+                             "(默认 None = single run,无累计)")
+    parser.add_argument("--skip-stress-retry", action="store_true",
+                        help="(debug) stress 模式禁 retry 1 次逻辑(只算 first-try)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
-    # 0. 准备本地工作目录 + 复制参考工程 scaffold(reference migration 路径)
-    local_workdir = Path(args.local_workdir)
+    if args.stress is not None:
+        return _run_stress(args)
+
+    return _run_single(args)
+
+
+def _run_single(args) -> int:
+    """单次跑(原 main 逻辑,stress 不用)。"""
+    state = _do_one_run(
+        task=args.task,
+        local_workdir=Path(args.local_workdir),
+        thread_id=args.thread_id,
+        run_index=0,
+        total=1,
+    )
+    return _main_single_report(state, run_index=0, total=1)
+
+
+def _run_stress(args) -> int:
+    """U3 stress mode: 循环 N 次跑,统计 dual metric + 3-state exit (F10/F13)。
+
+    规则:
+      - first-try ≥80% AND with-retry ≥95% AND first-try == with-retry → clean pass (exit 0)
+      - first-try ≥80% AND with-retry ≥95% AND first-try < with-retry → transient recover
+                                                                             (exit 0 + stderr WARN)
+      - 其余 → real fail (exit 1)
+    """
+    n = args.stress
+    # XSTRESS_RUN_ID (per F9) 用 hostname + pid 隔离多 worker
+    run_id = f"{os.uname().nodename}-{os.getpid()}-{time.time_ns()}"
+    print(f"[U3 stress] N={n} run_id={run_id} skip_retry={args.skip_stress_retry}")
+    print(f"[U3 stress] ship criterion: first_try >= 80% AND with_retry >= 95%")
+    print(f"[U3 stress] 3-state exit: clean=0, transient=0+WARN, real_fail=1")
+
+    first_try_pass = 0
+    with_retry_pass = 0
+    failures: list[tuple[int, str]] = []  # (run_index, stderr_summary)
+
+    # Scaffold 只 copy 一次(每 run 共享同一参考工程)
+    _setup_scaffold_only(Path(args.local_workdir))
+
+    for i in range(1, n + 1):
+        thread_id = f"e2e-stress-{run_id}-{i:03d}"
+        # 每 run 独立 fresh LLM/CheckpointStore
+        try:
+            first_pass, final_pass, stderr = _do_one_run_stress(
+                task=args.task,
+                local_workdir=Path(args.local_workdir),
+                thread_id=thread_id,
+                run_index=i,
+                total=n,
+                skip_retry=args.skip_stress_retry,
+            )
+            if first_pass:
+                first_try_pass += 1
+            if final_pass:
+                with_retry_pass += 1
+            else:
+                failures.append((i, stderr))
+        except Exception as e:
+            # 主流程异常(SSH/container 挂)不计入 pass,但不 abort
+            err = f"exception: {type(e).__name__}: {str(e)[:200]}"
+            failures.append((i, err))
+            print(f"[U3 stress] run {i}/{n} EXCEPTION: {err}")
+            continue
+
+        status = "PASS" if final_pass else "FAIL"
+        recovery = "(transient recovered)" if (final_pass and not first_pass) else ""
+        print(
+            f"[U3 stress] run {i}/{n} {status} {recovery}"
+        )
+
+    # 累计报告
+    first_try_rate = first_try_pass / n
+    final_rate = with_retry_pass / n
+    print("\n========== U3 stress report ==========")
+    print(f"  N={n} run_id={run_id}")
+    print(f"  first-try pass: {first_try_pass}/{n} = {first_try_rate:.1%}")
+    print(f"  with-retry pass: {with_retry_pass}/{n} = {final_rate:.1%}")
+    if failures:
+        print(f"  failures: {len(failures)}")
+        for run_idx, stderr in failures[:3]:
+            print(f"    run {run_idx}: {stderr[:200]}")
+    print("=====================================\n")
+
+    # 3-state exit code (F13)
+    if first_try_rate >= 0.80 and final_rate >= 0.95:
+        if first_try_pass == with_retry_pass:
+            print("[U3 stress] CLEAN PASS — exit 0")
+            return 0
+        else:
+            print(
+                f"[U3 stress] ⚠️ TRANSIENT RECOVERED — {first_try_rate:.1%} first-try → "
+                f"{final_rate:.1%} with-retry (retry helped)"
+            )
+            print("[U3 stress] exit 0 + WARN (retry recovered flakiness)")
+            return 0
+    else:
+        print(
+            f"[U3 stress] REAL FAIL — first-try {first_try_rate:.1%} < 80% "
+            f"or with-retry {final_rate:.1%} < 95%"
+        )
+        return 1
+
+
+def _setup_scaffold_only(local_workdir: Path) -> None:
+    """stress 模式:只 copy 一次 scaffold(每 run 共享)。"""
+    if local_workdir.exists():
+        shutil.rmtree(local_workdir)
     op_dir = local_workdir / "op_add"
     op_dir.mkdir(parents=True, exist_ok=True)
     if SCAFFOLD_DIR.exists():
-        # 复制 scaffold 整个目录(已验证可编译的 add_example 算子)
-        import shutil as _sh
         for item in SCAFFOLD_DIR.iterdir():
             dest = op_dir / item.name
             if item.is_dir():
-                if dest.exists():
-                    _sh.rmtree(dest)
-                _sh.copytree(item, dest)
+                shutil.copytree(item, dest)
             else:
-                _sh.copy2(item, dest)
-        print(f"[setup] local workdir = {local_workdir}")
-        print(f"[setup]   scaffold copied from {SCAFFOLD_DIR} to {op_dir}")
-        print(f"[setup]   scaffold files: {sorted(p.name for p in op_dir.iterdir())}")
+                shutil.copy2(item, dest)
+        print(f"[setup] scaffold copied once from {SCAFFOLD_DIR} to {op_dir}")
     else:
-        print(f"[setup] ⚠️  SCAFFOLD_DIR={SCAFFOLD_DIR} 不存在,从零编译模式")
-    print(f"[setup] remote workdir = {NPU_REMOTE_WORKDIR}")
-    print(f"[setup] thread_id = {args.thread_id}")
+        print(f"[setup] ⚠️ SCAFFOLD_DIR={SCAFFOLD_DIR} 不存在,从零编译模式")
+
+
+def _do_one_run_stress(
+    task: str,
+    local_workdir: Path,
+    thread_id: str,
+    run_index: int,
+    total: int,
+    skip_retry: bool,
+) -> tuple[bool, bool, str]:
+    """stress 子单次。返回 (first_try_pass, with_retry_pass, stderr_summary)。
+
+    skip_retry=True: 第一次失败不重试(只算 first-try)。
+    skip_retry=False: 失败时再重试 1 次(改进 with-retry 计数)。
+    """
+    # 每次重置 op_add(用 scaffold 重新填充)
+    op_dir = local_workdir / "op_add"
+    if op_dir.exists():
+        shutil.rmtree(op_dir)
+    op_dir.mkdir(parents=True, exist_ok=True)
+    if SCAFFOLD_DIR.exists():
+        for item in SCAFFOLD_DIR.iterdir():
+            dest = op_dir / item.name
+            if item.is_dir():
+                shutil.copytree(item, dest)
+            else:
+                shutil.copy2(item, dest)
+
+    # 第一次跑
+    state, stderr = _run_one_pass(task, local_workdir, thread_id, run_index, total)
+    first_pass = _is_pass(state)
+    if first_pass or skip_retry:
+        return first_pass, first_pass, stderr
+
+    # retry 1 次
+    state, stderr_retry = _run_one_pass(task, local_workdir, thread_id, run_index, total)
+    final_pass = _is_pass(state)
+    # 合并 stderr(第一次失败原因为主)
+    return first_pass, final_pass, stderr or stderr_retry
+
+
+def _run_one_pass(
+    task: str, local_workdir: Path, thread_id: str, run_index: int, total: int
+) -> tuple[dict, str]:
+    """单 pass: 跑一次 invoke + 循环 resume。返回 (state, stderr_summary)。"""
+    try:
+        state = _do_one_run(
+            task=task,
+            local_workdir=local_workdir,
+            thread_id=thread_id,
+            run_index=run_index,
+            total=total,
+        )
+    except Exception as e:
+        return ({"__exception__": str(e)}, f"{type(e).__name__}: {str(e)[:300]}")
+    cr = state.get("compile_result") or {}
+    stderr = (cr.get("stderr") or "")[:300] if not cr.get("success") else ""
+    return state, stderr
+
+
+def _is_pass(state: dict) -> bool:
+    """success 判定: compile + precision 两者都 success=True。"""
+    cr = state.get("compile_result") or {}
+    pr = state.get("precision_report") or {}
+    return bool(cr.get("success")) and bool(pr.get("success"))
+
+
+def _do_one_run(task: str, local_workdir: Path, thread_id: str, run_index: int = 0, total: int = 1) -> dict:
+    """U3 + main 共用: 跑一次完整 graph invoke + 循环 resume。"""
+    # 0. 本地工作目录
+    op_dir = local_workdir / "op_add"
+    op_dir.mkdir(parents=True, exist_ok=True)
+    if not SCAFFOLD_DIR.exists():
+        # stress 模式应该已经 copy 过,这里只 single 跑 fallback
+        for item in SCAFFOLD_DIR.iterdir() if SCAFFOLD_DIR.exists() else []:
+            dest = op_dir / item.name
+            if item.is_dir():
+                shutil.copytree(item, dest)
+            else:
+                shutil.copy2(item, dest)
+        if not SCAFFOLD_DIR.exists():
+            print(f"[setup] ⚠️ SCAFFOLD_DIR={SCAFFOLD_DIR} 不存在,从零编译模式")
+    if run_index == 0 or run_index == 1:
+        # 只在 single run 或 stress 第 1 次打印 setup
+        print(f"[setup] thread_id = {thread_id}  (run {run_index}/{total})")
     os.chdir(local_workdir)
 
-    # 1. 真实 NPU + 真实 LLM 接线
-    print("\n[setup] creating real NpuExecutor (SSH → 910B ops_pt)...")
+    # 1. 真实 NPU + 真实 LLM 接线(每 run fresh client)
+    if run_index <= 1:
+        print("\n[setup] creating real NpuExecutor (SSH → 910B ops_pt)...")
     npu = make_npu_executor()
-    print(f"[setup]   is_remote={npu.is_remote} is_containerized={npu.is_containerized}")
-    print("[setup]   probing remote CANN env...")
-    cann_ok = npu.is_remote_cann_available()
-    print(f"[setup]   remote_cann_available={cann_ok}")
-    if not cann_ok:
-        print("[setup] ⚠️  remote CANN not available, compile will fail")
+    if run_index <= 1:
+        print(f"[setup]   is_remote={npu.is_remote} is_containerized={npu.is_containerized}")
+        print("[setup]   probing remote CANN env...")
+        cann_ok = npu.is_remote_cann_available()
+        print(f"[setup]   remote_cann_available={cann_ok}")
+        if not cann_ok:
+            print("[setup] ⚠️  remote CANN not available, compile will fail")
 
-    print("\n[setup] loading config + LLM client...")
-    cfg = load_config()
-    print(f"[setup]   llm.provider={cfg.llm.provider} model={cfg.llm.model}")
-
-    print("\n[setup] creating CheckpointStore...")
+    # 2. CheckpointStore 每 run 独立 db
     ckpt_path = local_workdir / "checkpoints.db"
     if ckpt_path.exists():
         ckpt_path.unlink()
     store = CheckpointStore(ckpt_path)
-    print(f"[setup]   db={ckpt_path}")
+    if run_index <= 1:
+        print(f"[setup]   db={ckpt_path}")
 
-    # 2. 构造 graph(参考工程迁移路径:use_scaffold_codegen=True)
-    print("\n[graph] building new_dev graph (reference migration path)...")
+    # 3. graph
     agent_factory = make_real_agent_factory()
     operator_path_resolver = make_operator_path_resolver(NPU_REMOTE_WORKDIR)
+    operator_name_resolver = lambda s: (s.get("op_info") or {}).get("name", "add_example")
     test_cases_resolver = make_test_cases_resolver()
     phase_cb = make_phase_callback("orchestrator")
 
@@ -364,25 +553,32 @@ def main() -> int:
         ),
         precision_node_factory=lambda: make_real_precision_node(
             executor=npu,
-            test_cases_resolver=test_cases_resolver,
+            operator_path_resolver=operator_path_resolver,
+            operator_name_resolver=operator_name_resolver,
         ),
-        use_scaffold_codegen=True,  # 参考工程迁移:不调 LLM,读 scaffold
+        use_scaffold_codegen=True,
     )
 
-    # 3. invoke + 循环 resume(HITL 全批准)
-    print(f"\n[run] invoking task: {args.task[:80]}...")
-    state = runner.invoke(args.task, thread_id=args.thread_id)
+    # 4. invoke + 循环 resume
+    state = runner.invoke(task, thread_id=thread_id)
     round_n = 0
     while state.get("pending_confirmation") is not None:
         round_n += 1
         pending = state["pending_confirmation"]
-        print(f"\n[run] HITL round {round_n}: {pending.get('phase', '?')} → auto-approve")
-        state = runner.resume(args.thread_id, payload={"approved": True})
+        state = runner.resume(thread_id, payload={"approved": True})
         if round_n > 5:
-            print("[run] ⚠️  too many HITL rounds, break")
             break
 
-    # 4. 报告
+    return state
+
+
+def main_old(args) -> int:
+    """保留原 single run 报告输出(stress 不调此函数)。"""
+    pass
+
+
+def _main_single_report(state: dict, run_index: int = 0, total: int = 1) -> int:
+    """U3 single run 报告(stress 不调此函数)。"""
     print("\n========== e2e result ==========")
     print(f"current_phase: {state.get('current_phase')}")
     print(f"status:        {state.get('__status__') or 'running'}")
