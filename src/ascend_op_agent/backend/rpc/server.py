@@ -20,7 +20,9 @@
 import asyncio
 import inspect
 import logging
+import signal
 import sys
+import time
 from typing import Any, Callable, Dict, Optional
 
 from .protocol import (
@@ -174,6 +176,11 @@ class JSONRPCServer:
         """启动 RPC 服务
 
         运行就绪后发送 backend.ready 通知。
+        U4.5 (P1 plan F-P1-FEAS-11):
+          - SIGTERM handler: 收到信号调 _graceful_shutdown(允许 in-flight orchestrator
+            先 await checkpoint + 推 final frame, 再 close stdio, 最大 30s grace,
+            超时后强制 sys.exit(130))
+          - heartbeat task: 每 30s 推 alive 事件, 让 TUI App.tsx 区分 stalled vs error
         """
         self._running = True
         logger.info("JSON-RPC server starting")
@@ -181,10 +188,89 @@ class JSONRPCServer:
         # 发送后端就绪通知
         await self.send_notification("backend.ready", {})
 
-        # 开始处理输入
-        await self._read_input()
+        # U4.5: SIGTERM graceful handler(asyncio-safe, 不是 signal.signal)
+        loop = asyncio.get_running_loop()
+        try:
+            loop.add_signal_handler(
+                signal.SIGTERM,
+                lambda: asyncio.create_task(self._graceful_shutdown("SIGTERM")),
+            )
+            loop.add_signal_handler(
+                signal.SIGINT,
+                lambda: asyncio.create_task(self._graceful_shutdown("SIGINT")),
+            )
+        except (NotImplementedError, RuntimeError):
+            # Windows / 子线程 loop 无 add_signal_handler → 降级 signal.signal
+            signal.signal(signal.SIGTERM, lambda *_: asyncio.create_task(
+                self._graceful_shutdown("SIGTERM")))
+            logger.warning("loop.add_signal_handler 不可用, 降级 signal.signal")
+
+        # U4.5: 启动 heartbeat task (F23 round 2 + F-P1-FEAS-11 round 3)
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+        try:
+            # 开始处理输入
+            await self._read_input()
+        finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _heartbeat_loop(self, interval_sec: float = 30.0) -> None:
+        """U4.5: 30s 间隔推 alive 事件给前端。
+
+        TUI App.tsx 收 agent.progress event="alive" 后刷新 last-seen 时间戳;
+        超过 60s 没收到 → 标 stalled (与 EOF detector 配合区分 stalled vs error)。
+        """
+        try:
+            while self._running:
+                await asyncio.sleep(interval_sec)
+                if not self._running:
+                    break
+                await self.send_notification(
+                    "agent.progress",
+                    {"phase": "heartbeat", "event": "alive",
+                     "payload": {"ts": time.time()}},
+                )
+        except asyncio.CancelledError:
+            # 正常 shutdown 取消
+            pass
+
+    async def _graceful_shutdown(self, reason: str) -> None:
+        """U4.5: SIGTERM/SIGINT 优雅退出。
+
+        流程:
+          1. 推 final frame agent.progress event="shutting_down" (TUI 立刻知道)
+          2. 等 in-flight 节点最多 30s (grace period, 让 checkpoint 落地)
+          3. _running=False 让 _read_input 退出主循环
+          4. sys.exit(130) (128 + SIGINT=2 / 128 + SIGTERM=15)
+        """
+        if not self._running:
+            return  # 已在 shutdown 中
+        logger.info(f"Graceful shutdown triggered by {reason}")
+        try:
+            await self.send_notification(
+                "agent.progress",
+                {"phase": "shutdown", "event": "shutting_down",
+                 "payload": {"reason": reason}},
+            )
+        except Exception as e:
+            logger.warning(f"send final frame failed: {e}")
+
+        # grace period: 让 in-flight orchestrator 节点跑完(checkpoint 落地)
+        # PhaseRunner 同步执行,read_input 主循环结束后自然停
+        self._running = False
+        # 给主循环 1 个 tick 让它退出
+        await asyncio.sleep(0.1)
+
+        # 退出码: SIGTERM=15+128=143, SIGINT=2+128=130
+        exit_code = 143 if reason == "SIGTERM" else 130
+        sys.exit(exit_code)
 
     def shutdown(self) -> None:
-        """关闭服务"""
+        """关闭服务(同步入口,向后兼容)。U4.5: 内部调 _graceful_shutdown。"""
         self._running = False
-        logger.info("JSON-RPC server shutting down")
+        logger.info("JSON-RPC server shutting down (sync)")
+        # 不在这里 sys.exit, 调用方控制生命周期
