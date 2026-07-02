@@ -71,7 +71,10 @@ SCAFFOLD_DIR = Path("/tmp/e2e_scaffold")
 def make_phase_callback(label: str):
     def _cb(phase: str, status: str, payload=None) -> None:
         ts = time.strftime("%H:%M:%S")
-        print(f"[{ts}] [{label}] phase={phase} status={status} payload_keys={list((payload or {}).keys())}")
+        print(
+            f"[{ts}] [{label}] phase={phase} status={status} payload_keys={list((payload or {}).keys())}"
+        )
+
     return _cb
 
 
@@ -135,6 +138,7 @@ def _extract_files_from_messages(messages: list[dict]) -> list[dict]:
     返回 ``[{"path": ..., "content": ...}, ...]`` —— 与 file_write 抓取同形。
     """
     import re
+
     extracted: list[dict] = []
     seen_paths: set[str] = set()
     # 1) 收集所有 assistant 文本(倒序:最后一条优先)
@@ -172,9 +176,7 @@ def _extract_files_from_messages(messages: list[dict]) -> list[dict]:
             stripped_lines: list[str] = []
             path_line_stripped = False
             for line in lines:
-                if not path_line_stripped and any(
-                    pat.match(line) for pat in path_patterns
-                ):
+                if not path_line_stripped and any(pat.match(line) for pat in path_patterns):
                     path_line_stripped = True
                     continue
                 stripped_lines.append(line)
@@ -182,7 +184,9 @@ def _extract_files_from_messages(messages: list[dict]) -> list[dict]:
             if not content:
                 continue
             seen_paths.add(file_path)
-            extracted.append({"path": file_path, "content": content, "tool": "code_block_extracted"})
+            extracted.append(
+                {"path": file_path, "content": content, "tool": "code_block_extracted"}
+            )
     return extracted
 
 
@@ -268,7 +272,9 @@ def _rsync_to_npu(local_dir: str, remote_dir: str) -> None:
     )
     rc = os.system(tar_cmd)
     if rc != 0:
-        raise RuntimeError(f"rsync(tar stream) failed: rc={rc}, local={local_dir}, remote={remote_dir}")
+        raise RuntimeError(
+            f"rsync(tar stream) failed: rc={rc}, local={local_dir}, remote={remote_dir}"
+        )
 
 
 # ---- precision 测试用例(简单 identity 占位)----
@@ -292,21 +298,34 @@ def make_test_cases_resolver():
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("task", nargs="?", default=(
-        "实现一个 AscendC 算子:对两个 [16, 16] float32 张量做逐元素 add(out = a + b)。"
-        "生成完整可编译的工程,含 op_kernel.cpp、op_host.cpp、CMakeLists.txt 和 build.sh。"
-    ))
+    parser.add_argument(
+        "task",
+        nargs="?",
+        default=(
+            "实现一个 AscendC 算子:对两个 [16, 16] float32 张量做逐元素 add(out = a + b)。"
+            "生成完整可编译的工程,含 op_kernel.cpp、op_host.cpp、CMakeLists.txt 和 build.sh。"
+        ),
+    )
     parser.add_argument("--thread-id", default=f"e2e-{int(time.time())}")
     parser.add_argument("--local-workdir", default=str(LOCAL_WORKDIR))
     # U3: stress mode 累计 dual metric (first-try ≥80% + with-retry ≥95%)
-    parser.add_argument("--stress", type=int, default=None,
-                        help="stress mode: 循环 N 次,统计 first-try + with-retry 双指标"
-                             "(默认 None = single run,无累计)")
-    parser.add_argument("--skip-stress-retry", action="store_true",
-                        help="(debug) stress 模式禁 retry 1 次逻辑(只算 first-try)")
+    parser.add_argument(
+        "--stress",
+        type=int,
+        default=None,
+        help="stress mode: 循环 N 次,统计 first-try + with-retry 双指标"
+        "(默认 None = single run,无累计)",
+    )
+    parser.add_argument(
+        "--skip-stress-retry",
+        action="store_true",
+        help="(debug) stress 模式禁 retry 1 次逻辑(只算 first-try)",
+    )
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.WARNING, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+    )
 
     if args.stress is not None:
         return _run_stress(args)
@@ -376,9 +395,7 @@ def _run_stress(args) -> int:
 
         status = "PASS" if final_pass else "FAIL"
         recovery = "(transient recovered)" if (final_pass and not first_pass) else ""
-        print(
-            f"[U3 stress] run {i}/{n} {status} {recovery}"
-        )
+        print(f"[U3 stress] run {i}/{n} {status} {recovery}")
 
     # 累计报告
     first_try_rate = first_try_pass / n
@@ -496,23 +513,28 @@ def _is_pass(state: dict) -> bool:
     return bool(cr.get("success")) and bool(pr.get("success"))
 
 
-def _do_one_run(task: str, local_workdir: Path, thread_id: str, run_index: int = 0, total: int = 1) -> dict:
+def _do_one_run(
+    task: str, local_workdir: Path, thread_id: str, run_index: int = 0, total: int = 1
+) -> dict:
     """U3 + main 共用: 跑一次完整 graph invoke + 循环 resume。"""
-    # 0. 本地工作目录
+    # 0. 本地工作目录 + scaffold copy
     op_dir = local_workdir / "op_add"
+    if op_dir.exists():
+        shutil.rmtree(op_dir)
     op_dir.mkdir(parents=True, exist_ok=True)
-    if not SCAFFOLD_DIR.exists():
-        # stress 模式应该已经 copy 过,这里只 single 跑 fallback
-        for item in SCAFFOLD_DIR.iterdir() if SCAFFOLD_DIR.exists() else []:
+    if SCAFFOLD_DIR.exists():
+        for item in SCAFFOLD_DIR.iterdir():
             dest = op_dir / item.name
             if item.is_dir():
                 shutil.copytree(item, dest)
             else:
                 shutil.copy2(item, dest)
-        if not SCAFFOLD_DIR.exists():
+        if run_index <= 1:
+            print(f"[setup]   scaffold copied from {SCAFFOLD_DIR} to {op_dir}")
+    else:
+        if run_index <= 1:
             print(f"[setup] ⚠️ SCAFFOLD_DIR={SCAFFOLD_DIR} 不存在,从零编译模式")
-    if run_index == 0 or run_index == 1:
-        # 只在 single run 或 stress 第 1 次打印 setup
+    if run_index <= 1:
         print(f"[setup] thread_id = {thread_id}  (run {run_index}/{total})")
     os.chdir(local_workdir)
 
@@ -586,7 +608,7 @@ def _main_single_report(state: dict, run_index: int = 0, total: int = 1) -> int:
     print(f"code_result:   {bool(state.get('code_result'))}")
     if state.get("code_result"):
         cr = state["code_result"]
-        files = (cr.get("files") or [])
+        files = cr.get("files") or []
         print(f"  files: {len(files)}")
         for f in files[:5]:
             p = f.get("path", "?")
@@ -604,7 +626,9 @@ def _main_single_report(state: dict, run_index: int = 0, total: int = 1) -> int:
     print(f"precision_report: {bool(state.get('precision_report'))}")
     if state.get("precision_report"):
         pr = state["precision_report"]
-        print(f"  total: {pr.get('total_cases')}, passed: {pr.get('passed_cases')}, failed: {pr.get('failed_cases')}")
+        print(
+            f"  total: {pr.get('total_cases')}, passed: {pr.get('passed_cases')}, failed: {pr.get('failed_cases')}"
+        )
     print(f"delivery_mode: {state.get('delivery_mode')}")
     print("================================\n")
     return 0
