@@ -132,17 +132,34 @@ def test_skip_stress_skips_stress_step() -> None:
     assert "[SKIP] e2e_tui" in out
 
 
-def test_e2e_placeholder_auto_skipped() -> None:
-    """e2e_tui placeholder (U4 未实施) 默认自动跳,不需 --skip-e2e。"""
+def test_e2e_tui_runs_when_not_placeholder() -> None:
+    """e2e_tui (U2 vitest 已实施, is_placeholder=False) 默认真跑,不自动跳。
+
+    U2 装好后 e2e_tui step 改为非 placeholder。需显式 --skip-e2e 才跳。
+    """
+    results = [
+        _mock_subprocess_returncode(0, "lint", ""),
+        _mock_subprocess_returncode(0, "tests", ""),
+        _mock_subprocess_returncode(0, "stress", ""),
+        _mock_subprocess_returncode(0, "npm test output", ""),  # e2e_tui 真跑
+    ]
+    rc, out = _run_main(["--skip-stress"], results)
+    # e2e_tui 真跑了 (不自动 SKIP)
+    assert "[RUN] e2e_tui" in out
+    assert "[PASS] e2e_tui" in out
+    assert "placeholder" not in out  # 不再 placeholder
+    assert rc == 0
+
+
+def test_e2e_tui_skipped_with_explicit_flag() -> None:
+    """--skip-e2e 显式跳 e2e_tui step。"""
     results = [
         _mock_subprocess_returncode(0, "lint", ""),
         _mock_subprocess_returncode(0, "tests", ""),
         _mock_subprocess_returncode(0, "stress", ""),
     ]
-    rc, out = _run_main(["--skip-stress"], results)
-    # e2e 占位 → 自动 SKIP (即使没 --skip-e2e)
+    rc, out = _run_main(["--skip-stress", "--skip-e2e"], results)
     assert "[SKIP] e2e_tui" in out
-    assert "placeholder" in out
     assert rc == 0
 
 

@@ -57,12 +57,13 @@ STEPS: list[Step] = [
         # 用 black --check (ruff 在某些 env 未装; black 是 pyproject devDep 必装)
         # 只查最近改动文件(git diff + git stash list 空),避免全 repo 历史欠债阻塞 ship gate
         # 想换 ruff 或全 repo: 改 cmd 即可
+        # bash -c 内每段用 || true 容错(git diff 在浅 clone / 无 HEAD~5 时 exit 非 0)
         cmd=[
             "bash",
             "-c",
-            "FILES=$(git diff --name-only HEAD~5 2>/dev/null; git diff --name-only --cached 2>/dev/null; git diff --name-only 2>/dev/null) && "
-            'PY_FILES=$(echo "$FILES" | grep -E "\\.(py)$" | sort -u) && '
-            "test -z \"$PY_FILES\" || " + PYTHON + " -m black --check --quiet $PY_FILES",
+            "set -o pipefail; "
+            "FILES=$( (git diff --name-only HEAD~5 2>/dev/null; git diff --name-only --cached 2>/dev/null; git diff --name-only 2>/dev/null) | grep -E '\\.(py)$' | sort -u || true); "
+            'test -z "$FILES" || ' + PYTHON + " -m black --check --quiet $FILES",
         ],
         timeout_sec=300,
     ),
@@ -91,12 +92,14 @@ STEPS: list[Step] = [
     ),
     Step(
         name="e2e_tui",
-        # U4 CLI 真 stdin RPC 端到端 (U4 未实施, 占位)
-        cmd=[PYTHON, "scripts/e2e_tui_real.py"],
-        timeout_sec=600,
+        # U2 vitest + ink-testing-library: 前端 Ink render 单测 (mock backend)
+        # U4 真 stdin RPC 端到端 未实施, 但 U2 vitest 已可跑 (2 test pass)
+        # npm --prefix frontend 让 npm 在 frontend/ 目录跑(避免 cwd 切换)
+        cmd=["npm", "--prefix", "frontend", "test"],
+        timeout_sec=120,
         skip_flag="--skip-e2e",
-        env_extra={"PYTHONPATH": "src"},
-        is_placeholder=True,  # U4 未实施, 默认跳
+        env_extra={},
+        is_placeholder=False,  # U2 已实施, npm test 跑通
     ),
 ]
 
