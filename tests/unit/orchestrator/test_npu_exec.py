@@ -858,3 +858,67 @@ def test_run_st_driver_remote_empty_path_returns_failure() -> None:
     assert report["success"] is False
     assert "operator_path is empty" in report["error"]
 
+
+
+# ---- U3 cosmetic compile success (build.sh false negative) ----
+
+
+def test_is_compile_success_return_code_zero() -> None:
+    """return_code=0 → True(正常成功)。"""
+    assert NpuExecutor._is_compile_success(0, "build ok") is True
+
+
+def test_is_compile_success_cosmetic_return_code_one() -> None:
+    """return_code=1 + stdout 含 'successfully created' + '.run' → True(cosmetic pass)。
+
+    build.sh 末尾 CPack check '[ERROR] Package not found or empty' 是已知 false negative。
+    """
+    stdout = (
+        'Self-extractable archive "custom_opp_almalinux_aarch64.run" successfully created.\n'
+        "[ERROR] Package not found or empty\n"
+    )
+    assert NpuExecutor._is_compile_success(1, stdout) is True
+
+
+def test_is_compile_success_real_fail_return_code_one() -> None:
+    """return_code=1 + stdout 无 cosmetic markers → False(真编译失败)。"""
+    assert NpuExecutor._is_compile_success(1, "cmake error: missing header") is False
+
+
+def test_is_compile_success_real_fail_higher_return_code() -> None:
+    """return_code=2 (segfault/timeout) → False(不用 cosmetic check)。"""
+    assert NpuExecutor._is_compile_success(2, "successfully created .run") is False
+
+
+def test_is_compile_success_empty_stdout_return_code_one() -> None:
+    """return_code=1 + stdout 空 → False。"""
+    assert NpuExecutor._is_compile_success(1, "") is False
+
+
+def test_is_compile_success_partial_markers_not_pass() -> None:
+    """只有 'successfully created' 无 '.run' → False(两个 marker 都要匹配)。"""
+    assert NpuExecutor._is_compile_success(1, "successfully created") is False
+    assert NpuExecutor._is_compile_success(1, ".run file here") is False
+
+
+def test_compile_success_mock_subprocess_cosmetic_pass(tmp_path) -> None:
+    """mock subprocess 返 returncode=1 + stdout 含 cosmetic markers → success=True。"""
+    operator_path = tmp_path / "op.cpp"
+    operator_path.write_text("// kernel")
+
+    executor = NpuExecutor()
+    fake_completed = _FakeCompletedProcess(
+        returncode=1,
+        stdout='custom_opp.run successfully created.\n[ERROR] Package not found',
+        stderr="",
+    )
+    with patch(
+        "ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available",
+        return_value=True,
+    ), patch(
+        "ascend_op_agent.orchestrator.npu_exec.subprocess.run",
+        return_value=fake_completed,
+    ):
+        outcome = executor.compile(str(operator_path))
+    assert outcome.success is True  # cosmetic pass
+    assert outcome.return_code == 1  # return_code 仍是 1(透传)

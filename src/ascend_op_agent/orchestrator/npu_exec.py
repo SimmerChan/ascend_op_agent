@@ -84,6 +84,12 @@ class PrecisionMetrics:
 
 
 class NpuExecutor:
+    """封装 CANN 工具链调用。"""
+
+    # Cosmetic check: build.sh 末尾 CPack 后 "[ERROR] Package not found or empty"
+    # 是已知的 false negative(return_code=1 但 .run 产物实际已生成)。
+    # 当 stdout 含 "successfully created" + ".run" → 编译实际成功。
+    _COSMETIC_PASS_MARKERS = ("successfully created", ".run")
     """封装 CANN 工具链调用。
 
     Args:
@@ -131,6 +137,21 @@ class NpuExecutor:
     def is_containerized(self) -> bool:
         """远程是否走 docker exec 进容器。"""
         return bool(self.container_name)
+
+    @staticmethod
+    def _is_compile_success(return_code: int, stdout: str) -> bool:
+        """compile 成功判定(含 cosmetic 修正)。
+
+        - return_code == 0 → True(正常成功)
+        - return_code == 1 且 stdout 含 cosmetic markers → True
+          (build.sh 末尾 CPack check false negative, .run 产物实际已生成)
+        - 其他 → False
+        """
+        if return_code == 0:
+            return True
+        if return_code == 1 and stdout:
+            return all(m in stdout for m in NpuExecutor._COSMETIC_PASS_MARKERS)
+        return False
 
     # ---- 命令包装 ----
 
@@ -252,7 +273,7 @@ class NpuExecutor:
                 timeout=self.compile_timeout,
             )
             return CompileOutcome(
-                success=result.returncode == 0,
+                success=self._is_compile_success(result.returncode, result.stdout or ""),
                 command=command_str,
                 stdout=result.stdout,
                 stderr=result.stderr,
@@ -348,7 +369,7 @@ class NpuExecutor:
             )
 
         return CompileOutcome(
-            success=result.return_code == 0,
+            success=self._is_compile_success(result.return_code, result.stdout or ""),
             command=command_str,
             stdout=result.stdout,
             stderr=result.stderr,
