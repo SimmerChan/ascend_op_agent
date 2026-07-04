@@ -130,20 +130,49 @@ class OpenAIAdapter(BaseLLMAdapter):
                     raise AuthenticationError(f"Invalid API key: {response.text}")
 
                 else:
-                    raise Exception(f"OpenAI API error {response.status_code}: {response.text}")
+                    # 解析 JSON error body(智谱 GLM/Minimax 等返回结构化错误)
+                    try:
+                        err_body = response.json()
+                        err_msg = (
+                            err_body.get("error", {}).get("message")
+                            or err_body.get("message")
+                            or response.text[:300]
+                        )
+                    except (json.JSONDecodeError, ValueError):
+                        err_msg = response.text[:300]
+                    last_error = f"HTTP {response.status_code}: {err_msg}"
+                    # quota/rate-limit 类错误不重试(重试也是浪费)
+                    if response.status_code in (402, 403) or "余额不足" in err_msg or "用量上限" in err_msg:
+                        raise Exception(
+                            f"OpenAI API quota/rate limit (no retry): {last_error}"
+                        )
+                    if attempt < self.max_retries - 1:
+                        logger.warning(f"HTTP {response.status_code}: {err_msg}, attempt {attempt + 1}/{self.max_retries}")
+                        time.sleep(1)
+                        continue
+                    raise Exception(f"OpenAI API error {last_error}")
 
-            except httpx.TimeoutException:
-                logger.warning(f"Request timeout, attempt {attempt + 1}/{self.max_retries}")
-                last_error = "Request timed out"
+            except httpx.TimeoutException as e:
+                last_error = f"TimeoutException: {e}"
+                logger.warning(f"Request timeout ({e}), attempt {attempt + 1}/{self.max_retries}")
                 if attempt < self.max_retries - 1:
                     time.sleep(1)
                 continue
 
             except httpx.RequestError as e:
-                last_error = str(e)
-                logger.warning(f"Request error: {e}, attempt {attempt + 1}/{self.max_retries}")
+                last_error = f"{type(e).__name__}: {e}"
+                logger.warning(f"Request error: {type(e).__name__}: {e}, attempt {attempt + 1}/{self.max_retries}")
                 if attempt < self.max_retries - 1:
                     time.sleep(1)
                 continue
 
-        raise Exception(f"OpenAI request failed after {self.max_retries} attempts: {last_error}")
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {e}"
+                logger.warning(f"Unexpected error: {type(e).__name__}: {e}, attempt {attempt + 1}/{self.max_retries}")
+                if attempt < self.max_retries - 1:
+                    time.sleep(1)
+                continue
+
+        raise Exception(
+            f"OpenAI request failed after {self.max_retries} attempts: {last_error}"
+        )

@@ -147,7 +147,13 @@ class AnthropicAdapter(BaseLLMAdapter):
 
                 raise Exception("No text or tool_use block in response")
 
-            except anthropic.RateLimitError:
+            except anthropic.RateLimitError as e:
+                # 检查是 transient rate limit 还是 quota exhausted
+                err_str = str(e)
+                if "用量上限" in err_str or "余额不足" in err_str or "quota" in err_str.lower():
+                    raise Exception(
+                        f"Anthropic API quota exhausted (no retry): {err_str}"
+                    ) from e
                 wait_time = (attempt + 1) * 2
                 logger.warning(f"Anthropic rate limit, waiting {wait_time}s before retry")
                 time.sleep(wait_time)
@@ -157,10 +163,15 @@ class AnthropicAdapter(BaseLLMAdapter):
                 raise AuthenticationError(f"Invalid API key")
 
             except Exception as e:
-                last_error = str(e)
-                logger.warning(f"Anthropic request error: {e}, attempt {attempt + 1}/{self.max_retries}")
+                last_error = f"{type(e).__name__}: {e}"
+                logger.warning(
+                    f"Anthropic request error: {type(e).__name__}: {e}, "
+                    f"attempt {attempt + 1}/{self.max_retries}"
+                )
                 if attempt < self.max_retries - 1:
                     time.sleep(1)
                 continue
 
-        raise Exception(f"Anthropic request failed after {self.max_retries} attempts: {last_error}")
+        raise Exception(
+            f"Anthropic request failed after {self.max_retries} attempts: {last_error}"
+        )
