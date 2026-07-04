@@ -189,7 +189,9 @@ class CheckpointStore:
 
         try:
             # ALTER ADD COLUMN = atomic in SQLite
-            c.execute("ALTER TABLE checkpoints ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 2")
+            c.execute(
+                "ALTER TABLE checkpoints ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 2"
+            )
             c.execute("ALTER TABLE checkpoints ADD COLUMN skill_loads_json TEXT DEFAULT '[]'")
             # 移除旧的 generated column(SQLite 3.35+ 支持 STORED,降级时不重写)
             # 跳过:让老 v1 db 停留在 fallback schema(skill_loads_json 由 app 写)
@@ -276,7 +278,8 @@ class CheckpointStore:
         if "skill_loads" not in state:
             state["skill_loads"] = []
             self.save(
-                thread_id, state,
+                thread_id,
+                state,
                 current_phase=None,
                 status=STATUS_RUNNING,
                 schema_version=SCHEMA_VERSION,
@@ -295,7 +298,8 @@ class CheckpointStore:
         if "skill_loads" in state:
             del state["skill_loads"]
         self.save(
-            thread_id, state,
+            thread_id,
+            state,
             current_phase=None,
             status=STATUS_RUNNING,
             schema_version=SCHEMA_VERSION_MIN,
@@ -312,14 +316,14 @@ class CheckpointStore:
             return False
         latest_backup = backups[-1]
         # 备份当前 v2 db(允许 reverse-rollforward)
-        v2_backup = self.db_path.parent / f"{self.db_path.name}.v2.pre-rollback-{int(time.time())}.db"
+        v2_backup = (
+            self.db_path.parent / f"{self.db_path.name}.v2.pre-rollback-{int(time.time())}.db"
+        )
         shutil.copy2(self.db_path, v2_backup)
         shutil.copy2(latest_backup, self.db_path)
         return True
 
-    def _quarantine_corrupt_row(
-        self, thread_id: str, raw_state: str, error: Exception
-    ) -> None:
+    def _quarantine_corrupt_row(self, thread_id: str, raw_state: str, error: Exception) -> None:
         """P1: 把坏 row 复制到 .quarantine/{thread_id}-{ts}.json,带 LRU cap 100。"""
         quarantine_dir = self.db_path.parent / ".quarantine"
         quarantine_dir.mkdir(exist_ok=True)
@@ -476,9 +480,7 @@ class CheckpointStore:
                 raise
         return sha256
 
-    def get_artifact(
-        self, thread_id: str, phase: str, key: str
-    ) -> Optional[Artifact]:
+    def get_artifact(self, thread_id: str, phase: str, key: str) -> Optional[Artifact]:
         with self._conn() as c:
             row = c.execute(
                 """
@@ -499,9 +501,7 @@ class CheckpointStore:
             updated_at=row["updated_at"],
         )
 
-    def has_artifact_with_sha(
-        self, thread_id: str, phase: str, key: str, sha256: str
-    ) -> bool:
+    def has_artifact_with_sha(self, thread_id: str, phase: str, key: str, sha256: str) -> bool:
         """幂等 gate:相同 sha256 的 artifact 是否已存在。
 
         LLM 节点 resume 时:若 sha 已存在则跳过重生成(避免覆盖前次产物)。

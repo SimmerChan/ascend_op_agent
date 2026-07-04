@@ -72,12 +72,22 @@ def test_stress_clean_pass_exit_zero(capsys: pytest.CaptureFixture[str]) -> None
     """first_try=100% AND final=100% AND eq → exit 0 (clean)。"""
     # mock _do_one_run_stress 返全 pass
     with patch.object(
-        e2e, "_do_one_run_stress",
+        e2e,
+        "_do_one_run_stress",
         return_value=(True, True, ""),  # (first_pass, final_pass, stderr)
     ):
         exit_code = e2e._run_stress(
-            type("A", (), {"stress": 5, "task": "test", "local_workdir": "/tmp/x",
-                           "skip_stress_retry": False, "thread_id": "t1"})()
+            type(
+                "A",
+                (),
+                {
+                    "stress": 5,
+                    "task": "test",
+                    "local_workdir": "/tmp/x",
+                    "skip_stress_retry": False,
+                    "thread_id": "t1",
+                },
+            )()
         )
     assert exit_code == 0
     out = capsys.readouterr().out
@@ -102,8 +112,17 @@ def test_stress_transient_recovered_exit_zero_with_warn(
     ]
     with patch.object(e2e, "_do_one_run_stress", side_effect=pass_seq):
         exit_code = e2e._run_stress(
-            type("A", (), {"stress": 5, "task": "test", "local_workdir": "/tmp/x",
-                           "skip_stress_retry": False, "thread_id": "t1"})()
+            type(
+                "A",
+                (),
+                {
+                    "stress": 5,
+                    "task": "test",
+                    "local_workdir": "/tmp/x",
+                    "skip_stress_retry": False,
+                    "thread_id": "t1",
+                },
+            )()
         )
     # first_try=4/5=80%, final=5/5=100% → transient recovered
     assert exit_code == 0
@@ -124,8 +143,17 @@ def test_stress_low_first_try_real_fail_exit_one(
     ]
     with patch.object(e2e, "_do_one_run_stress", side_effect=pass_seq):
         exit_code = e2e._run_stress(
-            type("A", (), {"stress": 5, "task": "test", "local_workdir": "/tmp/x",
-                           "skip_stress_retry": False, "thread_id": "t1"})()
+            type(
+                "A",
+                (),
+                {
+                    "stress": 5,
+                    "task": "test",
+                    "local_workdir": "/tmp/x",
+                    "skip_stress_retry": False,
+                    "thread_id": "t1",
+                },
+            )()
         )
     assert exit_code == 1
     out = capsys.readouterr().out
@@ -146,8 +174,17 @@ def test_stress_low_final_real_fail_exit_one(
     ]
     with patch.object(e2e, "_do_one_run_stress", side_effect=pass_seq):
         exit_code = e2e._run_stress(
-            type("A", (), {"stress": 5, "task": "test", "local_workdir": "/tmp/x",
-                           "skip_stress_retry": False, "thread_id": "t1"})()
+            type(
+                "A",
+                (),
+                {
+                    "stress": 5,
+                    "task": "test",
+                    "local_workdir": "/tmp/x",
+                    "skip_stress_retry": False,
+                    "thread_id": "t1",
+                },
+            )()
         )
     assert exit_code == 1  # final=4/5=80% < 95%
 
@@ -165,8 +202,17 @@ def test_stress_report_shows_failure_summaries(
     ]
     with patch.object(e2e, "_do_one_run_stress", side_effect=pass_seq):
         e2e._run_stress(
-            type("A", (), {"stress": 5, "task": "test", "local_workdir": "/tmp/x",
-                           "skip_stress_retry": False, "thread_id": "t1"})()
+            type(
+                "A",
+                (),
+                {
+                    "stress": 5,
+                    "task": "test",
+                    "local_workdir": "/tmp/x",
+                    "skip_stress_retry": False,
+                    "thread_id": "t1",
+                },
+            )()
         )
     out = capsys.readouterr().out
     # 失败摘要只显示前 3 个
@@ -198,8 +244,17 @@ def test_stress_exception_treated_as_fail(
 
     with patch.object(e2e, "_do_one_run_stress", side_effect=_side_effect):
         exit_code = e2e._run_stress(
-            type("A", (), {"stress": 5, "task": "test", "local_workdir": "/tmp/x",
-                           "skip_stress_retry": False, "thread_id": "t1"})()
+            type(
+                "A",
+                (),
+                {
+                    "stress": 5,
+                    "task": "test",
+                    "local_workdir": "/tmp/x",
+                    "skip_stress_retry": False,
+                    "thread_id": "t1",
+                },
+            )()
         )
     # 4/5 final pass = 80% < 95% → REAL FAIL
     assert exit_code == 1
@@ -211,15 +266,33 @@ def test_stress_n_eq_1_threshold_boundary() -> None:
     """N=1 boundary:1 次 pass=clean, 1 次 fail=real fail。"""
     with patch.object(e2e, "_do_one_run_stress", return_value=(True, True, "")):
         rc_pass = e2e._run_stress(
-            type("A", (), {"stress": 1, "task": "test", "local_workdir": "/tmp/x",
-                           "skip_stress_retry": False, "thread_id": "t1"})()
+            type(
+                "A",
+                (),
+                {
+                    "stress": 1,
+                    "task": "test",
+                    "local_workdir": "/tmp/x",
+                    "skip_stress_retry": False,
+                    "thread_id": "t1",
+                },
+            )()
         )
     assert rc_pass == 0  # 1/1=100% both → clean
 
     with patch.object(e2e, "_do_one_run_stress", return_value=(False, False, "fail")):
         rc_fail = e2e._run_stress(
-            type("A", (), {"stress": 1, "task": "test", "local_workdir": "/tmp/x",
-                           "skip_stress_retry": False, "thread_id": "t1"})()
+            type(
+                "A",
+                (),
+                {
+                    "stress": 1,
+                    "task": "test",
+                    "local_workdir": "/tmp/x",
+                    "skip_stress_retry": False,
+                    "thread_id": "t1",
+                },
+            )()
         )
     assert rc_fail == 1  # 0/1=0% → REAL FAIL
 

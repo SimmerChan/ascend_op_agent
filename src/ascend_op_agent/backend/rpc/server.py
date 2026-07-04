@@ -114,9 +114,7 @@ class JSONRPCServer:
 
         if handler is None:
             error_msg = self._protocol.build_error(
-                request.id,
-                self._protocol.METHOD_NOT_FOUND_CODE,
-                f"Method not found: {method_name}"
+                request.id, self._protocol.METHOD_NOT_FOUND_CODE, f"Method not found: {method_name}"
             )
             lock = await self._ensure_lock()
             async with lock:
@@ -131,19 +129,14 @@ class JSONRPCServer:
             else:
                 # 同步函数：在线程池中执行
                 loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: handler(**params)
-                )
+                result = await loop.run_in_executor(None, lambda: handler(**params))
 
             # 构建成功响应
             response = self._protocol.build_response(request.id, result)
         except Exception as e:
             logger.error(f"Error handling {method_name}: {e}")
             response = self._protocol.build_error(
-                request.id,
-                self._protocol.INTERNAL_ERROR_CODE,
-                str(e)
+                request.id, self._protocol.INTERNAL_ERROR_CODE, str(e)
             )
 
         lock = await self._ensure_lock()
@@ -201,8 +194,9 @@ class JSONRPCServer:
             )
         except (NotImplementedError, RuntimeError):
             # Windows / 子线程 loop 无 add_signal_handler → 降级 signal.signal
-            signal.signal(signal.SIGTERM, lambda *_: asyncio.create_task(
-                self._graceful_shutdown("SIGTERM")))
+            signal.signal(
+                signal.SIGTERM, lambda *_: asyncio.create_task(self._graceful_shutdown("SIGTERM"))
+            )
             logger.warning("loop.add_signal_handler 不可用, 降级 signal.signal")
 
         # U4.5: 启动 heartbeat task (F23 round 2 + F-P1-FEAS-11 round 3)
@@ -231,8 +225,7 @@ class JSONRPCServer:
                     break
                 await self.send_notification(
                     "agent.progress",
-                    {"phase": "heartbeat", "event": "alive",
-                     "payload": {"ts": time.time()}},
+                    {"phase": "heartbeat", "event": "alive", "payload": {"ts": time.time()}},
                 )
         except asyncio.CancelledError:
             # 正常 shutdown 取消
@@ -253,8 +246,7 @@ class JSONRPCServer:
         try:
             await self.send_notification(
                 "agent.progress",
-                {"phase": "shutdown", "event": "shutting_down",
-                 "payload": {"reason": reason}},
+                {"phase": "shutdown", "event": "shutting_down", "payload": {"reason": reason}},
             )
         except Exception as e:
             logger.warning(f"send final frame failed: {e}")

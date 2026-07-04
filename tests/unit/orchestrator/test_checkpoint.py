@@ -272,9 +272,12 @@ def test_init_is_idempotent(tmp_path: Path) -> None:
 def test_init_schema_raises_on_old_sqlite(tmp_path):
     """U1: libsqlite3 <3.31 启动期返 CheckpointSchemaError,不静默 fallback。"""
     from ascend_op_agent.orchestrator.checkpoint import (
-        CheckpointSchemaError, CheckpointStore, LIBSQLITE3_MIN_FOR_STORED_COL,
+        CheckpointSchemaError,
+        CheckpointStore,
+        LIBSQLITE3_MIN_FOR_STORED_COL,
     )
     import sqlite3 as _sqlite3
+
     if _sqlite3.sqlite_version_info >= LIBSQLITE3_MIN_FOR_STORED_COL:
         pytest.skip("系统 libsqlite3 ≥3.31, 此测跳过")
     with pytest.raises(CheckpointSchemaError, match="< 3.31"):
@@ -286,18 +289,26 @@ def test_v1_to_v2_forward_migration_creates_backup(tmp_path):
     自动 backup `.v1.backup-{ts}.db` + ALTER ADD COLUMN。
     """
     from ascend_op_agent.orchestrator.checkpoint import (
-        CheckpointStore, SCHEMA_VERSION, SCHEMA_VERSION_MIN,
+        CheckpointStore,
+        SCHEMA_VERSION,
+        SCHEMA_VERSION_MIN,
     )
+
     db = tmp_path / "ck.db"
     # 模拟 v1 老 db(无 schema_version / skill_loads_json 列)
     import sqlite3
+
     with sqlite3.connect(str(db)) as c:
-        c.execute("""CREATE TABLE checkpoints (
+        c.execute(
+            """CREATE TABLE checkpoints (
             thread_id TEXT PRIMARY KEY, current_phase TEXT,
             state_json TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL
-        )""")
-        c.execute("INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?)",
-                  ("t1", "analyze", '{"messages": [], "code_result": {}}', "done", "2026-07-01"))
+        )"""
+        )
+        c.execute(
+            "INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?)",
+            ("t1", "analyze", '{"messages": [], "code_result": {}}', "done", "2026-07-01"),
+        )
         c.commit()
 
     # 启动触发 v1→v2 migration
@@ -312,6 +323,7 @@ def test_v1_to_v2_forward_migration_creates_backup(tmp_path):
     assert len(backups) == 1, f"v1 backup 应恰好 1 个,实际 {len(backups)}"
     # 验证 backup 是真 v1(无 schema_version 列)
     import sqlite3 as _sq
+
     with _sq.connect(str(backups[0])) as c:
         bcols = [r[1] for r in c.execute("PRAGMA table_info(checkpoints)").fetchall()]
     assert "schema_version" not in bcols
@@ -326,8 +338,11 @@ def test_v1_to_v2_forward_migration_creates_backup(tmp_path):
 def test_v2_to_v1_rollback_strips_skill_loads(tmp_path):
     """U1: v2 row → rollback_to_v1() 剥 skill_loads 字段 + save 为 schema_version=1。"""
     from ascend_op_agent.orchestrator.checkpoint import (
-        CheckpointStore, SCHEMA_VERSION, SCHEMA_VERSION_MIN,
+        CheckpointStore,
+        SCHEMA_VERSION,
+        SCHEMA_VERSION_MIN,
     )
+
     store = CheckpointStore(tmp_path / "ck.db")
     # 写 v2 状态(含 skill_loads)
     v2_state = {
@@ -349,6 +364,7 @@ def test_v2_to_v1_rollback_strips_skill_loads(tmp_path):
 def test_v1_v2_round_trip_preserves_messages(tmp_path):
     """U1: v1 → save 升级 → rollback 再 v1 → v2 不丢 messages。"""
     from ascend_op_agent.orchestrator.checkpoint import CheckpointStore
+
     store = CheckpointStore(tmp_path / "ck.db")
     v1 = {"messages": [{"role": "user", "content": "hello"}]}
     # v1 save(无 skill_loads)→ load_and_migrate_checkpoint 升级为 v2
@@ -368,20 +384,27 @@ def test_corrupt_state_json_raises_checkpoint_corrupt_error(tmp_path):
     不再静默 zero 化。
     """
     from ascend_op_agent.orchestrator.checkpoint import (
-        CheckpointCorruptError, CheckpointStore,
+        CheckpointCorruptError,
+        CheckpointStore,
     )
+
     db = tmp_path / "ck.db"
     import sqlite3
+
     # 写 v2 db + 故意坏的 state_json
     with sqlite3.connect(str(db)) as c:
-        c.executescript("""
+        c.executescript(
+            """
             CREATE TABLE checkpoints (
                 thread_id TEXT PRIMARY KEY, current_phase TEXT,
                 state_json TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 2,
                 skill_loads_json TEXT, status TEXT NOT NULL, updated_at TEXT NOT NULL
-            )""")
-        c.execute("INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?, ?, ?)",
-                  ("bad", None, "not valid json {{{", 2, "[]", "done", "2026-07-01"))
+            )"""
+        )
+        c.execute(
+            "INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("bad", None, "not valid json {{{", 2, "[]", "done", "2026-07-01"),
+        )
         c.commit()
 
     store = CheckpointStore(db)
@@ -399,14 +422,18 @@ def test_corrupt_state_json_raises_checkpoint_corrupt_error(tmp_path):
 def test_quarantine_lru_cap_evicts_oldest(tmp_path):
     """U1: quarantine hard cap 100 + LRU-by-mtime 淘汰最旧。"""
     from ascend_op_agent.orchestrator.checkpoint import (
-        CheckpointCorruptError, CheckpointStore, QUARANTINE_HARD_CAP,
+        CheckpointCorruptError,
+        CheckpointStore,
+        QUARANTINE_HARD_CAP,
     )
+
     store = CheckpointStore(tmp_path / "ck.db")
     qdir = tmp_path / ".quarantine"
 
     # 触发 105 次 corrupt(每个都用新 thread_id)
     db = tmp_path / "ck.db"
     import sqlite3
+
     for i in range(QUARANTINE_HARD_CAP + 5):
         try:
             store.read_checkpoint(f"t{i}")
@@ -414,7 +441,9 @@ def test_quarantine_lru_cap_evicts_oldest(tmp_path):
             pass
 
     files = list(qdir.glob("*.json"))
-    assert len(files) <= QUARANTINE_HARD_CAP, f"quarantine 超 cap: {len(files)} > {QUARANTINE_HARD_CAP}"
+    assert (
+        len(files) <= QUARANTINE_HARD_CAP
+    ), f"quarantine 超 cap: {len(files)} > {QUARANTINE_HARD_CAP}"
 
 
 def test_path_config_multi_db_isolated(tmp_path):
@@ -445,12 +474,16 @@ def test_full_rollback_to_v1_db_restores_from_backup(tmp_path):
     # 启动 v1 → v2 migration(自动建 backup)
     db = tmp_path / "ck.db"
     with sqlite3.connect(str(db)) as c:
-        c.execute("""CREATE TABLE checkpoints (
+        c.execute(
+            """CREATE TABLE checkpoints (
             thread_id TEXT PRIMARY KEY, current_phase TEXT,
             state_json TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL
-        )""")
-        c.execute("INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?)",
-                  ("t1", "analyze", '{"v": 1}', "done", "2026-07-01"))
+        )"""
+        )
+        c.execute(
+            "INSERT INTO checkpoints VALUES (?, ?, ?, ?, ?)",
+            ("t1", "analyze", '{"v": 1}', "done", "2026-07-01"),
+        )
         c.commit()
     store = CheckpointStore(db)
     # migration 跑过了,backup 文件已建
@@ -466,6 +499,8 @@ def test_full_rollback_to_v1_db_restores_from_backup(tmp_path):
     with sqlite3.connect(str(db)) as c:
         cols = [r[1] for r in c.execute("PRAGMA table_info(checkpoints)").fetchall()]
         assert "schema_version" not in cols, f"v1 rollback 后不应有 schema_version 列: {cols}"
-        row = c.execute("SELECT state_json FROM checkpoints WHERE thread_id = ?", ("t1",)).fetchone()
+        row = c.execute(
+            "SELECT state_json FROM checkpoints WHERE thread_id = ?", ("t1",)
+        ).fetchone()
     assert row is not None
     assert '"v": 2' not in row[0]  # v2 data 已丢失(rollback 恢复 v1 旧 data)

@@ -22,6 +22,7 @@ import pytest
 def _make_server():
     """构造 JSONRPCServer (绕过真实 stdio)。"""
     from ascend_op_agent.backend.rpc.server import JSONRPCServer
+
     s = JSONRPCServer()
     s.send_notification = AsyncMock()
     return s
@@ -112,8 +113,10 @@ def test_graceful_shutdown_pushes_final_frame_and_exits_143() -> None:
     s._running = True
 
     async def _runner():
-        with patch("ascend_op_agent.backend.rpc.server.sys.exit") as mock_exit, \
-             patch("ascend_op_agent.backend.rpc.server.asyncio.sleep", AsyncMock()):
+        with (
+            patch("ascend_op_agent.backend.rpc.server.sys.exit") as mock_exit,
+            patch("ascend_op_agent.backend.rpc.server.asyncio.sleep", AsyncMock()),
+        ):
             await s._graceful_shutdown("SIGTERM")
             return mock_exit
 
@@ -134,8 +137,10 @@ def test_graceful_shutdown_sigint_exits_130() -> None:
     s._running = True
 
     async def _runner():
-        with patch("ascend_op_agent.backend.rpc.server.sys.exit") as mock_exit, \
-             patch("ascend_op_agent.backend.rpc.server.asyncio.sleep", AsyncMock()):
+        with (
+            patch("ascend_op_agent.backend.rpc.server.sys.exit") as mock_exit,
+            patch("ascend_op_agent.backend.rpc.server.asyncio.sleep", AsyncMock()),
+        ):
             await s._graceful_shutdown("SIGINT")
             return mock_exit
 
@@ -165,8 +170,10 @@ def test_graceful_shutdown_continues_even_if_send_notification_fails() -> None:
     s.send_notification = AsyncMock(side_effect=RuntimeError("stdio closed"))
 
     async def _runner():
-        with patch("ascend_op_agent.backend.rpc.server.sys.exit") as mock_exit, \
-             patch("ascend_op_agent.backend.rpc.server.asyncio.sleep", AsyncMock()):
+        with (
+            patch("ascend_op_agent.backend.rpc.server.sys.exit") as mock_exit,
+            patch("ascend_op_agent.backend.rpc.server.asyncio.sleep", AsyncMock()),
+        ):
             await s._graceful_shutdown("SIGTERM")
             return mock_exit
 
@@ -187,9 +194,13 @@ def test_run_registers_sigterm_handler() -> None:
     fake_loop.add_signal_handler = MagicMock()
 
     async def _runner():
-        with patch("ascend_op_agent.backend.rpc.server.asyncio.get_running_loop",
-                   return_value=fake_loop), \
-             patch("ascend_op_agent.backend.rpc.server.asyncio.sleep", AsyncMock()):
+        with (
+            patch(
+                "ascend_op_agent.backend.rpc.server.asyncio.get_running_loop",
+                return_value=fake_loop,
+            ),
+            patch("ascend_op_agent.backend.rpc.server.asyncio.sleep", AsyncMock()),
+        ):
             try:
                 await asyncio.wait_for(s.run(), timeout=0.2)
             except (asyncio.TimeoutError, asyncio.CancelledError):
