@@ -18,6 +18,54 @@ limitations under the License.
 
 所有值得注意的更改都将记录在此文件中。
 
+---
+
+## [v1.0.0] — 2026-07-06
+
+**Ascend Op Agent v1.0** — 算子迁移/开发运行时引擎。自研轻量状态机编排器 + cannbot-skills 知识层 + 910B 真编译 + ST 驱动真算子验证。
+
+### 核心成就
+
+| 维度 | 结果 |
+|------|------|
+| P0 plan（14U + 9U gap 修复） | ✅ 全完成，5 gap all satisfied |
+| P1 plan（8U） | ✅ 全完成（schema v2 + vitest + stress 100% + CLI 端到端 + SIGTERM + ship gate） |
+| Ship gate | ✅ 4 步全过 → 🚢 SHIP READY |
+| N=20 stress | ✅ 20/20 = 100% CLEAN PASS（Minimax） |
+| Commit 总数 | 80+ commits（2026-06-23 → 2026-07-06，14 天） |
+| 测试总数 | 426 passed + 4 skipped + 2 vitest |
+
+### 新增功能
+
+- **自研 PhaseRunner 状态机**：14 节点顺序+条件+HITL（entry → analyze → design(HITL) → codegen → review_fix → compile → precision → delivery_mode → framework_adapt → done）
+- **CheckpointStore**：SQLite v2 schema + v1↔v2 migration + rollback + quarantine LRU + WAL + busy_timeout
+- **NpuExecutor**：SSH → docker exec ops_pt → build.sh --soc=ascend910b + ST 驱动（NPU 跑 + CPU golden + MERE/MARE）
+- **compile cosmetic fix**：build.sh 末尾 `[ERROR] Package not found` false negative → `_is_compile_success` 检测 `.run successfully created`
+- **tool_calls_log side-channel**：LLM `file_write` 实际路径可达编排器（Gap 1 修复）
+- **fix_loop messages 累积**：`apply_update` module-level reducer 修跨轮 conversation 丢失（Gap 3 修复）
+- **SkillUsageRegistry**：signal-1 跟踪 cannbot skill 加载/使用 + phase_callback 推前端
+- **ship_ready.py**：单一 boolean gate（lint + unit_test + stress + e2e_tui → 0/1 exit）
+- **LLM 多 Provider**：Minimax（anthropic 协议，20/20 stress）+ 智谱 GLM-5.2（OpenAI 兼容 + coding plan token）
+- **adapter 错误改进**：`None` → `type+message` + quota 快速失败不重试
+- **backend lazy orchestrator**：普通 CLI `run` 不带 op: 启动快 ~3s
+- **SIGTERM graceful + heartbeat**：`loop.add_signal_handler` + 30s alive event
+- **frontend vitest + ink-testing-library**：2 Ink render test + parseProgress 8 单测
+
+### 技术债清理
+
+| 项 | 修复 |
+|----|------|
+| D1 log noise | `send_notification_sync` fire-and-forget `TimeoutError` 不 log |
+| D2 lazy orchestrator | 普通 CLI `run` 不实例化 Orchestrator（省 ~3s） |
+| D3 pytest-asyncio | test_server.py 15 async 测从 skip 变 pass |
+
+### 已知限制
+
+- GLM-5.2 stress：推理模型连续 API timeout（1/20 = 5%），不适合 N=20
+- Minimax quota：N=20 消耗当天额度（60-80 次 LLM 调用）
+- A5/950 未验证：当前仅 910B
+- 模型级批量迁移（路径 A）：P2 未实施
+
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
