@@ -42,7 +42,8 @@ _server: JSONRPCServer | None = None
 _agent_wrapper: AgentAsyncWrapper | None = None
 _session_manager = None
 _checkpoint_store = None  # U7: CheckpointStore 实例(op.* RPC 用)
-_orchestrator = None  # U7: Orchestrator 实例(U9 才有真实 graph,U7 期间为 None)
+_orchestrator = None  # U7: Orchestrator 实例(lazy-init, op: 前缀首次触发时才建)
+_orchestrator_build_args = None  # D2 技术债: lazy-init 用, 保存 _build_orchestrator 组件
 
 
 def _setup_logging() -> None:
@@ -70,6 +71,25 @@ def _consume_stderr(stderr_file, log_path: str) -> None:
         logging.error(f"Error consuming stderr: {e}")
 
 
+def _get_orchestrator():
+    """D2 技术债: lazy-init Orchestrator。
+
+    普通 CLI run 不带 op: 前缀时永远不实例化, 省掉 SSH + cannbot + scaffold 检测
+    的启动开销 (~3s)。op: 前缀首次触发时才调 _build_orchestrator。
+    失败优雅: NpuExecutor SSH / cannbot import 失败时返 None (op: 路由报错)。
+    """
+    global _orchestrator
+    if _orchestrator is not None:
+        return _orchestrator
+    if _orchestrator_build_args is None:
+        return None
+    logging.info("Orchestrator lazy-init triggered (op: prefix) — building PhaseRunner...")
+    _orchestrator = _build_orchestrator(**_orchestrator_build_args)
+    if _orchestrator is not None:
+        logging.info("Orchestrator initialized (op: prefix → PhaseRunner path)")
+    return _orchestrator
+
+
 async def _handle_run_conversation(user_input: str) -> AgentResponse:
     """处理 agent.run 请求
 
@@ -89,12 +109,13 @@ async def _handle_run_conversation(user_input: str) -> AgentResponse:
             data={"message": "Agent not initialized"}
         )
 
-    # U6: op: 前缀路由 → Orchestrator
-    if _orchestrator is not None and isinstance(user_input, str) and user_input.startswith("op:"):
+    # U6: op: 前缀路由 → Orchestrator (D2 lazy-init)
+    orchestrator = _get_orchestrator() if isinstance(user_input, str) and user_input.startswith("op:") else None
+    if orchestrator is not None:
         import uuid as _uuid
         thread_id = _uuid.uuid4().hex[:12]
         try:
-            state = _orchestrator.invoke(user_input, thread_id=thread_id)
+            state = orchestrator.invoke(user_input, thread_id=thread_id)
         except Exception as e:
             logging.exception(f"op.run orchestrator.invoke failed (thread={thread_id})")
             return AgentResponse(
@@ -257,7 +278,8 @@ async def _handle_session_resume_with_input(
         AgentResponse:``status="completed"/"interrupted"/"failed"``
         + ``data={"current_phase": ..., "pending_confirmation": ...}``
     """
-    if _orchestrator is None:
+    orchestrator = _get_orchestrator()
+    if orchestrator is None:
         return AgentResponse(
             status="error",
             response=None,
@@ -269,7 +291,7 @@ async def _handle_session_resume_with_input(
             },
         )
     try:
-        state = _orchestrator.resume(thread_id, payload=payload)
+        state = orchestrator.resume(thread_id, payload=payload)
     except Exception as e:
         logging.exception(f"op.resume failed for thread={thread_id}")
         return AgentResponse(
@@ -354,20 +376,20 @@ def _setup_agent(config_path: str | None = None) -> None:
         f"(auto_resume={config.checkpoint.auto_resume})"
     )
 
-    # U6: 实例化 Orchestrator(_orchestrator 从 None 转为 PhaseRunner)。
-    # 输入前缀 ``op:`` 触发新 path(算子开发任务);TUI 老输入仍走 _agent_wrapper。
-    # 不重建 _agent_wrapper,不打破 TUI 兼容。
-    global _orchestrator
-    _orchestrator = _build_orchestrator(
-        config=config,
-        tool_registry=tool_registry,
-        prompt_builder=prompt_builder,
-        context_engine=context_engine,
-        memory_store=memory_store,
-        checkpoint_store=_checkpoint_store,
-    )
-    if _orchestrator is not None:
-        logging.info("Orchestrator initialized (op: prefix → PhaseRunner path)")
+    # U6: Orchestrator lazy 初始化(D2 技术债)。
+    # 之前 _setup_agent 启动时 eager 实例化, 普通用户跑 CLI run 不带 op: 前缀也要
+    # 付 SSH + cannbot skill 加载 + scaffold 检测的代价(~3s 启动延迟)。
+    # 改 lazy: 保存 _build_orchestrator 所需组件到模块级变量, op: 前缀首次触发时再实例化。
+    global _orchestrator_build_args
+    _orchestrator_build_args = {
+        "config": config,
+        "tool_registry": tool_registry,
+        "prompt_builder": prompt_builder,
+        "context_engine": context_engine,
+        "memory_store": memory_store,
+        "checkpoint_store": _checkpoint_store,
+    }
+    logging.info("Orchestrator lazy-init ready (op: prefix → 实例化 PhaseRunner)")
 
     # 启动时检测 pending(pending != done 的 checkpoint)
     _resume_pending_check(config.checkpoint.auto_resume)

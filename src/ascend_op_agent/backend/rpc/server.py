@@ -104,8 +104,13 @@ class JSONRPCServer:
         try:
             # timeout=0 不阻塞 caller: coroutine 排到主 loop 队列,
             # 在主 loop 下一个 tick 跑 (print 是 thread-safe 的, 顺序由 loop 调度保证)
+            # fire-and-forget 模式: TimeoutError 是预期的 (caller 不等), 不 log warning
             future.result(timeout=timeout)
-        except (concurrent.futures.TimeoutError, Exception) as e:
+        except concurrent.futures.TimeoutError:
+            # 预期行为 (fire-and-forget): coroutine 已排到 loop, 下个 tick 会跑
+            pass
+        except Exception as e:
+            # 真错误 (coroutine 抛异常): 才 log warning
             logger.warning(f"send_notification_sync failed: {type(e).__name__}: {e}")
 
     async def _handle_message(self, raw_message: str) -> None:
