@@ -130,12 +130,11 @@ class JSONRPCProtocol:
         Returns:
             JSON 字符串
         """
-        response = RPCResponse(
-            jsonrpc="2.0",
-            id=id,
-            result=result
+        # P1 U4 fix: 直接构造 dict, 避免 RPCResponse.__dict__ 包含 None 字段 (如 error=null)
+        return json.dumps(
+            {"jsonrpc": "2.0", "id": id, "result": result},
+            ensure_ascii=False,
         )
-        return json.dumps(response.__dict__, ensure_ascii=False)
 
     @classmethod
     def build_error(cls, id: Any, code: int, message: str) -> str:
@@ -150,12 +149,11 @@ class JSONRPCProtocol:
             JSON 字符串
         """
         error = {"code": code, "message": message}
-        response = RPCResponse(
-            jsonrpc="2.0",
-            id=id,
-            error=error
+        # P1 U4 fix: 同 build_response, 直接构造 dict 避免 None 字段泄漏
+        return json.dumps(
+            {"jsonrpc": "2.0", "id": id, "error": error},
+            ensure_ascii=False,
         )
-        return json.dumps(response.__dict__, ensure_ascii=False)
 
     @classmethod
     def build_notification(cls, method: str, params: Optional[dict[str, Any]] = None) -> str:
