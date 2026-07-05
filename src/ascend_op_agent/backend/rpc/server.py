@@ -18,6 +18,7 @@
 """
 
 import asyncio
+import concurrent.futures
 import inspect
 import logging
 import signal
@@ -72,6 +73,40 @@ class JSONRPCServer:
             self._output_lock = asyncio.Lock()
         async with self._output_lock:
             print(message, flush=True)
+
+    def send_notification_sync(
+        self,
+        method: str,
+        params: Optional[dict[str, Any]] = None,
+        timeout: float = 0.0,
+    ) -> None:
+        """Sync 包装: 给 sync callback (如 PhaseRunner._phase_callback) 用。
+
+        主线程有 event loop (RPC server 跑在主线程在 await run())。sync 调 async
+        会出 RuntimeWarning + coroutine 永远不被 await。修复:
+        run_coroutine_threadsafe 把 coroutine 排到主 loop 队列, timeout=0
+        不阻塞 caller (coroutine 在主 loop 下一个 tick 跑, 顺序由 loop 调度保证,
+        print 是 thread-safe)。fire-and-forget fallback:
+        - 没有 loop (单元测试 / 同步上下文) → 直接 return 不抛
+        - timeout 超时 → log warning 不抛 (callback 不能因通知失败而炸 PhaseRunner)
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 没有 running loop (单元测试 / 同步上下文) → 无法调度, 静默跳过
+            return
+
+        if not self._running:
+            return
+
+        coro = self.send_notification(method, params)
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        try:
+            # timeout=0 不阻塞 caller: coroutine 排到主 loop 队列,
+            # 在主 loop 下一个 tick 跑 (print 是 thread-safe 的, 顺序由 loop 调度保证)
+            future.result(timeout=timeout)
+        except (concurrent.futures.TimeoutError, Exception) as e:
+            logger.warning(f"send_notification_sync failed: {type(e).__name__}: {e}")
 
     async def _handle_message(self, raw_message: str) -> None:
         """处理收到的消息
@@ -130,6 +165,15 @@ class JSONRPCServer:
                 # 同步函数：在线程池中执行
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(None, lambda: handler(**params))
+
+            # P1 U4 fix: handler 返的 dataclass (AgentResponse 用 TypedDict 不是 dataclass) 转 dict 再序列化
+            from dataclasses import asdict, is_dataclass
+            if is_dataclass(result) and not isinstance(result, type):
+                result = asdict(result)
+            elif isinstance(result, dict):  # TypedDict 实际就是 dict
+                pass  # 已是 dict, 不变
+            elif hasattr(result, "to_dict"):
+                result = result.to_dict()
 
             # 构建成功响应
             response = self._protocol.build_response(request.id, result)

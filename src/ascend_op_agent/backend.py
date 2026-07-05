@@ -132,7 +132,8 @@ def _push_skill_usage_to_frontend(thread_id: str) -> None:
         from ascend_op_agent.orchestrator.cannbot_loader import SkillUsageRegistry
         loads = SkillUsageRegistry.instance().get_loads(thread_id)
         for sl in loads:
-            _server.send_notification(
+            # P1 U4 fix: sync 版本(send_notification_sync)避免 async coroutine never awaited
+            _server.send_notification_sync(
                 "agent.progress",
                 {
                     "phase": sl.phase,
@@ -449,14 +450,17 @@ def _build_orchestrator(
         return info.get("name", "add_example")
 
     def _phase_callback(phase: str, event: str, payload):
-        """PhaseRunner → 推 agent.progress 通知(U8 既有通知桥复用)。"""
-        try:
-            _server.send_notification(
-                "agent.progress",
-                {"phase": phase, "event": event, "payload": payload or {}},
-            )
-        except Exception as e:
-            logging.warning(f"orchestrator phase_callback send failed: {e}")
+        """PhaseRunner → 推 agent.progress 通知。
+
+        P1 U4 fix: 用 send_notification_sync (run_coroutine_threadsafe + 阻塞等)
+        替代原 async send_notification (sync 调 async 会出 RuntimeWarning 且 notification 实际没发送)。
+        """
+        if _server is None:
+            return
+        _server.send_notification_sync(
+            "agent.progress",
+            {"phase": phase, "event": event, "payload": payload or {}},
+        )
 
     try:
         return build_new_dev_graph(

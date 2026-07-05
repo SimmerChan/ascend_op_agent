@@ -38,3 +38,4 @@ frontend/.ascend_op_agent/
 
 # macOS Finder metadata
 .DS_Store
+tmp_e2e_config.yaml
