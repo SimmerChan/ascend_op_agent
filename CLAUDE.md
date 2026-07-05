@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Ascend Op Agent — 昇腾算子开发 Agent，支持六阶段自动化工作流（Phase0-5）、双进程 TUI 交互界面、SSH 远程开发和 Skill 知识库。
 
+**P0 + P1 已完成**（2026-06-23 → 2026-07-05）：自研状态机编排器 + cannbot-skills 知识层 + 910B 真编译 + ST 驱动真算子验证 + N=20 stress 100% PASS + CLI 端到端 5/5 PASS + ship gate 4 步全过。
+
 ## 常用命令
 
 ```bash
@@ -15,9 +17,27 @@ pip install -e .
 # 切换环境
 conda activate py311
 
+# Ship gate（P1 唯一 boolean gate）
+PYTHONPATH=src python scripts/ship_ready.py                    # 全跑（需 910B + LLM）
+PYTHONPATH=src python scripts/ship_ready.py --skip-stress      # dev fast（跳 stress）
+PYTHONPATH=src python scripts/ship_ready.py --only unit_test   # 只跑 1 步
+
+# N=20 stress（P1 真稳定性验证）
+PYTHONPATH=src python scripts/e2e_real_op.py --stress 20       # 真跑 ~40 min（Minimax）
+PYTHONPATH=src python scripts/e2e_real_op.py --stress 5        # CI smoke（快速）
+
+# CLI 端到端（P1 U4: spawn backend + stdin RPC）
+PYTHONPATH=src python scripts/e2e_tui_real.py --timeout 300    # 真跑 op: 前缀
+
+# 单次 e2e（P0 reference migration: scaffold → compile → precision）
+PYTHONPATH=src python scripts/e2e_real_op.py                   # 单次跑通 add_example
+
 # Python 测试
 PYTHONPATH=src python -m pytest tests/ -v
 PYTHONPATH=src python -m pytest tests/test_agent.py -v  # 单文件
+
+# 前端测试（P1 U2: vitest + ink-testing-library）
+cd frontend && npm test                                        # 2/2 vitest pass
 
 # 代码格式化和检查
 black src/ tests/
@@ -69,6 +89,29 @@ Agent 提供以下工具（定义在 `agent/tools/`）：
 │  响应 agent.progress 通知更新进度条                  │
 │  响应 agent.thinking 通知更新 thinking 状态          │
 └─────────────────────────────────────────────────────┘
+```
+
+### 编排器架构（P0 + P1 已完成）
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Orchestrator (PhaseRunner)                                         │
+│  src/ascend_op_agent/orchestrator/                                  │
+│                                                                     │
+│  PhaseRunner (state_machine.py)                                     │
+│  ├── entry → analyze → design(HITL) → codegen → review_fix          │
+│  ├── compile(cosmetic fix) → precision(ST driver) → delivery_mode    │
+│  └── framework_adapt → done                                         │
+│                                                                     │
+│  CheckpointStore (checkpoint.py) — SQLite v2 + v1↔v2 migration      │
+│  NpuExecutor (npu_exec.py) — SSH→910B build.sh + ST driver          │
+│  SkillUsageRegistry (cannbot_loader.py) — signal-1 skill 跟踪       │
+│  fix_loop (fix_loop.py) — review→fix→re-review 闭环                 │
+└─────────────────────────────────────────────────────────────────────┘
+
+ship gate (scripts/ship_ready.py):
+  lint(black) → unit_test(pytest 411 pass) → stress(N=20 100%) → e2e_tui(5/5)
+  → 🚢 SHIP READY (exit 0)
 ```
 
 ### Viewer 可视化工具（独立架构）
@@ -256,8 +299,34 @@ pytest -m hardware tests/integration/test_ssh_compile_smoke.py -v
 ```
 
 > 注：当前 `test_ssh_compile_smoke.py` 假设直接 SSH 进开发环境，910B 的
-> 容器拓扑（ssh→server105→docker exec ops_pt）需在 SSHEnvironment 上加一层
-> docker exec 包装，或用 RemoteConfig.container_name。待 U13 集成时处理。
+> 容器拓扑（ssh→server105→docker exec ops_pt）已在 NpuExecutor 中实现
+> （`container_name="ops_pt"` 参数自动包装 `docker exec`）。P0 U13 + P1 U1 已完成。
+
+### 真实算子编译 + 验证流程（P0 + P1 已验证）
+
+**单次 e2e（reference migration 路径，~2 min Minimax）**：
+
+```bash
+# 1. 拉 scaffold（只一次）
+ssh root@192.168.9.105 'docker exec ops_pt bash -c "cd /tmp/op_test && tar -cf - --exclude=build ..."' \
+  > /tmp/e2e_scaffold.tar && tar -xf /tmp/e2e_scaffold.tar -C /tmp/e2e_scaffold
+
+# 2. 跑 e2e
+PYTHONPATH=src python scripts/e2e_real_op.py
+# 预期: compile success=True + precision 10/10 PASS + done
+```
+
+**N=20 stress（P1 ship gate stress step）**：
+
+```bash
+PYTHONPATH=src python scripts/e2e_real_op.py --stress 20
+# Minimax: 20/20 = 100% CLEAN PASS (~40 min)
+# GLM-5.2: API 连续调用 timeout（推理模型不适合 stress）
+```
+
+**compile cosmetic fix**：build.sh 末尾 `[ERROR] Package not found or empty` 是
+已知 false negative（return_code=1 但 .run 产物实际已生成）。`NpuExecutor._is_compile_success`
+检测 stdout 含 `successfully created` + `.run` → 标 success=True。
 
 ## 调试
 

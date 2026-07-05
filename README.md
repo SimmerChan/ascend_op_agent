@@ -1,14 +1,50 @@
 # Ascend Op Agent
 
-昇腾算子开发Agent - 自动化六阶段算子开发工作流，支持本地/远程开发模式，集成MCP服务器和Skill知识库系统。
+昇腾算子开发 Agent — 自研轻量状态机编排器 + cannbot-skills 知识层 + 910B 真编译 + ST 驱动真算子验证。
+
+**P0 + P1 已完成**（2026-06-23 → 2026-07-05）：
+- ✅ 自研 PhaseRunner 状态机（14 节点顺序+条件+HITL）
+- ✅ 910B 真编译（build.sh + compile cosmetic fix）
+- ✅ 真算子验证（ST 驱动 + 10/10 precision PASS）
+- ✅ N=20 stress 100% PASS（Minimax MiniMax-M3）
+- ✅ CLI 端到端 5/5 PASS（op: 前缀 → PhaseRunner → done）
+- ✅ ship gate 4 步全过 → 🚢 SHIP READY
+
+## Quick Start
+
+```bash
+# 1. 安装
+pip install -e .
+
+# 2. 配置 LLM（~/.ascend_op_agent/config.yaml）
+llm:
+  provider: "anthropic"
+  api_key: "<your-key>"
+  api_base: "https://api.minimaxi.com/anthropic"
+  model: "MiniMax-M3"
+remote:
+  host: "192.168.9.105"      # 910B 机器
+  user: "root"
+  container_name: "ops_pt"    # CANN 开发容器
+
+# 3. Ship gate（唯一 boolean gate）
+PYTHONPATH=src python scripts/ship_ready.py
+# → lint ✅ unit_test ✅ stress ✅ e2e_tui ✅ → 🚢 SHIP READY
+
+# 4. 单次 e2e（验证算子编译+精度）
+PYTHONPATH=src python scripts/e2e_real_op.py
+# → compile success + precision 10/10 PASS + done
+```
 
 ## 核心功能
 
-- **六阶段工作流**: Phase0-5 自动完成算子开发
-- **本地/远程模式**: 支持本地开发和SSH远程开发
-- **MCP集成**: 连接外部MCP服务器扩展工具能力
-- **Skill知识库**: 积累和复用算子开发经验
-- **四层记忆系统**: Working/Episodic/Semantic/Procedural Memory
+- **自研状态机编排器**: PhaseRunner（节点/边/条件/HITL）+ CheckpointStore（SQLite v2 schema + v1↔v2 迁移 + rollback）
+- **cannbot-skills 知识层**: 消费华为官方 skill 仓库（cuda2ascend-simt / triton 5-skill 链），hybrid 映射
+- **910B 真编译**: SSH → docker exec ops_pt → build.sh --soc=ascend910b（compile cosmetic fix 处理 build.sh false negative）
+- **ST 驱动真算子验证**: NPU 跑 + CPU golden + MERE/MARE 精度比对（CANN 社区标准）
+- **N=20 stress**: dual metric（first-try ≥80% + with-retry ≥95%）+ 3-state exit code
+- **CLI 端到端**: op: 前缀路由 → PhaseRunner → agent.progress 通知 → SIGTERM graceful + heartbeat
+- **LLM 多 Provider**: Minimax（anthropic 协议）/ 智谱 GLM（OpenAI 兼容 + coding plan）
 - **ACP编辑器适配器**: 支持 VS Code、Zed、JetBrains
 - **对话可视化器**: 树形结构调试 Agent 与用户的完整交互流程
 
