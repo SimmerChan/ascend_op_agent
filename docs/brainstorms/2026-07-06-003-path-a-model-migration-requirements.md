@@ -10,7 +10,7 @@ origin: team_goals.xlsx (H2 目标 B. 模型级批量迁移), docs/brainstorms/2
 
 ## Summary
 
-给定 Python 模型 repo,Path A 编排 npu-model-migration SKILL 的 7 阶段在 model 级别跑:实测(`transfer_to_npu` + 跑脚本 + 可选 GPU profiling)诊断 unsupported op,按源类型分流迁移 —— pure PyTorch 跑通即 passthrough;报错但有 `torch.aten` 等价即 native;GPU triton op 迁昇腾 triton;custom CUDA op 由 LLM 推荐 AscendC 或 triton、用户 HITL 确认。custom 类复用 P0 路径 B(PhaseRunner + cannbot skill + 910B 真编译 + ST 精度),输出 NPU 适配后脚本 + per-op 报告。一期建终态全流程,HITL 只在方案设计后确认一次。
+给定 Python 模型 repo,Path A 编排 npu-model-migration SKILL 的 7 阶段在 model 级别跑:实测(`transfer_to_npu` + 跑脚本 + 可选 GPU profiling)诊断 unsupported op,按源类型分流迁移 —— pure PyTorch 跑通即 passthrough;报错但有 `torch.aten` 等价即 native;GPU triton op 迁昇腾 triton;custom CUDA op 优先用 PyTorch 原生 API 等价重实现(封装 nn.Module),不可行再由 LLM 推荐 AscendC/triton kernel、用户 HITL 确认。custom 类复用 P0 路径 B(PhaseRunner + cannbot skill + 910B 真编译 + ST 精度),输出 NPU 适配后脚本 + per-op 报告。一期建终态全流程,HITL 只在方案设计后确认一次。
 
 ---
 
@@ -29,6 +29,7 @@ v1 brainstorm 把"模型"误解成 `.pt` 权重文件 + 用 `torch_npu.frontend`
 - **一期建终态全流程(含路径 B 兜底),不分期** —— 接受 custom kernel 迁移的不确定性(LLM 写 AscendC/triton 成功率未知),要一次到位;失败按"标 fail + continue"兜,不阻断 batch。
 - **实测驱动诊断,非静态解析** —— `transfer_to_npu` 快速尝试 + 跑脚本收集报错 + 可选 GPU profiling 交叉验证。op 是否支持由"跑"判定,不由兼容性表查。
 - **op 按源类型分流,不按"是否支持"二分** —— passthrough / native / migrate-triton / migrate-cuda 四类,各自走不同迁移路径。
+- **migrate-cuda 优先原生 API 等价实现(nn.Module),kernel 作兜底** —— 能用 PyTorch 原生 op 组合表达 CUDA 算子语义的,先封装 `nn.Module` 子类替换(不写 kernel、不经路径 B、靠模型级验证),最大化规避 LLM-kernel 成功率风险;表达不了的再走路径 B 写 AscendC/triton kernel。
 - **单点 HITL:方案设计后确认一次** —— 对齐 SKILL 阶段 2.3 强制确认 + PhaseRunner 既有 HITL 模式;阶段 4-7 全自动,保 batch 流不中断。
 - **失败 = 标 fail + continue + 写报告,不人工补 kernel** —— 一期接受 kernel 迁移失败作为合法产物,不引入人工兜底通道。
 - **复用 P0/P1,不重写** —— PhaseRunner / NpuExecutor / ST 驱动 / cannbot-skills 知识层 / CheckpointStore 全复用;Path A 只加 model-level 编排 + 实测 analyze + 7 阶段 dispatch。
@@ -65,8 +66,10 @@ flowchart TB
   D -->|passthrough| S1[skip]
   D -->|native| S2[device/API adapt + aten 替换]
   D -->|migrate-triton| S3[路径B: triton → 昇腾 triton]
-  D -->|migrate-cuda| S4[路径B: AscendC 或 triton]
-  S1 & S2 & S3 & S4 --> P4[阶段4 NPU 验证: 910B 编译 + ST 精度]
+  D -->|migrate-cuda| S4{cuda target}
+  S4 -->|native-composition 优先| S4a[nn.Module 替换]
+  S4 -->|AscendC/triton| S4b[路径B kernel]
+  S1 & S2 & S3 & S4a & S4b --> P4[阶段4 NPU 验证: 模型级 run / op 级 compile+ST]
   P4 --> P5[阶段5 调试迭代]
   P5 --> DEC{通过?}
   DEC -->|否, 迭代 ≤ 5 次| P3
@@ -84,14 +87,14 @@ flowchart TB
 
 - R1. 输入为 repo local path + 用户指定的 `run.py` 入口 + 单 model;可选 GPU `torch.profiler` 导出(chrome trace)作辅助诊断输入。框架型 repo(含多 model,如 TorchEasyRec)一期支持:先问用户选哪个 model 再迁。git url 自动 clone 与多 model 框架批量(一次迁多个)不在一期。
 - R2. 实测 analyze(主):`transfer_to_npu` 快速尝试 → 跑 `run.py` 收集报错(run.py 首错即 abort,需 continue-on-error harness 或静态 aten 等价查询作枚举加速器,避免只露 1 个 op)→ 合并可选 profiling 交叉验证报错定位 → 输出完整 op 诊断列表。静态表查询仅作枚举加速,不替代实测判定。
-- R3. op 按源类型分四类:passthrough(跑通)/ native(报错但有 `torch.aten` 等价)/ migrate-triton(GPU triton op)/ migrate-cuda(custom CUDA op)。**优先级**(一个 op 可落入多类时):passthrough > native > migrate-triton > migrate-cuda —— 有 aten 等价优先走 native(便宜),无等价再按源类型走 kernel 迁移。
+- R3. op 按源类型分四类:passthrough(跑通)/ native(报错但有 `torch.aten` 等价)/ migrate-triton(GPU triton op)/ migrate-cuda(custom CUDA op)。**优先级**(一个 op 可落入多类时):passthrough > native > migrate-triton > migrate-cuda —— 有 aten 等价优先走 native(便宜),无等价再进 migrate 类(migrate-cuda 优先原生 API 等价实现,其次 kernel)。
 
 ### 迁移执行与验证
 
 - R4. passthrough 类不处理(`transfer_to_npu` 已搞定),仅在报告标记。
 - R5. native 类自动做 device/API adapt + `torch.aten` 等价替换 + `transfer_to_npu` 注入(机械改动,对齐 SKILL 阶段 3.1/3.3)。
 - R6. migrate-triton 类:GPU triton op → 昇腾 triton,复用路径 B,参考 cannbot `ops/triton-op-coding` skill。
-- R7. migrate-cuda 类:custom CUDA op → AscendC 或 triton 二选一;方案阶段 LLM 按 op 特性推荐目标 + 用户 HITL 确认;复用路径 B(参考 cannbot `ops-lab/cuda2ascend-simt` skill)。
+- R7. migrate-cuda 类:custom CUDA op 按可行性三选一 —— (1) **PyTorch 原生 API 等价实现**(优先:LLM 分析算子语义,用原生 op 组合重实现,封装 `nn.Module` 子类替换,不写 kernel / 不经路径 B,靠模型级验证);(2) AscendC;(3) triton。方案阶段 LLM 推荐优先级 + 用户 HITL 确认;(2)(3) 复用路径 B(参考 cannbot `ops-lab/cuda2ascend-simt`)。
 - R8. 每个 migrated op 在 910B `ops_pt` 容器内 `build.sh --soc=ascend910b` 真编译 + ST 驱动精度验证(10/10 cases pass,同 P0)。
 
 ### 编排与 HITL
@@ -116,7 +119,7 @@ flowchart TB
 - AE1. **Covers R2, R3, R4.** Given pure PyTorch op + `transfer_to_npu` 跑通无报错 → 分类 passthrough → 不处理,报告标记。
 - AE2. **Covers R2, R3, R5.** Given pure PyTorch op + 跑报错 + 存在 `torch.aten` 等价 → 分类 native → 自动 device/API adapt + 等价替换。
 - AE3. **Covers R3, R6.** Given GPU triton kernel source → 分类 migrate-triton → 路径 B 迁昇腾 triton(参考 cannbot triton skill)。
-- AE4. **Covers R3, R7, R10.** Given custom CUDA op + 无 native 等价 → 分类 migrate-cuda → 方案阶段 LLM 推荐 AscendC/triton + 用户 HITL 确认 → 路径 B 迁移。
+- AE4. **Covers R3, R7, R10.** Given custom CUDA op + 无 native 等价 → 分类 migrate-cuda → 方案阶段 LLM 优先评估原生 API 等价实现可行性(可行→封装 `nn.Module` 替换,不走路径 B),不可行→推荐 AscendC/triton + 用户 HITL 确认 → 路径 B 迁移。
 - AE5. **Covers R8, R11, R13.** Given migrated op 编译或精度连续失败超 5 次 → 标 fail + continue 下一个 op + 写报告,不阻断 batch、不人工补。
 
 ---
@@ -166,7 +169,7 @@ flowchart TB
 
 - 诊断 fixture 用 SKILL 哪几个案例(AutoInt/DeepFM/DIN/Wide&Deep)?是否要先做成可跑的 GPU baseline 才能验证"实测报错"环节?
 - analyze 报告的 op 诊断 schema 字段(op_name / source_type / error / profile_evidence / recommended / target)。
-- migrate-cuda 的 LLM 推荐策略(按 op 复杂度?按是否有 AscendC template?)。
+- migrate-cuda target 推荐:原生 API 等价实现可行性判定 + kernel target(AscendC/triton)选择。
 - HITL 确认的 UI 形态(复用 PhaseRunner `pending_confirmation` TUI 通道?)。
 - 并行目录结构细节(`npu/` 子目录 vs git 分支)。
 - 分类器机制选择(静态启发式 / LLM 判定 / 报错解析 / aten-oracle 查询)—— plan 期实现决策,影响分类准确率(≥80%)的可测性。

@@ -32,7 +32,7 @@ GPU 工程师把 PyTorch 模型迁 NPU,卡在"哪些算子不支持"。npu-model
 - R4. passthrough 类不处理(`transfer_to_npu` 已搞定),仅报告标记。
 - R5. native 类自动 device/API adapt + `torch.aten` 等价替换 + `transfer_to_npu` 注入(机械改动)。
 - R6. migrate-triton 类调路径 B(参考 cannbot `ops/triton-op-coding` skill)。
-- R7. migrate-cuda 类调路径 B(参考 cannbot `ops-lab/cuda2ascend-simt` skill);方案阶段 LLM 推荐 AscendC/triton + 用户 HITL 确认目标。
+- R7. migrate-cuda 类按可行性三选一 —— (1) PyTorch 原生 API 等价实现(优先:LLM 分析语义用原生 op 组合重实现,封装 `nn.Module` 替换,不写 kernel / 不经路径 B,靠模型级验证);(2) AscendC;(3) triton。方案阶段 LLM 推荐优先级 + HITL 确认;(2)(3) 调路径 B(`ops-lab/cuda2ascend-simt`)。
 
 ### 验证与输出
 
@@ -46,7 +46,7 @@ GPU 工程师把 PyTorch 模型迁 NPU,卡在"哪些算子不支持"。npu-model
 
 ### 复用与边界
 
-- R12. 复用 PhaseRunner / NpuExecutor / ST 驱动 / cannbot-loader / CheckpointStore 不重写;Path A 加 model-level 编排 + native mechanical-adaptation(不写 kernel)。
+- R12. 复用 PhaseRunner / NpuExecutor / ST 驱动 / cannbot-loader / CheckpointStore 不重写;Path A 加 model-level 编排 + native mechanical-adaptation + migrate-cuda 原生 API 等价实现(均不写 kernel;只有 AscendC/triton target 才调路径 B)。
 - R13. npu-model-migration SKILL 作知识层加载(mirror `cannbot_loader.py` 模式),不作自研编排。
 
 ### 一期门控
@@ -66,6 +66,7 @@ GPU 工程师把 PyTorch 模型迁 NPU,卡在"哪些算子不支持"。npu-model
 - **KTD6 — HITL 复用 `pending_confirmation` TUI 通道**:复用 backend.py `session.resume_with_input` + PhaseRunner `_migration_design_payload_builder`(`graphs/migration.py:132-139`,wired at :150),不加新 UI。
 - **KTD7 — spike 阈值:ST pass rate < 50% 重开"不分期"**:默认值,plan 实测后可调;3-persona 共指风险的量化门。
 - **KTD8 — 输出目录:`<repo>-npu/` sibling 镜像**:对齐 SKILL"并行目录,不改原码"约束;原码不动,git 友好。
+- **KTD9 — migrate-cuda target:native-composition 优先,kernel 兜底** —— 能用 PyTorch 原生 op 组合表达 CUDA 算子语义的,先封装 `nn.Module` 子类替换(不写 kernel / 不经路径 B / 不走 910B 编译+ST,靠模型级验证),最大化规避 LLM-kernel 成功率风险(M1 spike 头号风险);表达不了的再走路径 B 写 AscendC/triton kernel。方案阶段 LLM 推荐优先级 + HITL 确认。
 
 ---
 
@@ -84,10 +85,14 @@ flowchart TB
   AN --> CL{分类器 hybrid}
   CL -->|passthrough| PT[skip 标记]
   CL -->|native| N1[U3 mechanical-adapt]
-  CL -->|migrate-triton| M1[U4 调路径B triton]
-  CL -->|migrate-cuda| M2[U4 调路径B cuda AscendC/triton]
-  N1 & M1 & M2 --> VAL[路径B: PhaseRunner.invoke + 910B编译 + ST]
+  CL -->|migrate-triton| M1[U4 路径B triton]
+  CL -->|migrate-cuda| CT{cuda target}
+  CT -->|native-composition 优先| NC[U4 nn.Module 替换]
+  CT -->|AscendC/triton| M2[U4 路径B kernel]
+  M1 & M2 --> VAL[路径B: invoke + 910B编译 + ST]
+  N1 & NC --> MVAL[模型级验证]
   VAL --> ITER{通过?}
+  MVAL --> ITER
   ITER -->|否 ≤5| AN
   ITER -->|native 连败≥3| RECLASIFY[重分类→migrate]
   ITER -->|否 超限| FAIL[标fail+continue]
@@ -153,16 +158,17 @@ flowchart TB
 - **Goal:** migrate-triton / migrate-cuda 类调路径 B per-op;HITL 确认 cuda 目标;reclassify 通道(R6、R7、R11 重分类)。
 - **Requirements:** R6, R7, R11。
 - **Dependencies:** U2(OpReport)、U1(spike pass,< 50% 则停 U4/U8 回用户)。
-- **Files:** `src/ascend_op_agent/migrate/dispatcher.py`、`tests/unit/test_dispatcher.py`、`tests/integration/test_dispatcher_path_b.py`(hardware-gated)。
-- **Approach:** dispatcher 是 thin loop(KTD4):per migrate op 调 `PhaseRunner.invoke(op)`(全流程 codegen→compile→precision)+ 累积 `MigrationResult` + continue-on-fail。migrate-cuda 在调 invoke 前,LLM 读 op signature + cannbot skill 上下文推荐 AscendC/triton,经 HITL(KTD6 pending_confirmation)确认 target;target 编码进 invoke 的 user_input prompt(不改 PhaseRunner.invoke 签名,cuda frontend 节点回读),实现期若 LLM 抽取不可靠则 fallback 扩 `op_info.hint` 通道。native 类 op 若模型级验证连败 / 发散 ≥3(由 U5 反馈,native 无 op 级 ST)→ dispatcher 重分类为 migrate-cuda 重跑。**triton contingency**:若 U6 核实 migrate-triton 路径 B 端到端未覆盖(`make_triton_frontend_node` 跑不通),U4 吸收为新建子任务(对齐 origin R6 contingency),加独立 test scenario。
+- **Files:** `src/ascend_op_agent/migrate/dispatcher.py`、`src/ascend_op_agent/migrate/native_composer.py`(新,migrate-cuda 原生 API 等价实现 + nn.Module 封装)、`tests/unit/test_dispatcher.py`、`tests/unit/test_native_composer.py`、`tests/integration/test_dispatcher_path_b.py`(hardware-gated)。
+- **Approach:** dispatcher 是 thin loop(KTD4):per migrate op 调 `PhaseRunner.invoke(op)`(全流程 codegen→compile→precision)+ 累积 `MigrationResult` + continue-on-fail。migrate-cuda target 三选一(KTD9):LLM 先评估 **PyTorch 原生 API 等价实现**可行性 —— 可行则调 `native_composer.py` 用原生 op 组合重实现 + 封装 `nn.Module` 替换原 op 调用(**不调 invoke、不经路径 B、不走 910B 编译/ST**,靠 U5 模型级验证);不可行则推荐 AscendC/triton,经 HITL(KTD6 pending_confirmation)确认后 target 编码进 invoke 的 user_input prompt(不改 PhaseRunner.invoke 签名,cuda frontend 节点回读),实现期若 LLM 抽取不可靠则 fallback 扩 `op_info.hint` 通道。native 类 op 若模型级验证连败 / 发散 ≥3(由 U5 反馈,native 无 op 级 ST)→ dispatcher 重分类为 migrate-cuda 重跑。**triton contingency**:若 U6 核实 migrate-triton 路径 B 端到端未覆盖(`make_triton_frontend_node` 跑不通),U4 吸收为新建子任务(对齐 origin R6 contingency),加独立 test scenario。
 - **Patterns to follow:** `backend.py` `_handle_run_conversation` op: 前缀路由 + `session.resume_with_input` HITL 模式;`orchestrator/graphs/migration.py` 路径 B 入口。
 - **Test scenarios:**
-  - Happy:mock PhaseRunner.invoke,migrate-cuda op 经 HITL 确认 AscendC → 调 invoke 传 target=AscendC。Covers AE4.
+  - Happy:mock native_composer,migrate-cuda op 经评估可原生等价 → LLM 用 PyTorch op 组合重实现 + 封装 nn.Module 替换(不调 PhaseRunner.invoke)。Covers AE4.
+  - Happy:mock PhaseRunner.invoke,migrate-cuda op 原生等价不可行 → HITL 确认 AscendC → 调 invoke 传 target=AscendC。Covers AE4.
   - Happy:migrate-triton op → 调 invoke 走 triton 路径(无 HITL,triton 是源类型直迁)。Covers AE3.
   - Integration(hardware):1 个真 custom CUDA op → invoke 全流程 + 910B 编译 + ST(happy 路径,不 cover fail-continue)。
   - Error:invoke 迭代超限 → MigrationResult 标 fail + continue 下一个。Covers AE5.
   - Reclassify:native op 连败 ≥3 → 重分类 migrate-cuda 重跑(触发 U3 跳过、U4 接管)。
-- **Verification:** dispatcher 对 N op 跑完产出 N 个 MigrationResult(pass/fail 全标记),无中途崩。
+- **Verification:** dispatcher 对 N op 跑完产出 N 个 MigrationResult(pass/fail 全标记;native-composition 标 nn.Module 替换无 910B 编译,kernel target 标 invoke+ST 结果),无中途崩。
 
 ### U5. 7 阶段编排器 + 报告装配
 
@@ -227,7 +233,7 @@ flowchart TB
 - AE1. pure PyTorch op + transfer_to_npu 跑通 → passthrough → 不处理,报告标记。Covers R2, R3.
 - AE2. pure PyTorch op + 报错 + aten 等价 → native → U3 自动 adapt。Covers R3, R5.
 - AE3. GPU triton kernel source → migrate-triton → U4 调路径 B triton。Covers R3, R6.
-- AE4. custom CUDA op + 无 aten 等价 → migrate-cuda → HITL 确认 AscendC/triton → U4 路径 B。Covers R3, R7, R11.
+- AE4. custom CUDA op + 无 aten 等价 → migrate-cuda → LLM 优先评估原生 API 等价实现(可行→nn.Module 替换,不走路径 B),不可行→HITL 确认 AscendC/triton → U4 路径 B。Covers R3, R7, R11.
 - AE5. migrated op 迭代超限 → 标 fail + continue + 报告含诊断状态,不阻断 batch。Covers R8, R9, R11.
 - AE6. native op 模型级验证连败 / 发散 ≥3 → 重分类 migrate-cuda → U4 接管(单点 HITL 误分类可恢复)。Covers R11.
 - AE7. run.py 首错即 abort → continue-on-error harness 仍枚举出全部 unsupported op。Covers R2.
