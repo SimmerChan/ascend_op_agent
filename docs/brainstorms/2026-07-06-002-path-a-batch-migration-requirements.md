@@ -1,12 +1,19 @@
 ---
 title: "路径 A:模型级批量迁移(P0 现状已闭环 + 阶段二:OpAdapter lib + batch_migrate CLI)"
 type: feature
-status: brainstorm-complete
+status: superseded
 date: 2026-07-06
+superseded_by: docs/brainstorms/2026-07-06-003-path-a-model-migration-requirements.md
+supersede_reason: "模型迁移输入是 Python 脚本/repo(非 .pt 文件);op 不支持/瓶颈分析靠实测运行 + profiling(非 torch_npu.frontend 静态解析)。v2 基于 npu-model-migration SKILL 重做。"
 origin: team_goals.xlsx (H2 工作目标 B. 模型级批量迁移), docs/plans/2026-06-23-001-feat-op-runtime-engine-plan.md (P1 路径 A)
 ---
 
 # 路径 A:模型级批量迁移(阶段二)
+
+> ⚠️ **SUPERSEDED (2026-07-06)** — 本文档前提有误,已废弃。
+> 错误前提:把"模型"当成 `.pt` 文件 + 用 `torch_npu.frontend` 静态解析列 unsupported op。
+> 真实形态:模型迁移输入是 **Python 脚本/repo**(raw GPU 或已适配 NPU 版);op 不支持/瓶颈分析靠**实测运行**(`transfer_to_npu` + 跑脚本收集报错 + `torch.profiler` 导出 profiling),不是静态解析。
+> v2 基于 [npu-model-migration SKILL](https://gitcode.com/Ascend/agent-skills/blob/master/official/MindSeriesSDK/RecSDK/npu-model-migration/SKILL.md)(7 阶段诊断循环)重做 → `docs/brainstorms/2026-07-06-003-path-a-model-migration-requirements.md`。
 
 ## Summary
 
