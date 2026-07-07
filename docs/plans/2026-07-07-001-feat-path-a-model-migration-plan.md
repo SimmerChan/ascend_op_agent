@@ -23,8 +23,8 @@ GPU 工程师把 PyTorch 模型迁 NPU,卡在"哪些算子不支持"。npu-model
 
 ### 诊断
 
-- R1. `migrate` 子命令接受 repo local path + `run.py` 入口 + 单 model(+ 可选 GPU `torch.profiler` chrome trace);框架型 repo 先问用户选哪个 model。
-- R2. 实测 analyze 产出完整 op 诊断列表:`transfer_to_npu` 尝试 → continue-on-error harness 跑 `run.py` 收集全部报错 → 静态 aten 等价查询作枚举加速器 → optional profiling 交叉验证。
+- R1. `migrate` 子命令接受 repo local path + 入口脚本(任意 .py/.sh)+ 单 model(+ 可选 GPU `torch.profiler` chrome trace);框架型 repo 先问用户选哪个 model。
+- R2. 实测 analyze 产出完整 op 诊断列表:`transfer_to_npu` 尝试 → continue-on-error harness 跑入口脚本收集全部报错 → 静态 aten 等价查询作枚举加速器 → optional profiling 交叉验证。
 - R3. op 分类按源类型 + 优先级 `passthrough > native > migrate-triton > migrate-cuda`;分类器 = 报错解析(主)+ aten-coverage 静态查询 + LLM 判定(歧义兜底)。
 
 ### 迁移
@@ -60,7 +60,7 @@ GPU 工程师把 PyTorch 模型迁 NPU,卡在"哪些算子不支持"。npu-model
 
 - **KTD1 — CLI 集成:`ascend-op-agent migrate` click 子命令**:挂现有 `cli.py` 的 `@click.group` main,非 origin 写的 `python -m ascend_op_agent.cli.migrate`(那需 `cli.py`→`cli/` 包重构,破坏现有 `ascend-op-agent` script 入口)。
 - **KTD2 — 分类器 = hybrid(报错解析 + aten 查询 + LLM 兜底)**:报错 stack-trace regex 作主信号,静态 `torch.aten` 等价查询作枚举加速 + native 判定,LLM 仅在歧义(多分类候选)时兜底。纯 LLM 不可复现、纯规则覆盖不全。
-- **KTD3 — 实测枚举:continue-on-error harness**:run.py 首错即 abort 只露 1 op;harness = AST-wrap 每个 suspected unsupported-op 调用点于 try/except(确定性枚举)+ traceback-regex 把报错归因到 op,枚举全部 unsupported op,而非 N 次 fail-fix 循环。
+- **KTD3 — 实测枚举:continue-on-error harness**:入口脚本首错即 abort 只露 1 op;harness = `.py` 入口 AST-wrap 每个 suspected unsupported-op 调用点于 try/except(确定性枚举),`.sh` 入口或 AST 不可行时降级 run-and-capture;traceback-regex 把报错归因到 op,枚举全部 unsupported op,而非 N 次 fail-fix 循环。
 - **KTD4 — 路径 B 复用:per-op `PhaseRunner.invoke`**:Path A 自身只做 thin loop(调 invoke + 累积 MigrationResult + continue-on-fail),不重写 invoke 内部(对齐 origin R14 + coherence 修复)。
 - **KTD5 — npu-model-migration SKILL 加载 = mirror cannbot_loader**:vendor 到 `vendor/npu-model-migration` + phase→skill 决策表(`orchestrator/cannbot_loader.py:161-177` 模式),非自研 7 阶段硬编码。
 - **KTD6 — HITL 复用 `pending_confirmation` TUI 通道**:复用 backend.py `session.resume_with_input` + PhaseRunner `_migration_design_payload_builder`(`graphs/migration.py:132-139`,wired at :150),不加新 UI。
@@ -123,20 +123,20 @@ flowchart TB
 
 ### U2. OpAdapter 诊断层(analyzer + classifier)
 
-- **Goal:** 实测跑 run.py + 静态查询,产出完整 op 诊断列表 + 四类分类(R2、R3)。
+- **Goal:** 实测跑入口脚本 + 静态查询,产出完整 op 诊断列表 + 四类分类(R2、R3)。
 - **Requirements:** R2, R3。
 - **Dependencies:** 无(基础层,U3/U4/U5 依赖其输出)。
 - **Files:** `src/ascend_op_agent/migrate/__init__.py`、`src/ascend_op_agent/migrate/adapter.py`(OpAdapter facade)、`src/ascend_op_agent/migrate/analyzer.py`、`src/ascend_op_agent/migrate/classifier.py`、`tests/unit/test_analyzer.py`、`tests/unit/test_classifier.py`。
-- **Approach:** analyzer 实现 continue-on-error harness(try/except 包裹 + 逐 suspected-op 注入跑 run.py)+ 合并可选 profiling + 静态 aten 等价查询(枚举加速)。classifier 按 KTD2 hybrid:stack-trace regex(主)→ aten-coverage 查询(native 判定)→ LLM 兜底(歧义)。输出 `OpReport`(op_name/source_type/error/profile_evidence/recommended/target)。
+- **Approach:** analyzer 实现 continue-on-error harness(`.py` 入口 try/except 包裹 + 逐 suspected-op 注入跑;`.sh` 入口先 unwrap 到底层 python entry,不可行则 run-and-capture stderr)+ 合并可选 profiling + 静态 aten 等价查询(枚举加速)。classifier 按 KTD2 hybrid:stack-trace regex(主)→ aten-coverage 查询(native 判定)→ LLM 兜底(歧义)。输出 `OpReport`(op_name/source_type/error/profile_evidence/recommended/target)。
 - **Patterns to follow:** cannbot skill 的 description 触发词路由模式(`orchestrator/cannbot_loader.py`)。
 - **Test scenarios:**
-  - Happy:mock run.py 抛 3 个不同 op 的错 → analyzer 收齐 3 个(continue-on-error 生效)。Covers AE1, AE2.
+  - Happy:mock 入口脚本抛 3 个不同 op 的错 → analyzer 收齐 3 个(continue-on-error 生效)。Covers AE1, AE2.
   - Happy:pure PyTorch op 跑通 → classifier 标 passthrough。Covers AE1.
   - Happy:报错 op 有 aten 等价 → 标 native。Covers AE2.
   - Happy:GPU triton kernel source → 标 migrate-triton。Covers AE3.
   - Happy:custom CUDA op 无 aten 等价 → 标 migrate-cuda。Covers AE4.
   - Edge:一个 op 同时有 aten 等价 + 是 triton source → 优先级 native > migrate-triton 胜出(R3)。
-  - Error:run.py 超时/OOM → analyzer 标该 op unknown_type + warn(对齐 origin OQ5 warn+skip)。
+  - Error:入口脚本超时/OOM → analyzer 标该 op unknown_type + warn(对齐 origin OQ5 warn+skip)。
 - **Verification:** 单测全过;诊断列表 op 数 ≥ 实际报错 op 数(continue-on-error 不漏)。
 
 ### U3. Native mechanical-adaptation
@@ -236,7 +236,7 @@ flowchart TB
 - AE4. custom CUDA op + 无 aten 等价 → migrate-cuda → LLM 优先评估原生 API 等价实现(可行→nn.Module 替换,不走路径 B),不可行→HITL 确认 AscendC/triton → U4 路径 B。Covers R3, R7, R11.
 - AE5. migrated op 迭代超限 → 标 fail + continue + 报告含诊断状态,不阻断 batch。Covers R8, R9, R11.
 - AE6. native op 模型级验证连败 / 发散 ≥3 → 重分类 migrate-cuda → U4 接管(单点 HITL 误分类可恢复)。Covers R11.
-- AE7. run.py 首错即 abort → continue-on-error harness 仍枚举出全部 unsupported op。Covers R2.
+- AE7. 入口脚本首错即 abort → continue-on-error harness 仍枚举出全部 unsupported op。Covers R2.
 
 ---
 
@@ -268,7 +268,7 @@ flowchart TB
 - **高风险 — LLM kernel 成功率未知**:U1 spike 量化;< 50% 触发"不分期"重开(KTD7)。3-persona 共指(origin doc-review flagged high-risk)。
 - **高风险 — `transfer_to_npu` 覆盖未验证**:R4 passthrough + R5 native 全靠它;U8 fixture 核验 device-API 覆盖率(origin doc-review flagged coverage unverified)。
 - **风险 — migrate-triton 路径 B 覆盖未验证**:P0/P1 验证的是 AscendC 路径;U6 先核 `make_triton_frontend_node` 端到端,未覆盖则 R6 当新建(origin S6)。
-- **风险 — run.py 异构性**:各类模型入口(train/eval/main)差异大;U2 continue-on-error harness 一期 cover PyTorch 主流,异构框架留 follow-up。
+- **风险 — 入口脚本异构性**:各类模型入口(train.py/eval.py/main.py/.sh wrapper)差异大,且 `.sh` wrapper 需 unwrap 到底层 python entry;U2 continue-on-error harness 一期 cover PyTorch 主流(`.py` 直 AST-wrap,`.sh` unwrap+fallback),异构框架留 follow-up。
 - **依赖**:P0/P1 闭环(PhaseRunner / NpuExecutor / ST / cannbot-loader / CheckpointStore,verifier 核验 `state_machine.py`/`npu_exec.py`/`nodes/validation.py`/`cannbot_loader.py`/`checkpoint.py` 均 confirmed)、cannbot-skills vendored、npu-model-migration SKILL(gitcode)、910B 远程环境(192.168.9.105 / ops_pt)。
 
 ---
@@ -286,7 +286,7 @@ flowchart TB
 
 - **U1 spike 阈值 50% 是否合适**:默认值,用户可调;spike 实测后可校准。
 - **fixture 含 custom op 的 demo 从哪找**:SKILL 案例库(AutoInt 等)是推荐模型、passthrough/native 重,需外部找 ≥1 含 custom CUDA op 的 demo 满足 R15。plan 实施期解决。
-- **continue-on-error harness 的 op 归因机制**:stack-trace → op 映射对复杂训练循环的覆盖率,实现期看真实 run.py 报错模式再定。
+- **continue-on-error harness 的 op 归因机制**:stack-trace → op 映射对复杂训练循环的覆盖率(`.py` vs `.sh` wrapper 报错模式不同),实现期看真实入口脚本报错模式再定。
 
 ---
 

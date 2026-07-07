@@ -40,7 +40,7 @@ v1 brainstorm 把"模型"误解成 `.pt` 权重文件 + 用 `torch_npu.frontend`
 
 | ID | 角色 | 职责 |
 |----|------|------|
-| A1 | GPU 算子迁移工程师 | 提供 repo + run.py 入口,方案阶段 HITL 确认 op 分类 + CUDA 目标 |
+| A1 | GPU 算子迁移工程师 | 提供 repo + 入口脚本(任意 .py/.sh),方案阶段 HITL 确认 op 分类 + CUDA 目标 |
 | A2 | Path A agent | 编排 7 阶段、实测诊断、op 分类、迁移调度、报告生成 |
 | A3 | 路径 B / PhaseRunner | 单算子 kernel 迁移(CUDA→AscendC / Triton→昇腾 triton),migrate 类调用 |
 | A4 | 910B NPU 环境 | 真编译 + ST 驱动精度验证执行环境(SSH → docker exec ops_pt) |
@@ -50,14 +50,14 @@ v1 brainstorm 把"模型"误解成 `.pt` 权重文件 + 用 `torch_npu.frontend`
 ## Key Flows
 
 - F1. 端到端 model 迁移
-  - **Trigger:** A1 提交 repo local path + run.py 入口(可选 GPU profiling)。
+  - **Trigger:** A1 提交 repo local path + 入口脚本(任意 .py/.sh,可选 GPU profiling)。
   - **Actors:** A1, A2, A3, A4。
   - **Steps:** 见下图 7 阶段 + op 分流。
   - **Outcome:** `npu/` 并行目录下的 NPU 适配脚本 + per-op 报告 + SKILL 格式迁移报告。
 
 ```mermaid
 flowchart TB
-  IN[输入: repo + run.py + 可选 GPU profiling] --> P1[阶段1 目标分析]
+  IN[输入: repo + 入口脚本(.py/.sh) + 可选 GPU profiling] --> P1[阶段1 目标分析]
   P1 --> P15[阶段1.5 transfer_to_npu 快速尝试]
   P15 --> P2[阶段2 方案设计]
   P2 -. HITL 确认 .-> P2H[(op 分类 + 改动清单 + CUDA 目标推荐)]
@@ -85,8 +85,8 @@ flowchart TB
 
 ### 输入与诊断
 
-- R1. 输入为 repo local path + 用户指定的 `run.py` 入口 + 单 model;可选 GPU `torch.profiler` 导出(chrome trace)作辅助诊断输入。框架型 repo(含多 model,如 TorchEasyRec)一期支持:先问用户选哪个 model 再迁。git url 自动 clone 与多 model 框架批量(一次迁多个)不在一期。
-- R2. 实测 analyze(主):`transfer_to_npu` 快速尝试 → 跑 `run.py` 收集报错(run.py 首错即 abort,需 continue-on-error harness 或静态 aten 等价查询作枚举加速器,避免只露 1 个 op)→ 合并可选 profiling 交叉验证报错定位 → 输出完整 op 诊断列表。静态表查询仅作枚举加速,不替代实测判定。
+- R1. 输入为 repo local path + 用户指定的入口脚本(任意 .py/.sh)+ 单 model;可选 GPU `torch.profiler` 导出(chrome trace)作辅助诊断输入。框架型 repo(含多 model,如 TorchEasyRec)一期支持:先问用户选哪个 model 再迁。git url 自动 clone 与多 model 框架批量(一次迁多个)不在一期。
+- R2. 实测 analyze(主):`transfer_to_npu` 快速尝试 → 跑入口脚本收集报错(脚本首错即 abort,需 continue-on-error harness 或静态 aten 等价查询作枚举加速器,避免只露 1 个 op)→ 合并可选 profiling 交叉验证报错定位 → 输出完整 op 诊断列表。静态表查询仅作枚举加速,不替代实测判定。
 - R3. op 按源类型分四类:passthrough(跑通)/ native(报错但有 `torch.aten` 等价)/ migrate-triton(GPU triton op)/ migrate-cuda(custom CUDA op)。**优先级**(一个 op 可落入多类时):passthrough > native > migrate-triton > migrate-cuda —— 有 aten 等价优先走 native(便宜),无等价再进 migrate 类(migrate-cuda 优先原生 API 等价实现,其次 kernel)。
 
 ### 迁移执行与验证
