@@ -1,0 +1,10 @@
+{
+  "task_count": 0,
+  "active_task_id": null,
+  "tasks": [],
+  "dogfood_metrics_manual": {
+    "spontaneous_task_switches": "手动记录:set_active 调用次数(多任务并行真实发生)",
+    "context_juggling_complaints": "手动记录:用户报告上下文混乱/进展不可查次数"
+  },
+  "gate_rule": "R16:dogfood 2 周后,若自发切任务 < 阈值 且 无 context-juggling 投诉 → task 层痛点未验证 → abandon(本 gate 是 task 层 kill-switch)"
+}
