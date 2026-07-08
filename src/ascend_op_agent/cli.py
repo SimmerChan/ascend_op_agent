@@ -42,11 +42,7 @@ console = Console()
 
 @click.group()
 @click.version_option(version=__version__)
-@click.option(
-    "-c", "--config",
-    type=click.Path(exists=True),
-    help="配置文件路径"
-)
+@click.option("-c", "--config", type=click.Path(exists=True), help="配置文件路径")
 @click.pass_context
 def main(ctx: click.Context, config: Optional[str]) -> None:
     """Ascend Op Agent - 昇腾算子开发Agent
@@ -67,17 +63,8 @@ def main(ctx: click.Context, config: Optional[str]) -> None:
 
 
 @main.command()
-@click.option(
-    "--workspace",
-    type=click.Path(),
-    default="./workspace",
-    help="工作目录路径"
-)
-@click.option(
-    "--remote",
-    is_flag=True,
-    help="启用远程开发模式"
-)
+@click.option("--workspace", type=click.Path(), default="./workspace", help="工作目录路径")
+@click.option("--remote", is_flag=True, help="启用远程开发模式")
 @click.pass_context
 def init(ctx: click.Context, workspace: str, remote: bool) -> None:
     """初始化项目配置
@@ -96,9 +83,7 @@ def init(ctx: click.Context, workspace: str, remote: bool) -> None:
     config_path = agent_dir / "config.yaml"
     if not config_path.exists():
         # 创建默认配置
-        default_config = Config(
-            local={"workspace": str(workspace_path)}
-        )
+        default_config = Config(local={"workspace": str(workspace_path)})
         default_config.save(config_path)
         console.print(f"[green]✓[/green] 创建配置文件: {config_path}")
     else:
@@ -113,11 +98,7 @@ def init(ctx: click.Context, workspace: str, remote: bool) -> None:
 
 
 @main.command()
-@click.option(
-    "--local",
-    is_flag=True,
-    help="强制使用本地模式"
-)
+@click.option("--local", is_flag=True, help="强制使用本地模式")
 @click.pass_context
 def run(ctx: click.Context, local: bool) -> None:
     """启动 Agent 对话
@@ -198,9 +179,9 @@ def skill(ctx: click.Context, action: str, repo_url: Optional[str]) -> None:
 
         # 添加仓库到配置
         from ascend_op_agent.config import SkillRepositoryConfig
+
         new_repo = SkillRepositoryConfig(
-            name=repo_url.split("/")[-1].replace(".git", ""),
-            url=repo_url
+            name=repo_url.split("/")[-1].replace(".git", ""), url=repo_url
         )
         config.skill_repositories.append(new_repo)
 
@@ -287,8 +268,7 @@ def skill(ctx: click.Context, action: str, repo_url: Optional[str]) -> None:
 
         # 从配置中移除仓库
         config.skill_repositories = [
-            r for r in config.skill_repositories
-            if r.url != repo_url and r.name != repo_url
+            r for r in config.skill_repositories if r.url != repo_url and r.name != repo_url
         ]
         config_path = Config.default_config_path()
         config.save(config_path)
@@ -389,7 +369,11 @@ def mcp(ctx: click.Context, action: str, server_name: Optional[str]) -> None:
             for server in config.mcp.servers:
                 status = manager.get_server_status(server.name)
                 running = "运行中" if status["running"] else "已停止"
-                last_check = time.strftime("%H:%M:%S", time.localtime(status["last_check"])) if status["last_check"] > 0 else "N/A"
+                last_check = (
+                    time.strftime("%H:%M:%S", time.localtime(status["last_check"]))
+                    if status["last_check"] > 0
+                    else "N/A"
+                )
                 table.add_row(server.name, running, last_check)
 
             console.print(table)
@@ -641,10 +625,11 @@ def viewer(ctx: click.Context, only_backend: bool, port: int) -> None:
             # 服务器可能仍在运行但health check失败（如IPv6 vs IPv4问题）
             # 检查端口是否真的无法访问
             import socket
+
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(1)
-                result = sock.connect_ex(('127.0.0.1', port))
+                result = sock.connect_ex(("127.0.0.1", port))
                 sock.close()
                 if result == 0:
                     error_detail = f"健康检查失败但端口可访问，可能服务正在启动中: {last_error}"
@@ -661,11 +646,19 @@ def viewer(ctx: click.Context, only_backend: bool, port: int) -> None:
             error_detail = "端口权限被拒绝，请尝试使用其他端口: ascend-op-agent viewer --port 3002"
         elif "Traceback" in error_output:
             # 显示真实的错误栈
-            lines = [l for l in error_output.split("\n") if "File " in l or "Error:" in l or "Exception" in l]
+            lines = [
+                l
+                for l in error_output.split("\n")
+                if "File " in l or "Error:" in l or "Exception" in l
+            ]
             error_detail = "\n".join(lines[:3]) if lines else error_output[:200]
         else:
-            error_lines = [l for l in error_output.split("\n") if l.strip() and not l.startswith("INFO:")]
-            error_detail = "\n".join(error_lines[:3]) if error_lines else f"健康检查失败: {last_error}"
+            error_lines = [
+                l for l in error_output.split("\n") if l.strip() and not l.startswith("INFO:")
+            ]
+            error_detail = (
+                "\n".join(error_lines[:3]) if error_lines else f"健康检查失败: {last_error}"
+            )
 
         console.print(f"[red]错误: 后端服务启动失败[/red]")
         console.print(f"[dim]原因: {error_detail}[/dim]")
@@ -729,6 +722,103 @@ def viewer(ctx: click.Context, only_backend: bool, port: int) -> None:
         console.print("\n[yellow]停止服务...[/yellow]")
         backend_process.terminate()
         frontend_process.terminate()
+
+
+@main.group()
+@click.option("--db", default=None, help="tasks.db 路径(默认 ~/.ascend_op_agent/tasks.db)")
+@click.option("--ck", default=None, help="checkpoints.db 路径(默认 config.checkpoint.db_path)")
+@click.pass_context
+def task(ctx: click.Context, db: Optional[str], ck: Optional[str]) -> None:
+    """任务管理(一期-a:list / new / select / progress)。
+
+    一期-a 显式命令,不经 LLM 分类器(R5 一期-b)。run(develop dispatch)经
+    backend op: 路由(`ascend-op-agent run` + op: 前缀),不在本 group。
+    """
+    ctx.ensure_object(dict)
+    ctx.obj["task_db"] = db
+    ctx.obj["task_ck"] = ck
+
+
+def _task_commands(ctx: click.Context):
+    """从 ctx.obj 的 --db/--ck 覆盖 + config 建 TaskCommands。"""
+    from ascend_op_agent.orchestrator import CheckpointStore
+    from ascend_op_agent.task_router.commands import TaskCommands
+    from ascend_op_agent.task_store import TaskStore
+
+    db = ctx.obj.get("task_db")
+    ck = ctx.obj.get("task_ck")
+    if ck is None:
+        config = ctx.obj.get("config")
+        ck = (
+            config.checkpoint.db_path
+            if config and getattr(config, "checkpoint", None)
+            else "~/.ascend_op_agent/checkpoints.db"
+        )
+    store = TaskStore(db) if db else TaskStore()
+    return TaskCommands(store, checkpoint_store=CheckpointStore(ck))
+
+
+@task.command("list")
+@click.pass_context
+def task_list(ctx: click.Context) -> None:
+    """列任务 + state + thread 数。"""
+    cmds = _task_commands(ctx)
+    rows = cmds.list()
+    if not rows:
+        console.print("[yellow]无任务[/yellow]")
+        return
+    for r in rows:
+        console.print(
+            f"[cyan]{r['task_id']}[/cyan] {r['type']:8} "
+            f"state=[bold]{r['state']}[/bold] threads={r['thread_count']}"
+        )
+
+
+@task.command("new")
+@click.argument("task_type")
+@click.pass_context
+def task_new(ctx: click.Context, task_type: str) -> None:
+    """建 task + 设 active。TYPE ∈ {migrate, analyze, optimize, develop}。"""
+    cmds = _task_commands(ctx)
+    try:
+        tid = cmds.new(task_type)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+    console.print(f"[green]✓[/green] created [cyan]{tid}[/cyan] (type={task_type}), set active")
+
+
+@task.command("select")
+@click.argument("task_id")
+@click.pass_context
+def task_select(ctx: click.Context, task_id: str) -> None:
+    """选/切 active task。"""
+    cmds = _task_commands(ctx)
+    try:
+        cmds.select(task_id)
+    except KeyError as e:
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+    console.print(f"[green]✓[/green] active task = [cyan]{task_id}[/cyan]")
+
+
+@task.command("progress")
+@click.argument("task_id", required=False)
+@click.pass_context
+def task_progress(ctx: click.Context, task_id: Optional[str]) -> None:
+    """查任务进展(active 或指定 task_id)。"""
+    cmds = _task_commands(ctx)
+    try:
+        prog = cmds.progress(task_id)
+    except Exception as e:  # noqa: BLE001 - CLI 出口聚合
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+    console.print(
+        f"[cyan]{prog['task_id']}[/cyan] {prog['type']} "
+        f"state=[bold]{prog['state']}[/bold] phase={prog['phase']}"
+    )
+    for th in prog["threads"]:
+        console.print(f"  thread {th['thread_id']}: {th['status']} @ {th['phase']}")
 
 
 if __name__ == "__main__":
