@@ -36,7 +36,7 @@ topic: task-management-layer
 - **路由 = LLM 意图分类** —— 用户输入分 on-active-task / off-task / new-task / progress-query;机制(plan 期 prompt/规则/hybrid)。
 - **analyze/optimize 的内部 flow 留 plan** —— 本 doc 只定它们的 WHAT(输入/输出报告),实现 flow 不深入。
 - **层 = runtime passthrough(不自建 domain flow)** —— task 层只做路由/隔离/进展/图;4 type 是 object kind,passthrough 到现有/外部 executor(PhaseRunner/Path A/cannbot-skills)。对齐 positioning pivot(运行时层,知识层引 cannbot 不自研)。
-- **task ≠ renamed session** —— task 坐 CheckpointStore thread 之上(1 task = 1+ threads);与 SessionRecordManager 的 session 区别:session = 对话记录树,task = 工作单元(跨 session/线程,带类型 + 关系 + 状态)。非重复概念。
+- **task ≠ renamed session** —— task 坐 CheckpointStore thread 之上(1 task = 1+ threads);与 SessionRecordManager 的 session 区别:session = 对话记录树,task = 工作单元(跨 session/线程,带类型 + 关系 + 状态)。**为何新抽象非扩 session**:task 跨多 session/线程(R4)、type-driven executor dispatch(R11-14)、typed relations 跨 session 边(R2)—— 均不适 session 的 per-session 树模型。
 
 ---
 
@@ -46,7 +46,7 @@ topic: task-management-layer
 |----|------|------|
 | A1 | GPU 算子迁移工程师 | 提诉求、选/切 active task、查进展、手动编辑任务关系 |
 | A2 | 任务管理 agent | 路由分类、诉求拆解、任务类型识别、自动关系构建、上下文管理 |
-| A3 | 任务执行器 | 按 type 调用现有能力:PhaseRunner(develop/optimize 算子部分)/ Path A(migrate)/ 新建 analyze/optimize flow |
+| A3 | 任务执行器 | 按 type 路由到执行器(PhaseRunner develop / Path A migrate / 外部 analyze/optimize executor),本层不实现 analyze/optimize 内部 flow(passthrough)|
 | A4 | 任务图存储 | task + relation + context 持久化,坐 CheckpointStore 之上 |
 
 ---
@@ -88,26 +88,26 @@ flowchart TB
 
 ### 交互路由
 
-- R5. 用户显式选/切 active task;agent 路由分类用户输入为 on-active-task / off-task / new-task / progress-query。**兜底**:低置信默认 on-active-task + 发 disambiguation prompt(不自动 spawn 新任务);显式命令 `/task <id>` `/progress` 绕过分类器。
+- R5. 用户显式选/切 active task;agent 路由分类用户输入为 on-active-task / off-task / new-task / progress-query。**兜底**:低置信默认 on-active-task + 发 disambiguation prompt(不自动 spawn 新任务);显式命令 `/task <id>` `/progress` 绕过分类器。**opt-out**:配置 always-on-task / explicit-only 模式;一期-b 默认 explicit-only(只用显式命令),fixture 校准达阈后再 default-on 分类器。
 - R6. off-task(闲聊)输入:agent 简答 + 软牵引回 active task(不阻断、不丢上下文)。**nudge 模式可配**(off / soft / firm,默认 soft);一期宽松(只明显闲聊才牵引),阈值 plan 实测校准。
 - R7. new-task:agent 拆解诉求 → 识别 type + object → 建 task + 自动关系 → 设为 active。
-- R8. progress-query:用户可查任务列表 + 单任务进展(state + 阶段 + 子任务 + 产物索引)。**net-new 聚合**(task→[thread] join + 关系遍历,sit above `CheckpointStore.list_pending`,非 thin reuse)。
+- R8. progress-query:用户可查任务列表 + 单任务进展(state + 阶段 + 子任务 + 产物索引)。**net-new 聚合**:读 R15 rollup 的 task state(single source,不重算)+ 加关系遍历 + 产物索引,sit above `CheckpointStore.list_pending`(需扩 list_all_threads 含 done,非 thin reuse)。
 
 ### 上下文隔离
 
 - R9. active task 的 context(memory + 对话 + checkpoint)为执行主域,执行时不混入其他任务 context。
-- R10. 受控跨任务读:agent 按关系图读取关联任务的产物(报告/状态),读权限按关系类型定(`depends-on` 可读、`related-to` 只读摘要)。
+- R10. 受控跨任务读:agent 按关系图读取关联任务的产物(报告/状态),读权限按关系类型定(`depends-on` 可读关联产物;`related-to` 权限随该关系本身延后到出现 consumer)。
 
 ### 任务类型 WHAT(4 类)
 
 - R11. **migrate**(模型迁移):输入 model repo + 入口脚本(.py/.sh)+ 可选 profiling;输出 NPU 适配脚本 + 迁移报告。含/不含自定义算子两场景(含 → 触发 Path A migrate-cuda/triton/native-composition;不含 → transfer_to_npu + native adapt)。复用 Path A(`docs/brainstorms/2026-07-06-003-...`)。
 - R12. **analyze**(性能分析):输入 model/op + 可选 profiling;输出分析报告(核心瓶颈 op + 优化方案/措施建议)。**边界 vs Path A**:Path A 内置迁移过程中的诊断(inline);独立 analyze 任务做**模型级独立性能分析**(可脱离迁移单独跑)。passthrough 到外部 executor,本层不自建 flow。内部 flow 留 plan。
-- R13. **optimize**(性能优化):输入 analyze 报告 / 瓶颈 op;输出优化(替换已有自定义融合算子 / 实现新高性能算子)+ 优化报告。复用算子开发(路径 B)+ Path A migrate-cuda/native-composition。内部 flow 留 plan。
+- R13. **optimize**(性能优化):输入 analyze 报告 / 瓶颈 op;输出优化(替换已有自定义融合算子 / 实现新高性能算子)+ 优化报告。**边界 vs Path A**:Path A 内置迁移过程中的优化(inline);独立 optimize 任务做脱离迁移的瓶颈算子替换/新实现,passthrough 到算子开发(路径 B)/ Path A migrate-cuda/native-composition,本层不自建 flow。内部 flow 留 plan。
 - R14. **develop**(算子开发):输入算子需求;输出 AscendC/triton kernel 工程 + 验证。复用现有 PhaseRunner(`op:` 前缀 flow,`state_machine.py`)。
 
 ### 任务生命周期
 
-- R15. 任务 state = 子 thread states 的 rollup(running iff 任一 thread running/waiting_confirm;done iff 全 thread done;failed iff 任一 failed 且无 running;paused = 用户显式暂停全部 thread)。对外状态 draft / running / paused / done / failed。可 resume(从 checkpoint 续跑)。
+- R15. 任务 state 分两类:**rollup 自 thread states**(running iff 任一 thread running/waiting_confirm;done iff 全 thread done;failed iff 任一 failed 且无 running)+ **task-layer-native**(draft = 建 task 后未 spawn thread;paused = 用户显式暂停,task 层标志 —— CheckpointStore status enum 无 paused/draft,这俩不 rollup)。混合状态优先级 `running > waiting_confirm > failed > paused > done`。对外状态 draft / running / paused / done / failed。可 resume(从 checkpoint 续跑)。
 
 ---
 
@@ -118,7 +118,7 @@ flowchart TB
 - AE3. **Covers R2, R3, R7.** 迁移中发现瓶颈 → agent 自动建 analyze task(`spawned-by` migrate)→ 用户可切去 analyze。
 - AE4. **Covers R10.** analyze task `depends-on` migrate → 读关联 migrate 的迁移报告(受控跨任务读,只读产物)。
 - AE5. **Covers R8.** 用户"进展怎么样" → progress-query → 列任务 + active task 进展。
-- AE6. **Covers R2.** 用户手动 add relation:optimize task `related-to` 另一 analyze task。
+- AE6. **Covers R2.** 用户手动 add relation:optimize task `depends-on` 另一 analyze task(一期仅 spawned-by/depends-on 可手动加)。
 - AE7. **Covers R15.** 用户 paused 的 task → resume → 从 checkpoint 续跑。
 - AE8. **Covers R1, R14.** 用户"开发 add 算子" → new-task type=develop → 调 PhaseRunner。
 - AE9. **Covers R12.** analyze 任务(passthrough 路由):用户单独跑模型级性能分析(脱离 migrate)→ 路由到外部 analyze executor → 出分析报告。
@@ -131,10 +131,11 @@ flowchart TB
 ## Success Criteria
 
 - 4 任务类型可独立 start + 各自产出报告/产物(migrate/develop 复用现有,analyze/optimize 定 WHAT)。
-- 任务关系**建议 + 用户确认**(非 silent auto-build);建议准确率(`spawned-by` / `depends-on`)≥ 80%(对比手工标注,fixture 校准)。
+- 一期-a success:task list + progress-query dogfood(用户能列/选/查任务,无需手动 juggling)。
+- 一期-b success:任务关系**建议 + 用户确认**(非 silent auto-build);建议准确率(`spawned-by` / `depends-on`)≥ 80%(对比手工标注,fixture 校准)。
 - off-task 软牵引不误伤 on-task 输入(误判率 plan 实测校准,一期宽松)。
 - 任务上下文隔离:active task 执行时不混入其他任务 context(单测验证)。
-- 问题级 metric(辅助):用户 2-task session 无需手动 context juggling 即可切换/查询(dogfood 2 周记录)。
+- 问题级 metric(辅助):用户 2-task session 无需手动 context juggling(dogfood 2 周,对比 一期-a 前基线)。
 
 ---
 
@@ -142,8 +143,9 @@ flowchart TB
 
 ### Phased delivery(推荐,不砍 scope)
 
-- **一期-a(先行验证痛点假设)**:task list(R1 type+state)+ R8 progress-query + R14 develop 复用 + 显式 `/task` `/progress` 命令(绕过分类器,规避 R5 风险)。
+- **一期-a(先行验证痛点假设)**:task list(R1 type+state)+ R8 progress-query + R14 develop 复用 + 显式 `/task` `/progress` 命令(绕过分类器,规避 R5 风险)。**不含 migrate/optimize**(gated on Path A plan-done + executor spike,见 Dependencies)。
 - **一期-b**:typed graph(R2)+ 上下文隔离(R9/R10)+ LLM 路由分类器(R5/R6)。
+- **一期-a → 一期-b go/no-go gate(task 层 falsifier)**:一期-a dogfood 须出 measurable 痛点验证(如 用户自发切任务 ≥N 次/周 或 手动 context-juggling 投诉超阈值);未达则放弃 task 层、记录 finding。R5 fallback 只管 router,本 gate 是 task 层本身的 kill-switch。
 - 目的:先验证 task 抽象 + 进展查询的痛点假设,再投 graph/isolation/classifier(3+ persona 共指分期建议)。
 
 ### Deferred for later(二期 / plan)
