@@ -24,7 +24,7 @@ PhaseRunner 写)。
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ascend_op_agent.task_store.models import THREAD_RUNNING, THREAD_WAITING_CONFIRM
 from ascend_op_agent.task_store.rollup import rollup_task_state
@@ -58,13 +58,20 @@ def get_task_progress(task_id: str, store: TaskStore, checkpoint_store) -> Dict[
     if task is None:
         raise KeyError(f"unknown task: {task_id}")
 
-    state = rollup_task_state(task_id, store, checkpoint_store.get_status)
+    # 单快照:一次 list_all_threads 派生 state(rollup)+ thread details,避免
+    # N×get_status 与 list_all_threads 不同刻读导致 state/threads 不一致(adversarial/correctness P1)
+    snapshot = {pc.thread_id: pc for pc in checkpoint_store.list_all_threads()}
+
+    def _status_fn(tid: str) -> Optional[str]:
+        pc = snapshot.get(tid)
+        return pc.status if pc is not None else None
+
+    state = rollup_task_state(task_id, store, _status_fn)
     thread_ids = store.get_task_threads(task_id)
-    all_threads = {pc.thread_id: pc for pc in checkpoint_store.list_all_threads()}
 
     threads: List[Dict[str, Any]] = []
     for tid in thread_ids:
-        pc = all_threads.get(tid)
+        pc = snapshot.get(tid)
         threads.append(
             {
                 "thread_id": tid,

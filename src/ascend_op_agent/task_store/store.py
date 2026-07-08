@@ -97,6 +97,11 @@ class TaskStore:
     def _conn(self) -> Iterator[sqlite3.Connection]:
         c = sqlite3.connect(str(self.db_path), check_same_thread=False)
         c.row_factory = sqlite3.Row
+        # PRAGMA 连接级(busy_timeout/synchronous):_init_schema 只设一次不够,每连接都要
+        # —— 否则并发写 BEGIN IMMEDIATE 立即 SQLITE_BUSY 而非等 30s(reliability P2)。
+        # journal_mode=WAL 是 db 级持久,留在 _init_schema 即可。
+        c.execute("PRAGMA busy_timeout=30000")
+        c.execute("PRAGMA synchronous=NORMAL")
         try:
             yield c
         finally:
@@ -142,7 +147,13 @@ class TaskStore:
         return [_row_to_task(r) for r in rows]
 
     def link_thread(self, task_id: str, thread_id: str) -> None:
-        """关联 task ↔ thread(R4:1 task = 1+ threads)。幂等(INSERT OR IGNORE)。"""
+        """关联 task ↔ thread(R4:1 task = 1+ threads)。幂等(INSERT OR IGNORE)。
+
+        Raises:
+            KeyError: task_id 不存在(防孤儿 task_threads 行 → list_progress KeyError,adversarial)。
+        """
+        if self.get_task(task_id) is None:
+            raise KeyError(f"unknown task: {task_id}")
         now = _now_iso()
         with self._conn() as c:
             try:
@@ -182,7 +193,13 @@ class TaskStore:
                 raise
 
     def set_active(self, task_id: str) -> None:
-        """显式选/切 active task(R5,一期-a explicit)。存 tasks_meta。"""
+        """显式选/切 active task(R5,一期-a explicit)。存 tasks_meta。
+
+        Raises:
+            KeyError: task_id 不存在(防 phantom active,adversarial/reliability)。
+        """
+        if self.get_task(task_id) is None:
+            raise KeyError(f"unknown task: {task_id}")
         with self._conn() as c:
             try:
                 c.execute("BEGIN IMMEDIATE")

@@ -763,7 +763,11 @@ def _task_commands(ctx: click.Context):
 def task_list(ctx: click.Context) -> None:
     """列任务 + state + thread 数。"""
     cmds = _task_commands(ctx)
-    rows = cmds.list()
+    try:
+        rows = cmds.list()
+    except Exception as e:  # noqa: BLE001 - CLI 出口聚合(SQLITE_BUSY 等,与 task_progress 一致)
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
     if not rows:
         console.print("[yellow]无任务[/yellow]")
         return

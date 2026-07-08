@@ -86,7 +86,10 @@ class TaskRouter:
                 "PhaseRunner (orchestrator) not wired — op: 路由未接线(见 backend.py)"
             )
         tid = thread_id or uuid.uuid4().hex[:12]
+        # link BEFORE invoke:thread 执行期对 progress 可见 + invoke 失败不孤儿
+        # (adversarial/correctness/reliability 共指 P1:原 invoke→link 顺序,link 失败则
+        # checkpoint 已写但 thread 永远不被 rollup 看到)
+        self.store.link_thread(task_id, tid)
         # develop type → 转 op: 调用 PhaseRunner(insertion point 决策,F3)
         state = self.orchestrator.invoke(user_input, thread_id=tid)
-        self.store.link_thread(task_id, tid)
         return {"thread_id": tid, "state": state}

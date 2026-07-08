@@ -75,3 +75,33 @@ def test_task_progress_no_active(tmp_path):
     result = _invoke(db, ck, "progress")
     assert result.exit_code == 1
     assert "no active task" in result.output
+
+
+def test_task_select_unknown(tmp_path):
+    """testing P1:CLI task select unknown → exit 1(另两个错误出口已测,此分支补)。"""
+    db, ck = tmp_path / "tasks.db", tmp_path / "ck.db"
+    result = _invoke(db, ck, "select", "nope")
+    assert result.exit_code == 1
+    assert "unknown task" in result.output
+
+
+def test_store_link_thread_unknown_task_rejected(tmp_path):
+    """adversarial P2:link_thread 防孤儿 task_threads 行(store 层校验)。"""
+    from ascend_op_agent.task_store import TaskStore
+
+    store = TaskStore(tmp_path / "tasks.db")
+    import pytest
+
+    with pytest.raises(KeyError, match="unknown task"):
+        store.link_thread("phantom-task", "t1")
+
+
+def test_store_set_active_unknown_task_rejected(tmp_path):
+    """adversarial/reliability P3:set_active 防 phantom active。"""
+    from ascend_op_agent.task_store import TaskStore
+
+    store = TaskStore(tmp_path / "tasks.db")
+    import pytest
+
+    with pytest.raises(KeyError, match="unknown task"):
+        store.set_active("phantom-task")
