@@ -58,3 +58,50 @@ T0 = 0,0(基线)。
 
 一期-a 代码路径 0 处 import `npu_exec / ssh / 192.168.9.105`。
 只有走顶层 `ascend-op-agent run 'op: ...'` 才会触发 SSH(P0/P1 ship gate 范畴,不在 dogfood 范畴)。
+
+## T0 单元测试门(0 回归)
+
+```
+PYTHONPATH=src pytest tests/unit/test_task_store.py tests/unit/test_rollup.py \
+    tests/unit/test_progress.py tests/unit/test_commands.py \
+    tests/unit/test_executor_dispatch.py tests/unit/test_cli_task.py
+→ 55 passed in 0.42s
+```
+
+覆盖:TaskStore CRUD(10) + R15 rollup(13) + R8 progress(6) + TaskCommands(11) + TaskRouter dispatch(7) + CLI task 端到端(8)。任何回归先修再开始 dogfood。
+
+## 已知 dogfood 期间 UX 边界(scope,非 bug)
+
+**只有 CLI 接了 task 命令**。TUI/chat 侧 `/task` `/progress` 斜杠命令 handler **未实现**(`commands.py:17-18` 注释说"CLI 与 chat 共用",但 chat side 还未接)。
+
+**dogfood 期间的 workaround**:
+- TUI/chat 用户:开个 terminal,用 `python -m ascend_op_agent.cli task ...`
+- 不影响 falsifier metric 采集(`falsifier_baseline.py` 直接读 sqlite,与 CLI 路径无关)
+- 二期-b 接 Path A 时,R5 会引入 LLM 路由分类器,届时 chat/TUI 侧补 `/task` 解析
+
+## Dogfood 期间使用模式建议
+
+每天/每次操作时:
+
+1. **新建任务前**先 `task list` 看 active 是谁
+2. **真要切换时**用 `task select <id>`,而不是直接开新窗口(否则 context juggling 投诉会爆)
+3. **查进展时**用 `task progress`(`task progress <id>` 看非 active)
+4. **结束一天**:`task list` 一眼过 active + 各 task 状态
+
+**手动 metrics 怎么记**:
+- `spontaneous_task_switches`:每次 `task select <id>` +1(或用 `grep set_active ~/.ascend_op_agent/tasks.db` 看次数,但 WAL 下不一定准,推荐手记)
+- `context_juggling_complaints`:每次你/同事嘟囔"我刚才切到哪了"、"这进展在哪看"时记一次
+
+## T1 取点(2 周后)
+
+```bash
+# 采集 T1 baseline
+PYTHONPATH=src python scripts/falsifier_baseline.py > docs/dogfood/2026-07-22-phase-1a-t1/t1_prod_baseline.json
+
+# 写 go/no-go 决议(2 周后)
+#   spontaneous_task_switches ≥ 阈值(建议 5) 且/或 context_juggling_complaints > 0
+#     → GO:接 R5 + U8 + Path A → 二期-b
+#     → NO-GO:abandon task 层(R5 fallback 只管 router,本 gate 是 kill-switch)
+```
+
+阈值"5"是建议起点,一期-a dogfood 后视真实分布再定。
