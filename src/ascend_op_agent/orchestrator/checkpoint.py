@@ -371,6 +371,31 @@ class CheckpointStore:
             for r in rows
         ]
 
+    def list_all_threads(self) -> list[PendingCheckpoint]:
+        """列出全部 checkpoint(含 done)—— task 层 progress 聚合用。
+
+        read-only / additive(R12/KTD1 不变式:只加 read-only 方法,不改
+        ``list_pending``/``save``/``resume`` 语义)。与 ``list_pending`` 同 shape,
+        但不过滤 ``status != done``。
+        """
+        with self._conn() as c:
+            rows = c.execute(
+                """
+                SELECT thread_id, current_phase, status, updated_at
+                FROM checkpoints
+                ORDER BY updated_at ASC
+                """
+            ).fetchall()
+        return [
+            PendingCheckpoint(
+                thread_id=r["thread_id"],
+                current_phase=r["current_phase"],
+                status=r["status"],
+                updated_at=r["updated_at"],
+            )
+            for r in rows
+        ]
+
     def mark_waiting(
         self,
         thread_id: str,
