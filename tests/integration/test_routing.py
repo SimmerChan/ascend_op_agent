@@ -165,18 +165,22 @@ def test_cli_task_calibrate_missing_fixture_fails():
     assert result.exit_code != 0
 
 
-def test_cli_task_group_accepts_classifier_fixture_flag():
-    """``--classifier-fixture`` opt-in flag 在 task group 接受(KTD12 入口)。"""
+def test_cli_task_group_rejects_removed_classifier_fixture_flag():
+    """``--classifier-fixture`` group flag 已移除(dead surface)→ click 抛 NoSuchOption。
+
+    见 cli.py task group docstring:flag 写 ctx.obj 无子命令消费,已删;
+    free-text fixture-driven 分类入口待 backend 集成 follow-up 按 KTD12 加回。
+    """
+    import click as _click
+
     runner = CliRunner()
-    # 不实际用 fixture,只验 flag 被 group 接受(走 list 子命令,无 task 也 ok)
     result = runner.invoke(
         main,
         ["task", "--classifier-fixture", str(FIXTURE_PATH), "list"],
         standalone_mode=False,
     )
-    # list 可能因无 db 抛错,但不应是 click UsageError(flag 被识别)
-    # exit_code 0 或 1 都行,只要不是 "no such option" usage error
-    assert "no such option" not in result.output.lower()
+    # standalone_mode=False → NoSuchOption 作为 exception 抛,不渲染到 output
+    assert isinstance(result.exception, _click.NoSuchOption)
 
 
 # ---- CalibrationRunner + fixture 端到端(#8 覆盖) ----

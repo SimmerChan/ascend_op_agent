@@ -727,29 +727,25 @@ def viewer(ctx: click.Context, only_backend: bool, port: int) -> None:
 @main.group()
 @click.option("--db", default=None, help="tasks.db 路径(默认 ~/.ascend_op_agent/tasks.db)")
 @click.option("--ck", default=None, help="checkpoints.db 路径(默认 config.checkpoint.db_path)")
-@click.option(
-    "--classifier-fixture",
-    default=None,
-    type=click.Path(exists=True, dir_okay=False),
-    help="classifier fixture JSONL 路径(KTD12 opt-in;启用 fixture-driven 分类模式)",
-)
 @click.pass_context
 def task(
     ctx: click.Context,
     db: Optional[str],
     ck: Optional[str],
-    classifier_fixture: Optional[str],
 ) -> None:
     """任务管理(一期-a:list / new / select / progress;一期-b 加 calibrate)。
 
-    一期-b 默认 explicit-only(KTD7),free-text 不分类。``--classifier-fixture``
-    opt-in 启用 KTD12 fixture 模式(显式分类器入口)。run(develop dispatch)经
+    一期-b 默认 explicit-only(KTD7),free-text 不分类。run(develop dispatch)经
     backend op: 路由(`ascend-op-agent run` + op: 前缀),不在本 group。
+
+    注:plan U7 KTD12 的 group-level ``--classifier-fixture`` opt-in flag 已移除 ——
+    它写入 ctx.obj 但无子命令消费(dead surface,误导用户)。``task calibrate`` 有
+    自己的 ``--fixture``;free-text fixture-driven 分类入口待 backend 集成 follow-up
+    时按 KTD12 加回。
     """
     ctx.ensure_object(dict)
     ctx.obj["task_db"] = db
     ctx.obj["task_ck"] = ck
-    ctx.obj["classifier_fixture"] = classifier_fixture
 
 
 def _task_commands(ctx: click.Context):
@@ -1010,19 +1006,19 @@ def task_calibrate(
         backend = "rule-based"
     else:
         # 无 LLM wiring 的 IntentClassifier:所有输入走 KTD13 fallback
-        # (生产用法是 wiring 真 LLM,见 backend 集成 follow-up)
+        # (生产用法是 wiring 真 LLM,见 backend 集成 follow-up)。
+        # CLI 层从不 wire 真 LLM → 此路径 accuracy 无意义(全 fallback),显眼警告
+        # 防 ~25% 误导数字被当真;确定性校准请加 --rule-based。
+        console.print(
+            "[yellow]⚠ 未 --rule-based 且 CLI 未 wire 真 LLM:IntentClassifier 全走 "
+            "KTD13 fallback,accuracy 数字无意义。加 --rule-based 跑确定性校准。[/yellow]"
+        )
         classifier = IntentClassifier(llm_call=None)
-        backend = "llm-intent(unwired → all-fallback)"
+        backend = "llm-intent(unwired → all-fallback,数字无意义)"
 
     report = CalibrationRunner(classifier).run(examples)
     console.print(f"[bold]classifier fixture 校准[/bold] ({len(examples)} examples, backend={backend})")
     console.print(report.format_text())
-
-
-# opt-in:主入口可加 ``--classifier-fixture`` 暴露 fixture 路径到 ctx(U7 KTD12)。
-# task group 已有 --db/--ck;此处 group-level option 让 calibrate/suggest 等子命令
-# 共享 fixture 路径(default None = 不启用 fixture 模式,沿用 KTD7 explicit-only)。
-
 
 
 if __name__ == "__main__":
