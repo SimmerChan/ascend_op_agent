@@ -25,8 +25,15 @@ from ascend_op_agent.task_store import (
     STATE_NATIVE_NONE,
     TASK_TYPE_ANALYZE,
     TASK_TYPE_DEVELOP,
+    TASK_TYPE_MIGRATE,
     TASK_TYPES,
     TaskStore,
+)
+from ascend_op_agent.task_store.relations import (
+    RELATION_DEPENDS_ON,
+    RELATION_SPAWNED_BY,
+    RelationCycleError,
+    RelationNotFoundError,
 )
 
 
@@ -145,3 +152,117 @@ def test_run_dispatches(store):
     result = cmds.run(tid, "开发 add", thread_id="th-9")
     assert router.dispatched == [(tid, "开发 add", "th-9")]
     assert result["thread_id"] == "th-9"
+
+
+# ---- U5: link / unlink / edit_relation / suggest ----
+
+
+def test_link_creates_relation(store):
+    """AE6:手动 link <a> <b> depends-on → 落库。"""
+    cmds = TaskCommands(store, checkpoint_store=FakeCheckpointStore({}))
+    a = store.create_task(TASK_TYPE_DEVELOP)
+    b = store.create_task(TASK_TYPE_ANALYZE)
+    rel = cmds.link(a, b, RELATION_DEPENDS_ON, confidence=0.8)
+    assert rel.src_task_id == a
+    assert rel.dst_task_id == b
+    assert rel.relation_type == RELATION_DEPENDS_ON
+    assert cmds.relations.get_relation(a, b, RELATION_DEPENDS_ON) is not None
+
+
+def test_link_validates_task_existence(store):
+    """commands 层校验 task 存在(RelationStore FK 不强制)。"""
+    cmds = TaskCommands(store, checkpoint_store=FakeCheckpointStore({}))
+    a = store.create_task(TASK_TYPE_DEVELOP)
+    with pytest.raises(KeyError, match="unknown task"):
+        cmds.link(a, "phantom", RELATION_SPAWNED_BY)
+    with pytest.raises(KeyError, match="unknown task"):
+        cmds.link("phantom", a, RELATION_SPAWNED_BY)
+
+
+def test_link_rejects_unknown_relation_type(store):
+    cmds = TaskCommands(store, checkpoint_store=FakeCheckpointStore({}))
+    a = store.create_task(TASK_TYPE_DEVELOP)
+    b = store.create_task(TASK_TYPE_DEVELOP)
+    with pytest.raises(ValueError, match="unknown relation type"):
+        cmds.link(a, b, "blocks")
+
+
+def test_link_cycle_raises(store):
+    cmds = TaskCommands(store, checkpoint_store=FakeCheckpointStore({}))
+    a = store.create_task(TASK_TYPE_DEVELOP)
+    b = store.create_task(TASK_TYPE_DEVELOP)
+    cmds.link(a, b, RELATION_SPAWNED_BY)
+    with pytest.raises(RelationCycleError):
+        cmds.link(b, a, RELATION_SPAWNED_BY)
+
+
+def test_unlink_removes_relation(store):
+    cmds = TaskCommands(store, checkpoint_store=FakeCheckpointStore({}))
+    a = store.create_task(TASK_TYPE_DEVELOP)
+    b = store.create_task(TASK_TYPE_DEVELOP)
+    cmds.link(a, b, RELATION_SPAWNED_BY)
+    n = cmds.unlink(a, b)
+    assert n == 1
+    assert cmds.relations.get_relation(a, b, RELATION_SPAWNED_BY) is None
+
+
+def test_unlink_no_match_returns_zero(store):
+    cmds = TaskCommands(store, checkpoint_store=FakeCheckpointStore({}))
+    a = store.create_task(TASK_TYPE_DEVELOP)
+    b = store.create_task(TASK_TYPE_DEVELOP)
+    assert cmds.unlink(a, b) == 0
+
+
+def test_edit_relation_in_place(store):
+    """R2 edit:in-place 改 type + confidence。"""
+    cmds = TaskCommands(store, checkpoint_store=FakeCheckpointStore({}))
+    a = store.create_task(TASK_TYPE_DEVELOP)
+    b = store.create_task(TASK_TYPE_DEVELOP)
+    cmds.link(a, b, RELATION_DEPENDS_ON, confidence=0.3)
+    edited = cmds.edit_relation(a, b, RELATION_SPAWNED_BY, confidence=0.9)
+    assert edited.relation_type == RELATION_SPAWNED_BY
+    assert edited.confidence == 0.9
+    # 旧 type 消失
+    assert cmds.relations.get_relation(a, b, RELATION_DEPENDS_ON) is None
+    assert cmds.relations.get_relation(a, b, RELATION_SPAWNED_BY) is not None
+
+
+def test_edit_relation_not_found_raises(store):
+    """Error:edit-relation 目标不存在 → raise。"""
+    cmds = TaskCommands(store, checkpoint_store=FakeCheckpointStore({}))
+    a = store.create_task(TASK_TYPE_DEVELOP)
+    b = store.create_task(TASK_TYPE_DEVELOP)
+    with pytest.raises(RelationNotFoundError):
+        cmds.edit_relation(a, b, RELATION_SPAWNED_BY, confidence=0.8)
+
+
+def test_suggest_returns_filtered_and_does_not_persist(store):
+    """suggest 经 TaskCommands:mock LLM,过滤 threshold,不落库。"""
+    import json
+
+    migrate_id = store.create_task(TASK_TYPE_MIGRATE, {"repo": "x"})
+    analyze_id = store.create_task(TASK_TYPE_ANALYZE, {"op": "add"})
+    store.set_active(migrate_id)
+    cmds = TaskCommands(store, checkpoint_store=FakeCheckpointStore({}))
+
+    def llm(prompt):
+        return json.dumps(
+            {
+                "relations": [
+                    {"relation_type": "spawned-by", "confidence": 0.9}
+                ]
+            }
+        )
+
+    suggestions = cmds.suggest(new_task_id=analyze_id, llm_call=llm)
+    assert len(suggestions) == 1
+    assert suggestions[0].relation_type == "spawned-by"
+    # KTD4:不落库
+    assert cmds.relations.list_relations(analyze_id) == []
+
+
+def test_suggest_no_active_raises(store):
+    cmds = TaskCommands(store, checkpoint_store=FakeCheckpointStore({}))
+    with pytest.raises(NoActiveTaskError):
+        cmds.suggest()
+

@@ -105,3 +105,102 @@ def test_store_set_active_unknown_task_rejected(tmp_path):
 
     with pytest.raises(KeyError, match="unknown task"):
         store.set_active("phantom-task")
+
+
+# ---- U5: link / unlink / edit-relation / suggest CLI ----
+
+
+def _make_two_tasks(db, ck):
+    """建两个 task,返回 (id_a, id_b)。"""
+    from ascend_op_agent.task_store import TaskStore
+
+    store = TaskStore(db)
+    a = store.create_task("develop")
+    b = store.create_task("analyze")
+    return a, b
+
+
+def test_task_link_and_unlink(tmp_path):
+    """AE6:CLI task link <a> <b> depends-on → 落库;unlink 删除。"""
+    db, ck = tmp_path / "tasks.db", tmp_path / "ck.db"
+    a, b = _make_two_tasks(db, ck)
+    r_link = _invoke(db, ck, "link", a, b, "depends-on", "--confidence", "0.8")
+    assert r_link.exit_code == 0
+    assert "depends-on" in r_link.output
+    assert a in r_link.output and b in r_link.output
+    # 落库校验
+    from ascend_op_agent.task_store import TaskStore
+    from ascend_op_agent.task_store.relations import RelationStore
+
+    rs = RelationStore(db)
+    assert rs.get_relation(a, b, "depends-on") is not None
+    # unlink
+    r_unlink = _invoke(db, ck, "unlink", a, b)
+    assert r_unlink.exit_code == 0
+    assert "removed" in r_unlink.output
+    assert rs.get_relation(a, b, "depends-on") is None
+
+
+def test_task_link_unknown_task_errors(tmp_path):
+    db, ck = tmp_path / "tasks.db", tmp_path / "ck.db"
+    a, _ = _make_two_tasks(db, ck)
+    r = _invoke(db, ck, "link", a, "phantom", "spawned-by")
+    assert r.exit_code == 1
+    assert "unknown task" in r.output
+
+
+def test_task_link_bad_relation_type_errors(tmp_path):
+    db, ck = tmp_path / "tasks.db", tmp_path / "ck.db"
+    a, b = _make_two_tasks(db, ck)
+    r = _invoke(db, ck, "link", a, b, "blocks")
+    assert r.exit_code == 1
+    assert "unknown relation type" in r.output
+
+
+def test_task_edit_relation_in_place(tmp_path):
+    """R2 edit:CLI edit-relation 改 type + confidence(不删+重插)。"""
+    db, ck = tmp_path / "tasks.db", tmp_path / "ck.db"
+    a, b = _make_two_tasks(db, ck)
+    _invoke(db, ck, "link", a, b, "depends-on", "--confidence", "0.3")
+    r = _invoke(
+        db, ck, "edit-relation", a, b, "--type", "spawned-by", "--confidence", "0.9"
+    )
+    assert r.exit_code == 0
+    assert "spawned-by" in r.output
+    # 旧 type 消失,新 type 在
+    from ascend_op_agent.task_store.relations import RelationStore
+
+    rs = RelationStore(db)
+    assert rs.get_relation(a, b, "depends-on") is None
+    rel = rs.get_relation(a, b, "spawned-by")
+    assert rel is not None
+    assert rel.confidence == 0.9
+
+
+def test_task_edit_relation_not_found_errors(tmp_path):
+    """Error:edit-relation 目标不存在 → exit 1。"""
+    db, ck = tmp_path / "tasks.db", tmp_path / "ck.db"
+    a, b = _make_two_tasks(db, ck)
+    r = _invoke(
+        db, ck, "edit-relation", a, b, "--type", "spawned-by", "--confidence", "0.8"
+    )
+    assert r.exit_code == 1
+    assert "no relation" in r.output
+
+
+def test_task_suggest_no_active_errors(tmp_path):
+    """suggest 无 active → NoActiveTaskError → exit 1。"""
+    db, ck = tmp_path / "tasks.db", tmp_path / "ck.db"
+    _make_two_tasks(db, ck)  # 建 task 不设 active
+    r = _invoke(db, ck, "suggest")
+    assert r.exit_code == 1
+    assert "no active task" in r.output
+
+
+def test_task_unlink_no_match(tmp_path):
+    db, ck = tmp_path / "tasks.db", tmp_path / "ck.db"
+    a, b = _make_two_tasks(db, ck)
+    r = _invoke(db, ck, "unlink", a, b)
+    assert r.exit_code == 0
+    assert "无关系" in r.output
+

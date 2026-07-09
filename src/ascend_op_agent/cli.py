@@ -825,5 +825,132 @@ def task_progress(ctx: click.Context, task_id: Optional[str]) -> None:
         console.print(f"  thread {th['thread_id']}: {th['status']} @ {th['phase']}")
 
 
+@task.command("link")
+@click.argument("src_task_id")
+@click.argument("dst_task_id")
+@click.argument("relation_type")
+@click.option(
+    "--confidence", type=float, default=None, help="置信度 0.0-1.0(可选)"
+)
+@click.pass_context
+def task_link(
+    ctx: click.Context,
+    src_task_id: str,
+    dst_task_id: str,
+    relation_type: str,
+    confidence: Optional[float],
+) -> None:
+    """建关系 SRC DST TYPE(spawned-by | depends-on)。手动 add / LLM suggest 确认。"""
+    cmds = _task_commands(ctx)
+    try:
+        rel = cmds.link(src_task_id, dst_task_id, relation_type, confidence=confidence)
+    except Exception as e:  # noqa: BLE001 - CLI 出口聚合
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+    console.print(
+        f"[green]✓[/green] linked [cyan]{rel.src_task_id}[/cyan] -> "
+        f"[cyan]{rel.dst_task_id}[/cyan] via {rel.relation_type}"
+        + (f" conf={rel.confidence}" if rel.confidence is not None else "")
+    )
+
+
+@task.command("unlink")
+@click.argument("src_task_id")
+@click.argument("dst_task_id")
+@click.pass_context
+def task_unlink(ctx: click.Context, src_task_id: str, dst_task_id: str) -> None:
+    """删关系 SRC → DST(全部 type 边)。"""
+    cmds = _task_commands(ctx)
+    try:
+        n = cmds.unlink(src_task_id, dst_task_id)
+    except Exception as e:  # noqa: BLE001 - CLI 出口聚合
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+    if n == 0:
+        console.print(
+            f"[yellow]无关系 {src_task_id} -> {dst_task_id}[/yellow]"
+        )
+    else:
+        console.print(
+            f"[green]✓[/green] removed {n} relation(s) "
+            f"[cyan]{src_task_id}[/cyan] -> [cyan]{dst_task_id}[/cyan]"
+        )
+
+
+@task.command("edit-relation")
+@click.argument("src_task_id")
+@click.argument("dst_task_id")
+@click.option(
+    "--type",
+    "relation_type",
+    type=click.Choice(["spawned-by", "depends-on"]),
+    required=True,
+    help="新关系类型",
+)
+@click.option(
+    "--confidence", type=float, default=None, help="新置信度 0.0-1.0(可选)"
+)
+@click.pass_context
+def task_edit_relation(
+    ctx: click.Context,
+    src_task_id: str,
+    dst_task_id: str,
+    relation_type: str,
+    confidence: Optional[float],
+) -> None:
+    """in-place 改关系 SRC → DST 的 type/confidence(不删+重插,保留 audit)。"""
+    cmds = _task_commands(ctx)
+    try:
+        rel = cmds.edit_relation(
+            src_task_id, dst_task_id, relation_type, confidence=confidence
+        )
+    except Exception as e:  # noqa: BLE001 - CLI 出口聚合
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+    console.print(
+        f"[green]✓[/green] edited [cyan]{rel.src_task_id}[/cyan] -> "
+        f"[cyan]{rel.dst_task_id}[/cyan] via {rel.relation_type}"
+        f" updated_at={rel.updated_at}"
+        + (f" conf={rel.confidence}" if rel.confidence is not None else "")
+    )
+
+
+@task.command("suggest")
+@click.option(
+    "--new-task-id", default=None, help="新 task id(缺省取 active)"
+)
+@click.option(
+    "--active-task-id", default=None, help="参照 task id(缺省取 active)"
+)
+@click.pass_context
+def task_suggest(
+    ctx: click.Context,
+    new_task_id: Optional[str],
+    active_task_id: Optional[str],
+) -> None:
+    """LLM 推荐关系(suggest,不落库;确认用 ``task link``)。"""
+    cmds = _task_commands(ctx)
+    try:
+        suggestions = cmds.suggest(
+            new_task_id=new_task_id, active_task_id=active_task_id
+        )
+    except Exception as e:  # noqa: BLE001 - CLI 出口聚合
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+    if not suggestions:
+        console.print("[yellow]无关系建议(低置信 / 无参照 / 未 wiring LLM)[/yellow]")
+        return
+    for s in suggestions:
+        console.print(
+            f"  suggest: [cyan]{s.src_task_id}[/cyan] -> "
+            f"[cyan]{s.dst_task_id}[/cyan] via {s.relation_type} conf={s.confidence:.2f}"
+            + (f" ({s.rationale})" if s.rationale else "")
+        )
+        console.print(
+            f"    confirm: ascend-op-agent task link {s.src_task_id} "
+            f"{s.dst_task_id} {s.relation_type} --confidence {s.confidence}"
+        )
+
+
 if __name__ == "__main__":
     main()

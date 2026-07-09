@@ -24,5 +24,15 @@ from ascend_op_agent.task_router.executor_dispatch import (
     TaskGatedError,
     TaskRouter,
 )
+from ascend_op_agent.task_router.relation_builder import (
+    RelationBuilder,
+    RelationSuggestion,
+)
 
-__all__ = ["TaskRouter", "TaskGatedError", "TaskExecutorUnavailable"]
+__all__ = [
+    "TaskRouter",
+    "TaskGatedError",
+    "TaskExecutorUnavailable",
+    "RelationBuilder",
+    "RelationSuggestion",
+]
