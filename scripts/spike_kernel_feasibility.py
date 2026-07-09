@@ -187,8 +187,15 @@ def run_one_op(
     op_desc: str,
     local_workdir: Path,
     npu,
+    use_scaffold_codegen: bool = False,
 ) -> OpResult:
-    """跑单个 op 的完整 pipeline: codegen → 910B compile → ST precision。"""
+    """跑单个 op 的完整 pipeline: codegen → 910B compile → ST precision。
+
+    use_scaffold_codegen=False(默认,真测 LLM):走 5 节点 LLM codegen,LLM 调
+    file_write 写 op_kernel.cpp/op_host.cpp/CMakeLists.txt/build.sh/op_kernel.ini。
+    use_scaffold_codegen=True:走硬编码 scaffold 复用(op_add,不调 LLM)—— 仅用于
+    基线对比,不测 LLM 能力。
+    """
     from ascend_op_agent.orchestrator import CheckpointStore, build_new_dev_graph
     from ascend_op_agent.orchestrator.nodes.validation import (
         make_real_compile_node, make_real_precision_node,
@@ -202,6 +209,12 @@ def run_one_op(
     if op_dir.exists():
         shutil.rmtree(op_dir)
     op_dir.mkdir(parents=True, exist_ok=True)
+
+    # use_scaffold_codegen=False 时,5 节点 LLM codegen 硬编码 operator_dir 写入
+    # /tmp/e2e_ops_local/op_add(见 new_dev.py:225)。确保该目录存在供 LLM file_write。
+    # (path 不匹配是首次 spike 0/5 的根因:scaffold 节点读该路径但 spike 没建)
+    if not use_scaffold_codegen:
+        Path("/tmp/e2e_ops_local/op_add").mkdir(parents=True, exist_ok=True)
 
     if SCAFFOLD_DIR.exists():
         IGNORE_NAMES = {"build", "__pycache__", ".git"}
@@ -238,7 +251,7 @@ def run_one_op(
                     "name", "add_example"
                 ),
             ),
-            use_scaffold_codegen=True,
+            use_scaffold_codegen=use_scaffold_codegen,
         )
 
         state = runner.invoke(op_desc, thread_id=thread_id)
@@ -279,8 +292,14 @@ def run_one_op(
     return result
 
 
-def run_spike(ops_to_run: list[tuple[str, str]]) -> list[OpResult]:
-    """跑全部 ops,continue-on-fail。"""
+def run_spike(
+    ops_to_run: list[tuple[str, str]],
+    use_scaffold_codegen: bool = False,
+) -> list[OpResult]:
+    """跑全部 ops,continue-on-fail。
+
+    use_scaffold_codegen 默认 False(真测 LLM 5 节点 codegen)。
+    """
     print(f"[spike] running {len(ops_to_run)} ops")
 
     # 910B SSH 可达性 probe
@@ -313,7 +332,10 @@ def run_spike(ops_to_run: list[tuple[str, str]]) -> list[OpResult]:
         print(f"[spike] [{i}/{len(ops_to_run)}] op={op_name}")
         print(f"{'='*60}")
         try:
-            result = run_one_op(op_name, op_desc, LOCAL_WORKDIR, npu)
+            result = run_one_op(
+                op_name, op_desc, LOCAL_WORKDIR, npu,
+                use_scaffold_codegen=use_scaffold_codegen,
+            )
         except Exception as e:
             result = OpResult(
                 name=op_name, description=op_desc,
@@ -379,6 +401,11 @@ def main() -> int:
         "--dry-run", action="store_true",
         help="不真跑(910B),只列 ops + 输出 GO/NO-GO 阈值",
     )
+    parser.add_argument(
+        "--scaffold-codegen", action="store_true",
+        help="走硬编码 scaffold 复用路径(不调 LLM,op_add 基线对比);"
+        "默认 False = 真测 LLM 5 节点 codegen(U1 本意)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -403,7 +430,7 @@ def main() -> int:
     else:
         ops_to_run = list(DEMO_OPS.items())
 
-    results = run_spike(ops_to_run)
+    results = run_spike(ops_to_run, use_scaffold_codegen=args.scaffold_codegen)
     return report(results)
 
 
