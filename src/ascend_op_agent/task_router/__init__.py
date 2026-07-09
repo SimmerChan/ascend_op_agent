@@ -21,6 +21,7 @@ Path A / 外部 executor,U8 接入)。一期-b 加 U7 意图分类器 + fixture 
 
 from ascend_op_agent.task_router.context_scope import ContextScope
 from ascend_op_agent.task_router.executor_dispatch import (
+    ExecutorNotImplemented,
     TaskExecutorUnavailable,
     TaskGatedError,
     TaskRouter,
@@ -64,6 +65,7 @@ __all__ = [
     "TaskRouter",
     "TaskGatedError",
     "TaskExecutorUnavailable",
+    "ExecutorNotImplemented",
     "RelationBuilder",
     "RelationSuggestion",
     "ContextScope",
