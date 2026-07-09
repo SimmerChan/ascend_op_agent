@@ -148,6 +148,37 @@ def make_llm_node(
             and entry.get("args", {}).get("path")
             and entry["args"]["path"] not in existing_paths
         ]
+
+        # 8b. Markdown fallback:某些 LLM(尤其 OpenAI 协议下的 GLM-5.2)在 codegen
+        # 阶段不调 file_write tool(可能 tool schema 不识 / 调 shell_exec 循环失败
+        # 达 max_iterations),但会输出 ```cpp // path/... \n<content>\n``` markdown
+        # 代码块。提取这些代码块进 code_result(同 e2e_real_op._extract_files_from_messages
+        # 的格式 1)。向后兼容:file_write 路径不变。
+        if not new_files:
+            for m in state.get("messages", []):
+                if m.get("role") != "assistant":
+                    continue
+                c = str(m.get("content", ""))
+                # 匹配 ```(cpp|c\+\+|c)? \n // path \n content \n ```
+                import re
+                for m_re in re.finditer(
+                    r"```(?:cpp|c\+\+|c)?\s*\n(?P<body>.*?)\n```", c, re.DOTALL
+                ):
+                    body = m_re.group("body")
+                    # 路径在 body 第一行 `// /path/...` 注释
+                    pm = re.match(r"//\s*([/\w.\-]+\.\S+)", body[:300])
+                    if not pm:
+                        continue
+                    path = pm.group(1)
+                    if path in existing_paths:
+                        continue
+                    # 剥第一行(路径注释)
+                    content = "\n".join(body.split("\n")[1:]).strip()
+                    if not content:
+                        continue
+                    existing_paths.add(path)
+                    new_files.append({"path": path, "content": content, "tool": "markdown_block"})
+
         if new_files:
             code_result["files"] = existing_files + new_files
 

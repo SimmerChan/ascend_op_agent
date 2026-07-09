@@ -230,11 +230,17 @@ def build_new_dev_graph(
                     f"【绝对路径】{{operator_dir}}/{fname}\n\n"
                     f"【本工程所有文件名(固定)】{all_files}\n"
                     f"严禁改名(不要 add_custom.cpp / my_kernel.cpp)。\n\n"
-                    f"【必须】调用 file_write 工具一次,参数:\n"
-                    f"  path = {{operator_dir}}/{fname}\n"
-                    f"  content = 完整文件内容\n\n"
-                    f"【禁止】把代码贴在 assistant 文本(没用 file_write 工具视为失败)。\n"
-                    f"写完后回 1 字符 'k'。"
+                    f"【输出格式 — 必须用 markdown 代码块】\n"
+                    f"```cpp\n"
+                    f"// {{operator_dir}}/{fname}\n"
+                    f"<完整文件内容>\n"
+                    f"```\n\n"
+                    f"【为什么用 markdown】某些 LLM(尤其 GLM 系列)的 tool calling 在 codegen 阶段"
+                    f"会反复重试达 max_iterations 失败(改自 2026-07-09 U1 spike)。用 markdown "
+                    f"代码块是更可靠的输出方式(也方便调试)。\n\n"
+                    f"【禁止】调用 file_write / shell_exec / python_exec 等 tool(本节点已"
+                    f"加 markdown fallback 提取代码块进 code_result.files)。\n"
+                    f"只输出 1 个 markdown 代码块(不要解释/不要其他文本)。"
                 ),
                 skill_bundle_text=bundles.get("codegen"),
                 skill_names=bundle_names.get("codegen"),
