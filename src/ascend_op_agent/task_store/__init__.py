@@ -19,6 +19,15 @@ runtime 任务层(不自建 domain flow)的数据层:独立 sqlite(sit Checkpoin
 task_relations/task_artifacts_index 随 U5/U6-U8 consumer 落。
 """
 
+from ascend_op_agent.task_store.artifacts import (
+    ARTIFACT_TYPE_LOG,
+    ARTIFACT_TYPE_REPORT,
+    ARTIFACT_TYPE_SCRIPT,
+    Artifact,
+    ArtifactStore,
+    MockArtifactWriter,
+    make_writer,
+)
 from ascend_op_agent.task_store.models import (
     STATE_DONE,
     STATE_DRAFT,
@@ -63,4 +72,11 @@ __all__ = [
     "THREAD_WAITING_CONFIRM",
     "THREAD_DONE",
     "THREAD_FAILED",
+    "Artifact",
+    "ArtifactStore",
+    "MockArtifactWriter",
+    "make_writer",
+    "ARTIFACT_TYPE_REPORT",
+    "ARTIFACT_TYPE_SCRIPT",
+    "ARTIFACT_TYPE_LOG",
 ]

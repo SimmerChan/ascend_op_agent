@@ -19,6 +19,7 @@ develop type 时 dispatch 转 op: 调用);migrate/analyze/optimize stub(gated on
 Path A / 外部 executor,U8 接入)。
 """
 
+from ascend_op_agent.task_router.context_scope import ContextScope
 from ascend_op_agent.task_router.executor_dispatch import (
     TaskExecutorUnavailable,
     TaskGatedError,
@@ -35,4 +36,5 @@ __all__ = [
     "TaskExecutorUnavailable",
     "RelationBuilder",
     "RelationSuggestion",
+    "ContextScope",
 ]
