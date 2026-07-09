@@ -1,0 +1,30 @@
+# U7 classifier minimal fixture(KTD12 ship 起点,~20 标注示例)
+# 格式:每行一个 JSON 对象 {input, active_task_id, label, nudge, confidence}。
+# 4 label 各 ≥1 + 低置信 fallback + timeout fallback 各 1。
+# 80% 校准门槛是 follow-up plan;本 fixture 只验框架跑通。
+# active_task_id 存在 → calibration 视 active 可运行(fallback→on-task);
+# active_task_id 为 null → fallback→disambiguation(#8 覆盖)。
+# 以 # 开头的行与空行被 FixtureLoader 忽略。
+{"input": "继续编译 add 算子", "active_task_id": "t_dev_01", "label": "on-task", "nudge": false, "confidence": 0.95}
+{"input": "把上一步的 kernel 改成 half 精度再跑一次", "active_task_id": "t_dev_01", "label": "on-task", "nudge": false, "confidence": 0.9}
+{"input": "重跑精度测试看看过了没", "active_task_id": "t_dev_01", "label": "on-task", "nudge": false, "confidence": 0.88}
+{"input": "帮我把当前 op 的 host 代码补全", "active_task_id": "t_dev_01", "label": "on-task", "nudge": false, "confidence": 0.92}
+{"input": "你好呀", "active_task_id": "t_dev_01", "label": "off-task", "nudge": true, "confidence": 0.97}
+{"input": "今天天气怎么样", "active_task_id": "t_dev_01", "label": "off-task", "nudge": true, "confidence": 0.95}
+{"input": "讲个笑话呗", "active_task_id": null, "label": "off-task", "nudge": true, "confidence": 0.93}
+{"input": "谢谢,辛苦了", "active_task_id": "t_dev_01", "label": "off-task", "nudge": true, "confidence": 0.9}
+{"input": "帮我迁这个模型到昇腾", "active_task_id": null, "label": "new-task", "nudge": false, "confidence": 0.93, "_task_type": "migrate"}
+{"input": "开个新任务分析一下这个 op 的性能瓶颈", "active_task_id": null, "label": "new-task", "nudge": false, "confidence": 0.9, "_task_type": "analyze"}
+{"input": "我想优化这个 matmul 算子", "active_task_id": null, "label": "new-task", "nudge": false, "confidence": 0.91, "_task_type": "optimize"}
+{"input": "现在任务进度到哪了", "active_task_id": "t_dev_01", "label": "progress-query", "nudge": false, "confidence": 0.96}
+{"input": "看看当前 thread 跑完没有", "active_task_id": "t_dev_01", "label": "progress-query", "nudge": false, "confidence": 0.9}
+{"input": "整个项目状态怎么样", "active_task_id": null, "label": "progress-query", "nudge": false, "confidence": 0.85}
+{"input": "嗯", "active_task_id": "t_dev_01", "label": "on-task", "nudge": false, "confidence": 0.95}
+{"input": "继续", "active_task_id": "t_dev_01", "label": "on-task", "nudge": false, "confidence": 0.95}
+# 低置信 fallback:模糊输入,LLM 会低置信 → fallback(active 可运行 → on-task)
+{"input": "那个东西再弄一下吧", "active_task_id": "t_dev_01", "label": "on-task", "nudge": false, "confidence": 0.4, "_note": "low-confidence fallback → on-active-task"}
+# timeout fallback:长输入触发 LLM 慢/超时 → fallback(active 可运行 → on-task)
+{"input": "（长输入模拟 LLM 超时）请非常详细地描述每一个步骤然后把所有相关上下文都列出来再给一个非常长的解释和一个很长的答案以及很多备注", "active_task_id": "t_dev_01", "label": "on-task", "nudge": false, "confidence": 0.4, "_note": "timeout fallback → on-active-task"}
+# 低置信 fallback + 无 active → disambiguation(#8 null active 覆盖)
+{"input": "呃随便吧", "active_task_id": null, "label": "new-task", "nudge": false, "confidence": 0.3, "_note": "low-confidence + null active → disambiguation(new-task lean)"}
+{"input": "帮我看看", "active_task_id": null, "label": "on-task", "nudge": false, "confidence": 0.9}

@@ -198,3 +198,53 @@ Skills存储在 ~/.ascend_op_agent/skills/ 目录
             content = re.sub(pattern, '', content)
 
         return content
+
+
+# ---- U7 意图分类器 prompt(KTD2 hybrid free-text 分类) ----
+# 独立于 PromptBuilder 的 7 层 system prompt —— 这是分类器专用的单次 LLM 调用 prompt
+# 模板。task_router.intent_classifier 经 ``build_classifier_prompt`` 引用本节(plan U7:
+# "prompt_builder.py 扩,加 classifier prompt section")。
+
+_CLASSIFIER_PROMPT_TEMPLATE = """你是任务意图分类器。把用户输入分到恰好一个类别,只输出纯 JSON。
+
+类别:
+- on-task:推进当前 active task(继续算子开发 / 跑编译 / 接着上一步)
+- off-task:与任务无关的闲聊 / 问候 / 通用问答
+- new-task:要开新任务(如"帮我迁这个模型"→ migrate;"分析这个 op"→ analyze)
+- progress-query:查进展(如"现在到哪了 / 进度 / 状态")
+
+{active_ctx}
+
+用户输入:
+{user_input}
+
+输出格式(纯 JSON,无 markdown / 无多余文字):
+{{"label": "<on-task|off-task|new-task|progress-query>", "confidence": 0.0-1.0, "suggested_task_type": "migrate|analyze|optimize|develop|null"}}
+"""
+
+
+def build_classifier_prompt(user_input: str, active_task_context=None) -> str:
+    """组装 U7 意图分类器 prompt(task_router.intent_classifier 调用)。
+
+    Args:
+        user_input: 用户输入文本。
+        active_task_context: ``ActiveTaskContext`` 或 None;非空时附 active task 描述
+            帮助 LLM 判断 on-task 相关性。
+
+    Returns:
+        分类器 prompt 字符串。
+    """
+    if active_task_context is not None:
+        import json as _json
+
+        active_ctx = (
+            "当前 active task 上下文:\n"
+            f"  task_id={active_task_context.task_id} "
+            f"type={active_task_context.task_type or '未知'}\n"
+            f"  object={_json.dumps(active_task_context.object_payload, ensure_ascii=False)}"
+        )
+    else:
+        active_ctx = "当前无 active task(用户可能要开新任务或闲聊)。"
+    return _CLASSIFIER_PROMPT_TEMPLATE.format(
+        active_ctx=active_ctx, user_input=user_input
+    )

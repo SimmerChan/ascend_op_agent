@@ -727,16 +727,29 @@ def viewer(ctx: click.Context, only_backend: bool, port: int) -> None:
 @main.group()
 @click.option("--db", default=None, help="tasks.db 路径(默认 ~/.ascend_op_agent/tasks.db)")
 @click.option("--ck", default=None, help="checkpoints.db 路径(默认 config.checkpoint.db_path)")
+@click.option(
+    "--classifier-fixture",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="classifier fixture JSONL 路径(KTD12 opt-in;启用 fixture-driven 分类模式)",
+)
 @click.pass_context
-def task(ctx: click.Context, db: Optional[str], ck: Optional[str]) -> None:
-    """任务管理(一期-a:list / new / select / progress)。
+def task(
+    ctx: click.Context,
+    db: Optional[str],
+    ck: Optional[str],
+    classifier_fixture: Optional[str],
+) -> None:
+    """任务管理(一期-a:list / new / select / progress;一期-b 加 calibrate)。
 
-    一期-a 显式命令,不经 LLM 分类器(R5 一期-b)。run(develop dispatch)经
+    一期-b 默认 explicit-only(KTD7),free-text 不分类。``--classifier-fixture``
+    opt-in 启用 KTD12 fixture 模式(显式分类器入口)。run(develop dispatch)经
     backend op: 路由(`ascend-op-agent run` + op: 前缀),不在本 group。
     """
     ctx.ensure_object(dict)
     ctx.obj["task_db"] = db
     ctx.obj["task_ck"] = ck
+    ctx.obj["classifier_fixture"] = classifier_fixture
 
 
 def _task_commands(ctx: click.Context):
@@ -950,6 +963,66 @@ def task_suggest(
             f"    confirm: ascend-op-agent task link {s.src_task_id} "
             f"{s.dst_task_id} {s.relation_type} --confidence {s.confidence}"
         )
+
+
+@task.command("calibrate")
+@click.option(
+    "--fixture",
+    "fixture_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="classifier fixture JSONL 路径(KTD12)",
+)
+@click.option(
+    "--rule-based",
+    is_flag=True,
+    default=False,
+    help="用确定性 RuleBasedClassifier(非 LLM);CI / 无 LLM 环境确定性跑",
+)
+@click.pass_context
+def task_calibrate(
+    ctx: click.Context, fixture_path: str, rule_based: bool
+) -> None:
+    """跑 classifier fixture 校准,打印 accuracy 报告(KTD12)。
+
+    默认用 LLM IntentClassifier(若配置 LLM);``--rule-based`` 强制用确定性
+    RuleBasedClassifier(离线 fixture sanity / CI)。80% 校准门槛是 follow-up,
+    本命令只验框架跑通 + 打印 per-label precision/recall/f1 + confusion matrix。
+    """
+    from ascend_op_agent.task_router.fixture import (
+        CalibrationRunner,
+        FixtureLoader,
+        RuleBasedClassifier,
+    )
+    from ascend_op_agent.task_router.intent_classifier import IntentClassifier
+
+    try:
+        examples = FixtureLoader.load(fixture_path)
+    except Exception as e:  # noqa: BLE001 - CLI 出口聚合
+        console.print(f"[red]fixture 加载失败: {e}[/red]")
+        raise SystemExit(1)
+    if not examples:
+        console.print("[red]fixture 为空[/red]")
+        raise SystemExit(1)
+
+    if rule_based:
+        classifier = RuleBasedClassifier()
+        backend = "rule-based"
+    else:
+        # 无 LLM wiring 的 IntentClassifier:所有输入走 KTD13 fallback
+        # (生产用法是 wiring 真 LLM,见 backend 集成 follow-up)
+        classifier = IntentClassifier(llm_call=None)
+        backend = "llm-intent(unwired → all-fallback)"
+
+    report = CalibrationRunner(classifier).run(examples)
+    console.print(f"[bold]classifier fixture 校准[/bold] ({len(examples)} examples, backend={backend})")
+    console.print(report.format_text())
+
+
+# opt-in:主入口可加 ``--classifier-fixture`` 暴露 fixture 路径到 ctx(U7 KTD12)。
+# task group 已有 --db/--ck;此处 group-level option 让 calibrate/suggest 等子命令
+# 共享 fixture 路径(default None = 不启用 fixture 模式,沿用 KTD7 explicit-only)。
+
 
 
 if __name__ == "__main__":

@@ -126,6 +126,44 @@ class CheckpointConfig(BaseModel):
     auto_resume: bool = True
 
 
+class ClassifierConfig(BaseModel):
+    """U7 LLM 路由分类器配置(R5/R6/KTD7/KTD13)。
+
+    - ``default_mode``:free-text 路由模式(KTD7)。
+        * ``explicit-only``(默认,一期-b ship 不变):free-text 不分类,仅显式命令生效。
+        * ``always-on-task``:所有 free-text 当 on-task(跳过 LLM 分类,#7 真实现)。
+        * ``default-on``:真走 LLM 分类器(fixture 校准达阈 ≥80% 后由 follow-up plan 切)。
+    - ``nudge_mode``:off-task 软牵引模式(R6),默认 ``soft``。
+    - ``timeout_s``:LLM 调用超时(KTD13,默认 5s),超时 → fallback。
+    - ``confidence_threshold``:低置信阈值(默认 0.6 占位,D7 fixture-driven 校准 follow-up)。
+
+    注:本仓库无 committed ``config.yaml``(运行时从 ``~/.ascend_op_agent/config.yaml``
+    加载,缺省走本 pydantic 默认),故 classifier 节以 pydantic 字段表达,等价于
+    plan U7 "config.yaml classifier 节"。
+    """
+
+    default_mode: str = "explicit-only"
+    nudge_mode: str = "soft"
+    timeout_s: float = 5.0
+    confidence_threshold: float = 0.6
+
+    @field_validator("default_mode")
+    @classmethod
+    def validate_default_mode(cls, v: str) -> str:
+        valid = {"explicit-only", "always-on-task", "default-on"}
+        if v not in valid:
+            raise ValueError(f"无效 classifier.default_mode: {v}; 期望 {valid}")
+        return v
+
+    @field_validator("nudge_mode")
+    @classmethod
+    def validate_nudge_mode(cls, v: str) -> str:
+        valid = {"off", "soft", "firm"}
+        if v not in valid:
+            raise ValueError(f"无效 classifier.nudge_mode: {v}; 期望 {valid}")
+        return v
+
+
 class LoggingConfig(BaseModel):
     """日志配置"""
     level: str = "INFO"
@@ -153,6 +191,7 @@ class Config(BaseModel):
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
+    classifier: ClassifierConfig = Field(default_factory=ClassifierConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     # 配置文件路径（仅在从文件加载时设置）
