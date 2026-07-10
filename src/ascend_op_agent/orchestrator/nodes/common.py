@@ -188,6 +188,16 @@ def make_llm_node(
                         continue
                     existing_paths.add(path)
                     new_files.append({"path": path, "content": content, "tool": "markdown_block"})
+                    # Markdown 落盘(file_write 落盘的对称行为,否则 operator_path_resolver
+                    # rsync 一个空目录,LLM 输出不到 910B)。try/except 保护:测试无 I/O 不阻塞。
+                    try:
+                        from pathlib import Path as _P
+                        _p = _P(path)
+                        if _p.is_absolute() and not _p.exists():
+                            _p.parent.mkdir(parents=True, exist_ok=True)
+                            _p.write_text(content, encoding="utf-8")
+                    except OSError:
+                        pass
 
         if new_files:
             code_result["files"] = existing_files + new_files
