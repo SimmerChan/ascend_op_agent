@@ -82,7 +82,12 @@ def _resolve_skill_bundles(
     if use_real_skill_bundles:
         for phase, key in _NEW_DEV_PHASE_TO_BUNDLE_KEY.items():
             skills = build_skill_bundle(phase=key[1], graph=key[0])
-            resolved[phase] = render_skill_bundle_text(skills, phase=phase)
+            # U2: codegen 阶段内联 add_custom 构建参考(含 CANN 环境配置),
+            # 解决 LLM 写 build.sh/CMakeLists.txt 漏 ASCEND_CANN_PACKAGE_PATH
+            inline_build = phase == "codegen"
+            resolved[phase] = render_skill_bundle_text(
+                skills, phase=phase, inline_build_template=inline_build
+            )
             names[phase] = [s.name for s in skills]
 
     # 显式 override(覆盖文本,但名字保留真实加载的 —— 显式文本无名字可提取)

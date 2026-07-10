@@ -376,6 +376,7 @@ def extract_used_skills(
 def render_skill_bundle_text(
     skills: list[CannbotSkill],
     phase: Optional[str] = None,
+    inline_build_template: bool = False,
 ) -> str:
     """把 skill bundle 渲染成 PromptBuilder Layer 6 文本。
 
@@ -393,6 +394,12 @@ def render_skill_bundle_text(
     Args:
         skills: ``build_skill_bundle`` 返回的 skill 列表
         phase: 当前阶段名(仅用于标题展示);None 时不显示
+        inline_build_template: U2(codegen 阶段用)—— True 时从 codegen skill bundle
+            中找 ``references/add_custom/`` 参考工程,内联其 CMakeLists.txt + run.sh
+            (含正确 CANN 构建环境配置:ASCEND_CANN_PACKAGE_PATH 等)。
+            解决 spike #4/#5 暴露的"LLM 写 build.sh 漏 CANN 环境变量"问题 ——
+            skill 简介层不够,LLM 不主动调 skill_ops,故 codegen 阶段直接内联
+            可编译参考工程的构建文件。默认 False(向后兼容,其他阶段不受影响)。
 
     Returns:
         Layer 6 文本。空列表返回空串(调用方决定是否降级为默认 Layer 6)
@@ -417,4 +424,50 @@ def render_skill_bundle_text(
         "需要详细 skill 内容时,使用 skill_ops 工具按名加载,或读取 skill 目录下"
         "的 SKILL.md / references/ 文件。"
     )
+
+    # U2: inline_build_template —— codegen 阶段内联可编译参考工程的构建文件
+    if inline_build_template:
+        build_section = _render_build_template_section(skills)
+        if build_section:
+            lines.append("")
+            lines.append(build_section)
+
     return "\n".join(lines)
+
+
+def _render_build_template_section(skills: list[CannbotSkill]) -> str:
+    """U2:从 codegen skill bundle 找 add_custom 参考工程,内联其构建文件。
+
+    add_custom 是 ascendc-direct-invoke-template skill 下的完整可编译 add 算子
+    工程(references/add_custom/),含正确的 CANN 构建环境配置(CMakeLists.txt
+    的 ASCEND_CANN_PACKAGE_PATH、run.sh 的 set_env)。内联给 LLM 作 build.sh /
+    CMakeLists.txt 的生成模板,避免 LLM 凭空漏 CANN 环境变量。
+
+    只内联构建文件(CMakeLists.txt + run.sh),不内联 kernel/host 代码(那些
+    LLM 按算子语义自己写),控制 context 大小。
+    """
+    _BUILD_FILES = ("CMakeLists.txt", "run.sh")
+    for s in skills:
+        add_custom_dir = s.base_dir / "references" / "add_custom"
+        if not add_custom_dir.is_dir():
+            continue
+        parts: list[str] = [
+            "## 构建参考(add_custom 可编译工程,U2 内联)",
+            "",
+            "以下是 references/add_custom 的构建文件(含正确 CANN 环境配置)。",
+            "生成 build.sh / CMakeLists.txt 时**以此为准**,不要漏 ASCEND_CANN_PACKAGE_PATH。",
+            "",
+        ]
+        for fname in _BUILD_FILES:
+            fpath = add_custom_dir / fname
+            if fpath.is_file():
+                content = fpath.read_text(encoding="utf-8")
+                lang = "cmake" if fname == "CMakeLists.txt" else "bash"
+                parts.append(f"### {fname}")
+                parts.append(f"```{lang}")
+                parts.append(content.rstrip())
+                parts.append("```")
+                parts.append("")
+        if len(parts) > 6:  # 至少内联了 1 个文件(parts 头 6 行是固定 header)
+            return "\n".join(parts)
+    return ""
