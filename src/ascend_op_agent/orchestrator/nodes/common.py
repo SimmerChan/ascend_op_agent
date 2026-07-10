@@ -155,18 +155,24 @@ def make_llm_node(
         # 代码块。提取这些代码块进 code_result(同 e2e_real_op._extract_files_from_messages
         # 的格式 1)。向后兼容:file_write 路径不变。
         if not new_files:
-            for m in state.get("messages", []):
+            # 扫 agent._conversation_history(LLM response 进这里,不是 state.messages;
+            # state["messages"] 是 checkpoint 持久化层,本节点的 LLM response 还没 append)
+            for m in getattr(agent, "_conversation_history", []):
                 if m.get("role") != "assistant":
                     continue
                 c = str(m.get("content", ""))
-                # 匹配 ```(cpp|c\+\+|c)? \n // path \n content \n ```
+                # 匹配 ```<lang>? \n # / // path \n content \n ```
+                # lang 可选: cpp / c++ / c / cmake / bash / sh / text / ini
+                # 路径注释前缀: `//` (cpp/c) 或 `#` (cmake/bash/ini)
                 import re
                 for m_re in re.finditer(
-                    r"```(?:cpp|c\+\+|c)?\s*\n(?P<body>.*?)\n```", c, re.DOTALL
+                    r"```(?:cpp|c\+\+|c|cmake|bash|sh|text|ini)?\s*\n(?P<body>.*?)\n```",
+                    c,
+                    re.DOTALL,
                 ):
                     body = m_re.group("body")
-                    # 路径在 body 第一行 `// /path/...` 注释
-                    pm = re.match(r"//\s*([/\w.\-]+\.\S+)", body[:300])
+                    # 路径在 body 第一行: // /path 或 # /path(都支持)
+                    pm = re.match(r"(?://|#)\s*([/\w.\-]+\.\S+)", body[:300])
                     if not pm:
                         continue
                     path = pm.group(1)
