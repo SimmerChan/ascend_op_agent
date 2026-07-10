@@ -252,6 +252,7 @@ def run_one_op(
                 ),
             ),
             use_scaffold_codegen=use_scaffold_codegen,
+            use_real_skill_bundles=True,  # A 验证:接通 cannbot codegen skill(ascendc-direct-invoke-template + simt-best-practices)
         )
 
         state = runner.invoke(op_desc, thread_id=thread_id)
