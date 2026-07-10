@@ -148,6 +148,57 @@ def make_llm_node(
             and entry.get("args", {}).get("path")
             and entry["args"]["path"] not in existing_paths
         ]
+
+        # 8b. Markdown fallback:某些 LLM(尤其 OpenAI 协议下的 GLM-5.2)在 codegen
+        # 阶段不调 file_write tool(可能 tool schema 不识 / 调 shell_exec 循环失败
+        # 达 max_iterations),但会输出 ```cpp // path/... \n<content>\n``` markdown
+        # 代码块。提取这些代码块进 code_result(同 e2e_real_op._extract_files_from_messages
+        # 的格式 1)。向后兼容:file_write 路径不变。
+        if not new_files:
+            # 扫 agent._conversation_history(LLM response 进这里,不是 state.messages;
+            # state["messages"] 是 checkpoint 持久化层,本节点的 LLM response 还没 append)
+            for m in getattr(agent, "_conversation_history", []):
+                if m.get("role") != "assistant":
+                    continue
+                c = str(m.get("content", ""))
+                # 匹配 ```<lang>? \n # / // path \n content \n ```
+                # lang 可选: cpp / c++ / c / cmake / bash / sh / text / ini
+                # 路径注释前缀: `//` (cpp/c) 或 `#` (cmake/bash/ini)
+                import re
+                for m_re in re.finditer(
+                    r"```(?:cpp|c\+\+|c|cmake|bash|sh|text|ini)?\s*\n(?P<body>.*?)\n```",
+                    c,
+                    re.DOTALL,
+                ):
+                    body = m_re.group("body")
+                    # 路径注释: // /path 或 # /path(支持跨行,避免 shebang 占用第一行)
+                    # 路径必须以 / 开头(absolute),避免误匹配 `set -e`/`# comment` 等普通注释
+                    # 搜前 500 字符(覆盖 bash 的 shebang 偏移)
+                    pm = re.search(
+                        r"(?://|#)\s*(/[/\w.\-]+\.\S+)", body[:500]
+                    )
+                    if not pm:
+                        continue
+                    path = pm.group(1)
+                    if path in existing_paths:
+                        continue
+                    # 剥第一行(路径注释)
+                    content = "\n".join(body.split("\n")[1:]).strip()
+                    if not content:
+                        continue
+                    existing_paths.add(path)
+                    new_files.append({"path": path, "content": content, "tool": "markdown_block"})
+                    # Markdown 落盘(file_write 落盘的对称行为,否则 operator_path_resolver
+                    # rsync 一个空目录,LLM 输出不到 910B)。try/except 保护:测试无 I/O 不阻塞。
+                    try:
+                        from pathlib import Path as _P
+                        _p = _P(path)
+                        if _p.is_absolute() and not _p.exists():
+                            _p.parent.mkdir(parents=True, exist_ok=True)
+                            _p.write_text(content, encoding="utf-8")
+                    except OSError:
+                        pass
+
         if new_files:
             code_result["files"] = existing_files + new_files
 
