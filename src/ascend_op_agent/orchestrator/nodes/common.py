@@ -171,8 +171,12 @@ def make_llm_node(
                     re.DOTALL,
                 ):
                     body = m_re.group("body")
-                    # 路径在 body 第一行: // /path 或 # /path(都支持)
-                    pm = re.match(r"(?://|#)\s*([/\w.\-]+\.\S+)", body[:300])
+                    # 路径注释: // /path 或 # /path(支持跨行,避免 shebang 占用第一行)
+                    # 路径必须以 / 开头(absolute),避免误匹配 `set -e`/`# comment` 等普通注释
+                    # 搜前 500 字符(覆盖 bash 的 shebang 偏移)
+                    pm = re.search(
+                        r"(?://|#)\s*(/[/\w.\-]+\.\S+)", body[:500]
+                    )
                     if not pm:
                         continue
                     path = pm.group(1)
