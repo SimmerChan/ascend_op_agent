@@ -198,7 +198,9 @@ def run_one_op(
     """
     from ascend_op_agent.orchestrator import CheckpointStore, build_new_dev_graph
     from ascend_op_agent.orchestrator.nodes.validation import (
-        make_real_compile_node, make_real_precision_node,
+        make_real_compile_fix_loop_node,
+        make_real_compile_node,
+        make_real_precision_node,
     )
 
     result = OpResult(name=op_name, description=op_desc)
@@ -243,6 +245,14 @@ def run_one_op(
             compile_node_factory=lambda: make_real_compile_node(
                 executor=npu,
                 operator_path_resolver=make_operator_path_resolver(),
+            ),
+            # U2 compile fix_loop:compile 失败 → LLM 修构建文件 → re-compile(内嵌)
+            # 替代单 compile_node_factory,收敛 LLM 单次 codegen 偏差(spike #9 后)
+            compile_fix_loop_node_factory=lambda: make_real_compile_fix_loop_node(
+                executor=npu,
+                operator_path_resolver=make_operator_path_resolver(),
+                agent_factory=make_real_agent_factory(),
+                max_rounds=3,
             ),
             precision_node_factory=lambda: make_real_precision_node(
                 executor=npu,

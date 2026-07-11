@@ -185,6 +185,102 @@ def make_precision_fix_loop_node(
     )
 
 
+# ---- U2 compile fix_loop(内嵌 re-compile,U1 spike #9 后新增)----
+
+
+def make_real_compile_fix_loop_node(
+    executor: NpuExecutor,
+    operator_path_resolver,
+    agent_factory: AgentFactory,
+    max_rounds: int = 3,
+    skill_bundle_text: Optional[str] = None,
+    phase: str = "compile_fix_loop",
+) -> Node:
+    """compile + fix 闭环(内嵌 re-compile)。
+
+    区别于 ``make_compile_fix_loop_node``(review→fix→re-review,不含 re-compile):
+    本节点每轮真跑 compile,失败时 LLM 修构建文件(markdown 落盘),re-compile。
+
+    U1 spike #9 暴露:LLM 单次 codegen 写不对 build.sh/CMakeLists(漏 -j* case /
+    ASCEND_COMPUTE_UNIT / 环境变量)。本节点通过多轮 compile→fix→re-compile 收敛。
+
+    每轮:
+      1. ``operator_path_resolver(state)`` → compile → compile_result
+      2. success → done
+      3. fail → fix_node(make_llm_node,看 stderr 修构建文件,markdown 自动落盘)
+      4. apply_update(code_result.files 更新)→ re-compile
+
+    Args:
+        executor: NpuExecutor(SSH→910B build.sh)
+        operator_path_resolver: ``callable(state) -> str`` 算子工程根目录
+        agent_factory: LLM agent 工厂(修复用)
+        max_rounds: 最多几轮 compile→fix
+        skill_bundle_text: 修复阶段 skill 文本(ascendc-crash-debug)
+        phase: 节点名
+
+    Returns:
+        Node —— 写 ``compile_result`` + ``{phase}_result``(status/rounds/reason)
+    """
+    from ascend_op_agent.orchestrator.state_machine import apply_update
+
+    # fix 节点:看 compile_result.stderr,引导修构建文件(build.sh/CMakeLists)
+    # + kernel。make_llm_node 自动 markdown 提取 + 落盘(common.py markdown fallback)。
+    fix_node = make_llm_node(
+        phase=f"{phase}_fix",
+        task_prompt_template=(
+            "你是 Ascend C 编译错误修复专家。上次编译失败,stderr 见 state.compile_result。\n\n"
+            "完整状态(compile_result + code_result.files + 历史):\n{state}\n\n"
+            "【诊断错误类型】\n"
+            "- 构建配置错误:build.sh 参数解析(漏 -j* / --soc case)、CMakeLists.txt"
+            "(ASCEND_COMPUTE_UNIT / ascendc.cmake include / SOC_VERSION)、"
+            "环境变量(ASCEND_CANN_PACKAGE_PATH / ASCEND_TOOLKIT_HOME)\n"
+            "- kernel 代码错误:语法、header、API 误用、dtype\n\n"
+            "【修复】修对应文件,**只输出修后的文件**(markdown 代码块,路径在首行 "
+            "`// /path` 或 `# /path` 注释)。构建错误优先修 build.sh / CMakeLists.txt。"
+            "参考 add_example 工程的正确构建配置(ASCEND_COMPUTE_UNIT 分代 arch22/arch35)。"
+        ),
+        skill_bundle_text=skill_bundle_text,
+        agent_factory=agent_factory,
+    )
+
+    def _loop(state: dict) -> dict:
+        rounds = 0
+        last_result: dict = {}
+        while rounds < max_rounds:
+            rounds += 1
+            # 1. compile
+            operator_path = operator_path_resolver(state)
+            last_result = executor.compile_to_dict(operator_path)
+            state["compile_result"] = last_result  # 让 fix_node 看到 stderr
+
+            if last_result.get("success"):
+                return {
+                    "compile_result": last_result,
+                    f"{phase}_result": {
+                        "status": "done",
+                        "rounds": rounds,
+                        "reason": "clean",
+                    },
+                }
+
+            # 2. 失败:若还有轮次,fix(LLM 修构建文件 → markdown 落盘)→ re-compile
+            if rounds >= max_rounds:
+                break
+            update = fix_node.func(state)
+            apply_update(state, update)  # code_result.files 更新 + 磁盘落盘
+
+        return {
+            "compile_result": last_result,
+            f"{phase}_result": {
+                "status": "failed",
+                "rounds": rounds,
+                "reason": "max_rounds",
+            },
+        }
+
+    return Node(name=phase, func=_loop)
+
+
 # ---- 便捷 resolver(从 state 提取 operator_path / test_cases) ----
 
 
