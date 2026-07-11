@@ -328,6 +328,36 @@ PYTHONPATH=src python scripts/e2e_real_op.py --stress 20
 已知 false negative（return_code=1 但 .run 产物实际已生成）。`NpuExecutor._is_compile_success`
 检测 stdout 含 `successfully created` + `.run` → 标 success=True。
 
+## LLM 切换规则（Minimax ↔ GLM-5.2 互备）
+
+LLM 配额频繁踩坑，任一 provider 配额耗尽即切另一个。spike #1/#4/#7 三次踩坑实证。
+
+| Provider | Model | api_base | Protocol | Key env | 适用 |
+|---------|-------|----------|----------|---------|------|
+| **Minimax MiniMax-M3**（默认）| `MiniMax-M3` | `https://api.minimaxi.com/anthropic` | anthropic | `MINIMAX_API_KEY` | e2e_real_op / ship_ready 验证;N=20 stress 100% PASS |
+| **智谱 GLM-5.2**（Minimax 配额耗尽时切）| `glm-5.2` | `https://open.bigmodel.cn/api/coding/paas/v4` | openai | `GLM_API_KEY` | U1 spike codegen 节点验证 markdown fallback + skill 加载 |
+
+**切换方法**（改 `~/.ascend_op_agent/config.yaml` 的 `llm` 段 + `~/.ascend_op_agent/.env` 加 key）：
+
+```yaml
+llm:
+  provider: "anthropic"      # Minimax(Anthropic 兼容)
+  # provider: "openai"      # GLM-5.2(OpenAI 兼容)
+  api_key: "${MINIMAX_API_KEY}"  # 对应 GLM_API_KEY
+  api_base: "https://api.minimaxi.com/anthropic"  # 或 https://open.bigmodel.cn/api/coding/paas/v4
+  model: "MiniMax-M3"             # 或 "glm-5.2"
+```
+
+**经验**：
+- **默认 Minimax**：N=20 stress 100% PASS（line 24-25）
+- **GLM-5.2 不适合 stress**：连续调用 timeout（line 324），仅作 spike 一次性 codegen 验证
+- 切 GLM 后跑 spike 5/5/6/7 真实发现 add_custom 参考工程与 910B CANN 9.1.0 不兼容（spike #6 暴露第 5 层根因），U2 加 `inline_build_template` 内联 `add_example` 修复
+
+**`render_skill_bundle_text` 内联构建参考**（U2，commit 38be32d）：
+- codegen 阶段从 `ascendc-registry-invoke-template/references/add_example/` 内联 `CMakeLists.txt + build.sh`
+- 解决 LLM 写 build.sh 漏 `ASCEND_COMPUTE_UNIT` / `arch22/arch35` 分代（CANN 9.1.0 legacy_modules/host_config.cmake 期望）
+- add_custom（ascendc-direct-invoke-template/references/）跟 910B 不兼容，spike #6 证伪后改用 add_example
+
 ## 调试
 
 ```bash
