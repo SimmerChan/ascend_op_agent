@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from routes.checkpoints import router as checkpoints_router
 from routes.sessions import router as sessions_router
+from routes.unified import router as unified_router
 
 app = FastAPI(
     title="Agent Conversation Visualizer API",
@@ -33,6 +34,7 @@ app.add_middleware(
 # Include routers
 app.include_router(sessions_router)
 app.include_router(checkpoints_router)
+app.include_router(unified_router)
 
 
 @app.get("/health")
