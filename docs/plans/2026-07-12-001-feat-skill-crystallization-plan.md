@@ -185,13 +185,12 @@ stateDiagram-v2
 flowchart TB
     U1[U1 task_type 传透 develop + list_cannbot_skill_names] --> U2[U2 Layer 6 重写]
     U1 --> U4[U4 skill_manage 工具]
-    U2 --> U4
     U4 --> U5[U5 /learn CLI sync 注入]
     U1 --> U5
-    U2 --> U5
     U5 --> U6[U6 ship gate]
     U4 --> U6
     U2 --> U6
+    U1 --> U6
     U6 --> [*]
 ```
 
@@ -346,7 +345,8 @@ PR-A ship gate 6 条(U6 验证):
 4. **A1 token 实测(tiktoken):** 生产路径(triton phase + self-built ≤12)+ 默认路径(只 self-built)Layer 6 ≤800 tok。KTD-2 chars/4 粗估与 tiktoken 偏差 >20% 时回调阈值。
 5. **静态护栏 false-negative 基线:** 5 条语义违规(held-out)R2 false-negative 率入 metric log(PR-B R3 复测 delta)。
 6. **集成测试全绿:** U1/U2/U4/U5 端到端覆盖 develop path × `/learn` sync 流程。
-7. **可演进:** skill_manage 工具接口在 L3 review fork 启用时不变更(KTD-7)——origin Success Criteria carry。
+
+**Design property(carry from origin Success Criteria,非 runnable gate):** skill_manage 工具接口在 L3 review fork 启用时不变更(KTD-7)。
 
 ## Definition of Done
 
