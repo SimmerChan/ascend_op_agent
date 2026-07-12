@@ -135,7 +135,7 @@ const getRowClass = ({ row }: { row: { source: string } }) => {
 
 <style scoped>
 .session-tree-view {
-  height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: #f5f7fa;

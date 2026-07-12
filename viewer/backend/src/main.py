@@ -12,6 +12,7 @@ sys.path.insert(0, str(backend_src))
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from routes.checkpoints import router as checkpoints_router
 from routes.sessions import router as sessions_router
 
 app = FastAPI(
@@ -31,6 +32,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(sessions_router)
+app.include_router(checkpoints_router)
 
 
 @app.get("/health")
