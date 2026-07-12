@@ -49,6 +49,7 @@ class PromptBuilder:
         workspace_path: str,
         memory_store: MemoryStore,
         skills_layer_override: Optional[str] = None,
+        task_type: Optional[str] = None,
     ) -> str:
         """构建完整的系统Prompt（7层组装）
 
@@ -57,6 +58,10 @@ class PromptBuilder:
             memory_store: 记忆存储
             skills_layer_override: 可选,注入该阶段 cannbot skill 包替换默认 Layer 6。
                 由编排器 LLM 节点调用时传入(hybrid 集成的编排层入口);
+            task_type: 可选,任务类型(``develop``/``migrate``/``analyze``/``optimize``)
+                用于 Layer 6 降级决策(U2 实现)。PR-A 阶段(U1)仅 plumbing:U2
+                重写 ``_build_skills_layer`` 时按此值分流,默认 None 走"只 self-built"
+                路径。
 
         Returns:
             组装后的完整系统Prompt
@@ -79,10 +84,10 @@ class PromptBuilder:
         layers.append(self._build_memory_layer(memory_store))
 
         # Layer 6: Skills Index(支持编排器 scope 注入 cannbot skill 包)
-        if skills_layer_override is not None:
-            layers.append(skills_layer_override)
-        else:
-            layers.append(self._build_skills_layer())
+        # U1:把 override 和 task_type 一并传给 _build_skills_layer,
+        # 留给 U2 按 task_type 决定降级策略。当前(U1)该函数暂未实现
+        # task_type 分流,签名先就位。
+        layers.append(self._build_skills_layer(skills_layer_override, task_type))
 
         # Layer 7: Context Files + Timestamp + Env
         layers.append(self._build_context_layer(workspace_path))
@@ -148,8 +153,27 @@ class PromptBuilder:
 [Memory]:\n{memory_content}
 """
 
-    def _build_skills_layer(self) -> str:
-        """Layer 6: Skills Index"""
+    def _build_skills_layer(
+        self,
+        override: Optional[str] = None,
+        task_type: Optional[str] = None,
+    ) -> str:
+        """Layer 6: Skills Index
+
+        Args:
+            override: 可选,编排器注入的 cannbot phase subset(生产路径)。
+                非 None 时直接作为 Layer 6 内容(向后兼容现有 hybrid 行为,
+                U1/U2 衔接期)。U2 接入 Layer 6 重写后,override 改为
+                "cannbot phase subset + self-built 段" 合并渲染。
+            task_type: 可选,任务类型。U2 实现按此分流——目前(U1)仅 plumbing,
+                不影响现有行为。PhaseRunner path: ``"develop"`` 等;非 PhaseRunner
+                path: ``None``(默认路径 = ``/learn`` 聊天)。
+
+        Returns:
+            Layer 6 文本
+        """
+        if override is not None:
+            return override
         return """## Available Skills
 
 Skills存储在 ~/.ascend_op_agent/skills/ 目录

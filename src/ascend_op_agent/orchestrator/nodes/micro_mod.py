@@ -105,7 +105,13 @@ def make_micro_mod_node(
 
         # 构造 prompt 并调 LLM
         task_prompt = _build_prompt(state)
-        response = agent.run_conversation(task_prompt, skills_layer_override=skill_bundle_text)
+        # U1:task_type 从 state 透传(同 make_llm_node)。让 PromptBuilder Layer 6
+        # 在 micro-mod 阶段也拿到 task_type 做降级决策。
+        response = agent.run_conversation(
+            task_prompt,
+            skills_layer_override=skill_bundle_text,
+            task_type=state.get("task_type"),
+        )
 
         # 抓 memory 快照
         new_memory_pools: dict[str, list[str]] = dict(existing_memory)

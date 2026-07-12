@@ -85,11 +85,20 @@ class TaskRouter:
             raise TaskExecutorUnavailable(
                 "PhaseRunner (orchestrator) not wired — op: 路由未接线(见 backend.py)"
             )
+        # U1:在调用方读 task.type 避免 task_store IO 失败时 invoke 已跑(A2 同类)。
+        # task.type 与 dispatch 入口选择的 task.type 同源,不需要二次 IO。
+        task = self.store.get_task(task_id)
+        if task is None:
+            raise KeyError(f"unknown task: {task_id}")
         tid = thread_id or uuid.uuid4().hex[:12]
         # link BEFORE invoke:thread 执行期对 progress 可见 + invoke 失败不孤儿
         # (adversarial/correctness/reliability 共指 P1:原 invoke→link 顺序,link 失败则
         # checkpoint 已写但 thread 永远不被 rollup 看到)
         self.store.link_thread(task_id, tid)
-        # develop type → 转 op: 调用 PhaseRunner(insertion point 决策,F3)
-        state = self.orchestrator.invoke(user_input, thread_id=tid)
+        # develop type → 转 op: 调用 PhaseRunner(insertion point 决策,F3)。
+        # U1:把 task_type 传给 invoke,内部写入 state["task_type"],下游 LLM 节点
+        # 从 state.get("task_type") 取出来 → AIAgent → PromptBuilder(Layer 6 降级前置)。
+        state = self.orchestrator.invoke(
+            user_input, thread_id=tid, task_type=task.type
+        )
         return {"thread_id": tid, "state": state}

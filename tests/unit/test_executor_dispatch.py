@@ -34,8 +34,8 @@ class FakeOrchestrator:
     def __init__(self):
         self.calls = []
 
-    def invoke(self, user_input, thread_id):
-        self.calls.append((user_input, thread_id))
+    def invoke(self, user_input, thread_id, task_type=None):
+        self.calls.append((user_input, thread_id, task_type))
         return {"current_phase": "codegen", "thread_id": thread_id, "ok": True}
 
 
@@ -49,7 +49,7 @@ def test_dispatch_develop_calls_orchestrator_and_links_thread(store):
     router = TaskRouter(store, orchestrator=orch)
     tid = store.create_task(TASK_TYPE_DEVELOP, {"op": "add"})
     result = router.dispatch(tid, "开发 add 算子")
-    assert orch.calls == [("开发 add 算子", result["thread_id"])]
+    assert orch.calls == [("开发 add 算子", result["thread_id"], "develop")]
     assert result["state"]["ok"] is True
     # thread 关联 task
     assert store.get_task_threads(tid) == [result["thread_id"]]
@@ -62,6 +62,7 @@ def test_dispatch_develop_uses_provided_thread_id(store):
     result = router.dispatch(tid, "开发 add", thread_id="fixed-thread-1")
     assert result["thread_id"] == "fixed-thread-1"
     assert orch.calls[0][1] == "fixed-thread-1"
+    assert orch.calls[0][2] == "develop"
     assert store.get_task_threads(tid) == ["fixed-thread-1"]
 
 

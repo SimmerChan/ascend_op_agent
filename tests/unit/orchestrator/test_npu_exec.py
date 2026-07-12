@@ -395,7 +395,13 @@ class _FakeAgent:
             def get(self, p): return list(self._p.get(p, []))
         self.memory = _Mem()
 
-    def run_conversation(self, user_input, skills_layer_override=None):
+    def run_conversation(
+        self,
+        user_input,
+        skills_layer_override=None,
+        *,
+        task_type=None,
+    ):
         self.captured_input = user_input
         self._h.append({"role": "user", "content": user_input})
         return "fixed code"

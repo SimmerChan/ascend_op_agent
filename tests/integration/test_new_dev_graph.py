@@ -52,6 +52,8 @@ class FakeAgent:
         self,
         user_input: str,
         skills_layer_override: Any = None,
+        *,
+        task_type: Any = None,
     ) -> str:
         self.last_skills_override = skills_layer_override
         self._conversation_history.append({"role": "user", "content": user_input})
@@ -206,9 +208,18 @@ def test_skill_bundles_passed_to_each_phase(tmp_path) -> None:
         a = captured_factory()
         orig_run = a.run_conversation
 
-        def _spy_run(user_input, skills_layer_override=None):
+        def _spy_run(
+            user_input,
+            skills_layer_override=None,
+            *,
+            task_type=None,
+        ):
             seen_overrides.append(skills_layer_override)
-            return orig_run(user_input, skills_layer_override)
+            return orig_run(
+                user_input,
+                skills_layer_override,
+                task_type=task_type,
+            )
 
         a.run_conversation = _spy_run  # type: ignore[method-assign]
         return a
@@ -335,13 +346,22 @@ def test_crash_in_codegen_resumes_correctly(tmp_path) -> None:
         a = _factory()
         orig_run = a.run_conversation
 
-        def _maybe_crash(user_input, skills_layer_override=None):
+        def _maybe_crash(
+            user_input,
+            skills_layer_override=None,
+            *,
+            task_type=None,
+        ):
             # 仅 codegen 节点的 task_prompt 含 "developer"
             if "developer" in user_input:
                 codegen_call_count["n"] += 1
                 if codegen_call_count["n"] == 1:
                     raise RuntimeError("simulated codegen crash")
-            return orig_run(user_input, skills_layer_override)
+            return orig_run(
+                user_input,
+                skills_layer_override,
+                task_type=task_type,
+            )
 
         a.run_conversation = _maybe_crash  # type: ignore[method-assign]
         return a

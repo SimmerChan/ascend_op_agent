@@ -46,6 +46,13 @@ class OpState(TypedDict, total=False):
     current_phase: Optional[str]
     pending_confirmation: Optional[dict]
 
+    # U1: TaskRouter 传入的任务类型(如 "develop" / "migrate" / "analyze"
+    # / "optimize")。PhaseRunner.invoke(task_type=...) 时写入。下游 LLM 节点
+    # 从 state.get("task_type") 取出传给 AIAgent.run_conversation → PromptBuilder
+    # → Layer 6(降级前置)。None 时不写入 state,默认路径(/learn 聊天)走 Layer 6
+    # 默认只渲染 self-built 段(不渲染 cannbot 全量)。
+    task_type: Optional[str]
+
 
 APPEND_FIELDS: frozenset[str] = frozenset({"messages", "phase_history"})
 MERGE_FIELDS: frozenset[str] = frozenset({"memory_pools", "retry_counts"})
@@ -68,4 +75,5 @@ def initial_state(thread_id: str) -> OpState:
         retry_counts={},
         current_phase=None,
         pending_confirmation=None,
+        task_type=None,
     )

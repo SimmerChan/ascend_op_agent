@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import functools
 import re
 import threading
 import time
@@ -215,6 +216,94 @@ def build_skill_bundle(
         except (FileNotFoundError, ValueError):
             continue
     return skills
+
+
+# ---- U1: list_cannbot_skill_names for R12 同名校验 ----
+
+
+@functools.lru_cache(maxsize=1)
+def _list_cannbot_skill_names_default() -> frozenset[str]:
+    """``list_cannbot_skill_names`` 的默认 root 缓存版本。
+
+    遍历 ``SKILL_BUNDLES`` 中所有 declared 路径(去重),用 ``load_skill`` 读
+    ``frontmatter.name``。**进程内缓存**(``lru_cache(maxsize=1)``)+ 不落盘:
+    SKILL_BUNDLES 静态,cannbot submodule 升级才会失效,届时进程重启即生效。
+
+    失败处理(vendored submodule 未初始化 / SKILL.md 缺失 / frontmatter 无 name):
+    全部跳过,不抛。返回 ``frozenset`` 便于 hash / set ops(U4 R12 fail-closed 决策)。
+
+    U4 R12 fail-closed 用法:``names = list_cannbot_skill_names()``;若 vendored
+    submodule 已配置但 names 为空 → reject self-built skill 写入;若 vendored
+    未配置(CANNBOT_ROOT 不存在)→ warn 但允许。两者都依赖本函数"空 vs 非空"
+    二态而不抛异常。
+    """
+    if not CANNBOT_ROOT.is_dir():
+        # cannbot submodule 未初始化 → 返回空集
+        return frozenset()
+
+    # SKILL_BUNDLES values 嵌套 list,flatten 去重
+    rel_paths: set[str] = set()
+    for paths in SKILL_BUNDLES.values():
+        for rel in paths:
+            rel_paths.add(rel)
+
+    names: set[str] = set()
+    for rel in rel_paths:
+        skill_dir = CANNBOT_ROOT / rel
+        if not skill_dir.is_dir():
+            continue
+        try:
+            skill = load_skill(skill_dir)
+        except (FileNotFoundError, ValueError, OSError):
+            # 缺失 SKILL.md / frontmatter 缺字段 / 读失败 → 跳过不抛
+            continue
+        if skill.name:
+            names.add(skill.name)
+    return frozenset(names)
+
+
+def list_cannbot_skill_names(root: Path | str | None = None) -> set[str]:
+    """列出 vendored cannbot skill 名集合(供 R12 同名校验)。
+
+    行为契约:
+
+    - vendored submodule 已初始化 + SKILL.md frontmatter 完整 → 返回非空 set
+      (生产路径覆盖 7 个 phase bucket 的所有 skill 名)
+    - vendored 路径缺失(CANNBOT_ROOT 不存在)或 SKILL.md 不可读 → 返回空 set,**不抛**
+    - 二次调用缓存命中(``lru_cache(maxsize=1)``,默认 root 路径)
+    - 测试可注入 ``root`` 参数(显式路径)跳过缓存以避免污染
+
+    Args:
+        root: 可选,显式 cannbot 根目录。生产代码传 None 用 ``CANNBOT_ROOT``;
+            测试可传 ``tmp_path`` 跳过缓存走另一路径。
+
+    Returns:
+        所有可加载 cannbot skill 的 ``name`` 集合(``set[str]``,非 frozenset
+        以便调用方做 union/difference)。空集代表"无可用 cannbot skill"。
+    """
+    if root is not None:
+        root_path = Path(root).resolve()
+        if not root_path.is_dir():
+            return set()
+        names: set[str] = set()
+        rel_paths: set[str] = set()
+        for paths in SKILL_BUNDLES.values():
+            for rel in paths:
+                rel_paths.add(rel)
+        for rel in rel_paths:
+            skill_dir = root_path / rel
+            if not skill_dir.is_dir():
+                continue
+            try:
+                skill = load_skill(skill_dir)
+            except (FileNotFoundError, ValueError, OSError):
+                continue
+            if skill.name:
+                names.add(skill.name)
+        return names
+
+    # 默认路径 → 走 lru_cache 的 no-arg helper
+    return set(_list_cannbot_skill_names_default())
 
 
 # ---- U2: SkillUsageRegistry(signal-1 加载/使用跟踪) ----

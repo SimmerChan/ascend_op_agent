@@ -36,7 +36,13 @@ class _FakeAgent:
         self._tool_calls_log = list(tool_calls or [])
         self._response = response_text
 
-    def run_conversation(self, prompt, skills_layer_override=None):
+    def run_conversation(
+        self,
+        prompt,
+        skills_layer_override=None,
+        *,
+        task_type=None,
+    ):
         return self._response
 
 
