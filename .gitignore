@@ -39,3 +39,6 @@ frontend/.ascend_op_agent/
 # macOS Finder metadata
 .DS_Store
 tmp_e2e_config.yaml
+
+# 运行时产物(spike/e2e 跑出的算子工程,不入库)
+workspace/
