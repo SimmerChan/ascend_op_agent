@@ -229,12 +229,16 @@ def run_one_op(
             else:
                 shutil.copy2(item, dest)
 
-    ckpt_path = op_dir / "checkpoints.db"
-    if ckpt_path.exists():
-        ckpt_path.unlink()
+    # CheckpointStore 落 agent 目录(~/.ascend_op_agent/checkpoints/),不随 /tmp 清理丢失;
+    # 每 run 独立文件带时间戳累积,viewer / skill 总结可反查历史。
+    # scaffold 代码文件仍留 op_dir(/tmp,构建中间产物,rsync 到 910B 后即弃)。
+    run_ts = int(time.time())
+    ckpt_dir = Path("~/.ascend_op_agent/checkpoints").expanduser()
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_path = ckpt_dir / f"spike_{op_name}_{run_ts}.db"
     store = CheckpointStore(ckpt_path)
 
-    thread_id = f"u1-spike-{op_name}-{int(time.time())}"
+    thread_id = f"u1-spike-{op_name}-{run_ts}"
     print(f"\n[run] op={op_name} thread={thread_id}")
 
     try:

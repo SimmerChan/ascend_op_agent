@@ -550,10 +550,12 @@ def _do_one_run(
         if not cann_ok:
             print("[setup] ⚠️  remote CANN not available, compile will fail")
 
-    # 2. CheckpointStore 每 run 独立 db
-    ckpt_path = local_workdir / "checkpoints.db"
-    if ckpt_path.exists():
-        ckpt_path.unlink()
+    # 2. CheckpointStore 每 run 独立 db —— 落 agent 目录(~/.ascend_op_agent/checkpoints/),
+    #    不随 /tmp 清理丢失,带时间戳 + run_index 累积供 viewer / skill 总结反查。
+    run_ts = int(time.time())
+    ckpt_dir = Path("~/.ascend_op_agent/checkpoints").expanduser()
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_path = ckpt_dir / f"e2e_{run_ts}_{run_index}.db"
     store = CheckpointStore(ckpt_path)
     if run_index <= 1:
         print(f"[setup]   db={ckpt_path}")
