@@ -366,6 +366,15 @@ PR-A ship gate 5 条（U6 验证）：
 
 ## Risks & Dependencies
 
+### Cross-Plan Dependencies
+
+与 Direction B（Production-Side Storage Unification，见 `docs/plans/2026-07-12-001-feat-direction-b-storage-unification-plan.md`）的关系：
+
+- **PR-A 完全解耦** —— PR-A 的 `/learn` 是用户手动沉淀路径（素材来自 `file_read`/`file_search`/`web_extract`，见 High-Level Technical Design 数据流图），既不枚举也不读取 workflow conversations，因此**不依赖** Direction B 的统一存储。PR-A 可独立先行。
+- **PR-B/V2 的 AE5b（session-replay 蒸馏）依赖 Direction B 先落地** —— AE5b 需要统一枚举 + 单键 cross-reference 读取 workflow conversations，这正是 Direction B 生产的 index 所提供的能力。**AE5b 启动前，Direction B 必须 ship。**
+- **建议执行顺序：** PR-A（直接实现）→ 观察 `/learn` 实际沉淀的 skill 形态与会话消费需求 → Direction B（基于 PR-A 经验补 planning + 实现，index entry 字段需求届时更明确）→ PR-B/V2 AE5b。
+- **文档对齐注：** Direction B plan 当前把消费者表述为 "skill crystallization's `/learn` flow"，实际对应本计划的 AE5b（PR-B/V2），非 PR-A 的手动 `/learn`。两份文档在此点已对齐，避免 Direction B 被误判为 PR-A 的硬前置。
+
 - **RISK-1 (medium):** TaskRouter stub executor 仅做 pass-through；TASK_TYPE_MIGRATE/ANALYZE/OPTIMIZE 真业务逻辑由后续 U8（Path A 迁移 executor）+ U9（analyze/optimize 真 executor）实现，PR-A 不覆盖。**缓解：** PR-A 阶段仅验证 dispatch 不抛错 + task_type 上下文传透，真业务逻辑推迟到 Path A/B 后续 work。
 - **RISK-2 (medium):** FTS5 schema DROP+CREATE migration 期间（U3）skill 索引短暂不可用，影响 R6 search action。**缓解：** migration 步骤在 PR-A 初始化时一次执行（`_init_schema_migration_if_needed()` in `SkillIndex.__init__`），运行时不再触发；存量 skill 的 task_type/topic NULL 容错（name-only fallback）。
 - **RISK-3 (medium):** Layer 6 改动（U2）触及生产路径 `skills_layer_override` 合并语义（P0 #1）+ token budget 重算（P0 #5），回归风险高于纯默认路径重写。**缓解：** U6 集成测试显式覆盖生产路径（override 非空）+ 0/5/10 self-built 三档 + cannbot 可读/不可读两态 + Layer 6 ≤800 tokens 断言。
