@@ -436,30 +436,32 @@ def render_skill_bundle_text(
 
 
 def _render_build_template_section(skills: list[CannbotSkill]) -> str:
-    """U2:从 codegen skill bundle 找 add_custom 参考工程,内联其构建文件。
+    """U2:从 codegen skill bundle 找 add_example 参考工程,内联其构建文件。
 
-    add_custom 是 ascendc-direct-invoke-template skill 下的完整可编译 add 算子
-    工程(references/add_custom/),含正确的 CANN 构建环境配置(CMakeLists.txt
-    的 ASCEND_CANN_PACKAGE_PATH、run.sh 的 set_env)。内联给 LLM 作 build.sh /
-    CMakeLists.txt 的生成模板,避免 LLM 凭空漏 CANN 环境变量。
+    add_example 是 ascendc-registry-invoke-template skill 下的完整可编译 add 算子
+    工程(references/add_example/),显式含 ASCEND_COMPUTE_UNIT(arch22/arch35 分代),
+    跟 910B CANN 9.1.0 的 legacy_modules/host_config.cmake 期望兼容。spike #6
+    证明 add_custom(ascendc-direct-invoke-template/references/add_custom/)跟
+    910B 9.1.0 不兼容(SOC_VERSION/ASCEND_CANN_PACKAGE_PATH 缺失)。
 
-    只内联构建文件(CMakeLists.txt + run.sh),不内联 kernel/host 代码(那些
+    只内联构建文件(CMakeLists.txt + build.sh),不内联 kernel/host 代码(那些
     LLM 按算子语义自己写),控制 context 大小。
     """
-    _BUILD_FILES = ("CMakeLists.txt", "run.sh")
+    _BUILD_FILES = ("CMakeLists.txt", "build.sh")
     for s in skills:
-        add_custom_dir = s.base_dir / "references" / "add_custom"
-        if not add_custom_dir.is_dir():
+        add_example_dir = s.base_dir / "references" / "add_example"
+        if not add_example_dir.is_dir():
             continue
         parts: list[str] = [
-            "## 构建参考(add_custom 可编译工程,U2 内联)",
+            "## 构建参考(add_example 可编译工程,U2 内联, 910B CANN 9.1.0 兼容)",
             "",
-            "以下是 references/add_custom 的构建文件(含正确 CANN 环境配置)。",
-            "生成 build.sh / CMakeLists.txt 时**以此为准**,不要漏 ASCEND_CANN_PACKAGE_PATH。",
+            "以下是 references/add_example 的构建文件(显式 ASCEND_COMPUTE_UNIT,",
+            "arch22/arch35 分代,910B 期望的 legacy_modules/host_config.cmake 期望)。",
+            "生成 build.sh / CMakeLists.txt 时**以此为准**。",
             "",
         ]
         for fname in _BUILD_FILES:
-            fpath = add_custom_dir / fname
+            fpath = add_example_dir / fname
             if fpath.is_file():
                 content = fpath.read_text(encoding="utf-8")
                 lang = "cmake" if fname == "CMakeLists.txt" else "bash"
@@ -468,6 +470,6 @@ def _render_build_template_section(skills: list[CannbotSkill]) -> str:
                 parts.append(content.rstrip())
                 parts.append("```")
                 parts.append("")
-        if len(parts) > 6:  # 至少内联了 1 个文件(parts 头 6 行是固定 header)
+        if len(parts) > 6:  # 至少内联了 1 个文件
             return "\n".join(parts)
     return ""
