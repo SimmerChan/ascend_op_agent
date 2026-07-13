@@ -6,55 +6,69 @@ artifact_readiness: implementation-ready
 product_contract_source: ce-brainstorm
 origin: docs/brainstorms/2026-07-12-skill-crystallization-requirements.md
 execution: code
+revision: 2026-07-12-T2 PR-A scope 收缩(LFG ce-doc-review round-3 P0×2 + scope 三方汇聚驱动)— F-1/KTD-1 重开:U3 FTS5 + stub executors + CANBOT_BUNDLE_MAP 移出 PR-A;A1 token math 实测重算;A2 _pending_input 改 sync injection
 ---
 
 ## Goal Capsule
 
-让 ascend_op_agent 在所有 4 个 task_type（migrate / analyze / optimize / develop）执行过程中都能沉淀可复用的自研 skill，并在新会话中自检索。PR-A 范围交付：skill_manage agent 工具（7 action）+ R2 静态校验 + `/learn` CLI + Layer 6 全量注入 + 底层三件重构（TaskRouter 扩展、Layer 6 from-scratch 重写、FTS5 schema 扩展）。PR-B 的 R5b 任务路由 / R6 语义检索 / R7 分组 / R3 LLM self-check 与 V2=L3 的后台 review fork 推到 follow-up plans。
+让 ascend_op_agent 在 develop task_type 执行 + `/learn` 手动沉淀路径上沉淀可复用的自研 skill,并在新会话中自检索。**PR-A scope(2026-07-12-T2 收缩后)**:`skill_manage` agent 工具(7 action)+ R2 静态校验 + `/learn` CLI(**sync 注入**,A2 修订)+ Layer 6 全量注入 + 底层**两件**重构(TaskRouter task_type 传透 develop-only + Layer 6 重写)。
 
-**Product Contract preservation:** Unchanged. All origin R-IDs (R1-R16), A-IDs (A1-A4), F-IDs (F1-F3), AE-IDs (AE1-AE5b) preserved verbatim from origin.
+**移出 PR-A(原 F-1 三件底层重构中的 U3 FTS5 + U1 stub/CANBOT_BUNDLE_MAP,由 round-3 ce-doc-review scope 三方汇聚驱动):**
+- **U3 FTS5 schema 扩展 → PR-B**(服务 R6 语义检索,PR-A 无消费者)
+- **migrate/analyze/optimize stub executors → U8/U9**(PR-A 的 `/learn` crystallization 不经 TaskRouter.dispatch,stub 是死代码直到 U8/U9)
+- **CANBOT_BUNDLE_MAP → PR-B R5b**(PR-A 的 R5a 全量注入不按 task_type 路由,无消费者)
+
+PR-B 的 R5b 任务路由 / R6 语义检索 / R7 分组 / R3 LLM self-check 与 V2=L3 的后台 review fork 推到 follow-up plans。
+
+**Product Contract preservation:** Unchanged. All origin R-IDs (R1-R16), A-IDs (A1-A4), F-IDs (F1-F6), AE-IDs (AE1-AE5b) preserved verbatim from origin. PR-A scope 收缩是 **Planning Contract 层**(KTD-1/F-1 的 HOW 决议)修订,不改 Product Contract 的 WHAT(origin R/A/F/AE 全部保留;仅 R6/R14 的 "PR-A satisfied via" 映射随 U3 defer 调整为 PR-B/U4)。
 
 ## Problem Frame
 
-STRATEGY.md 第 47-55 行 "Skill Crystallization" track 宣告方向（"将调试、性能优化经验自动固化为可复用 skill"），但当前架构缺落地能力：
+STRATEGY.md 第 47-55 行 "Skill Crystallization" track 宣告方向("将调试、性能优化经验自动固化为可复用 skill"),但当前架构缺落地能力:
 
-- `skills/` 模块虽有 `SkillStorage` 完整 save/load/delete，但**不在 agent 工具表**中
-- `orchestrator/cannbot_loader.py` 仅消费 cannbot，自研 skill 写入缺统一入口
+- `skills/` 模块虽有 `SkillStorage` 完整 save/load/delete,但**不在 agent 工具表**中
+- `orchestrator/cannbot_loader.py` 仅消费 cannbot,自研 skill 写入缺统一入口
 - fix_loop 收敛时 / spike 验证后无 hook——经验靠用户记忆手动写笔记
-- 上一轮评估已确认要自研「算子经验 skill」，范围限定在 cannbot 未覆盖的项目/硬件特定增量（910B3 + ops_pt + CANN 9.1.0），护栏必须守住这条边界
-- **F-1 决议揭示的可达性矛盾（round 2 feasibility P0×3）：** TaskRouter 仅 wired develop；Layer 6 是 static literal；SKILL_BUNDLES (graph, phase) 与新 (task_type, topic) 键空间不兼容——PR-A 必须先修这三处底层
+- 上一轮评估已确认要自研「算子经验 skill」,范围限定在 cannbot 未覆盖的项目/硬件特定增量(910B3 + ops_pt + CANN 9.1.0),护栏必须守住这条边界
+- **F-1 决议揭示的可达性矛盾(round 2 feasibility P0×3):** TaskRouter 仅 wired develop;Layer 6 是 static literal——PR-A 必须修 task_type 传透 + Layer 6 重写
+
+**2026-07-12-T2 PR-A scope 收缩(LFG ce-doc-review round-3 驱动):** adversarial + feasibility 实测 codebase 后发现 2 个 P0 + scope 三方汇聚:
+- **A1(token math 虚构,P0):** KTD-2 原 "~24 skill × 40 chars ≈ 600 tokens" 是虚构。实测 cannbot description first-lines 110-530 chars;`render_skill_bundle_text`(`cannbot_loader.py:419`)**不截断**。默认路径若全量渲染 16 cannbot = 894 tok(chars/4 粗估,中文真实 ~1300+ tok),在注入任何 self-built 之前已超 800 ship gate。
+- **A2(`_pending_input` 不存在,P0):** grep across `src/` zero matches。整个 `/learn`→agent 注入机制(F1 step 2 + U5 verification "队列长度+1")依赖缺失的 substrate。
+- **scope 三方汇聚(P1):** scope-guardian + product-lens + adversarial 独立指出 U3 FTS5(R6 PR-B deferred)+ stub executors(/learn 不走 dispatch)+ CANBOT_BUNDLE_MAP(R5a 不路由)都是 PR-B/U8/U9 的 prep work 计入 PR-A 工期。
+- 收缩后:2 P0 由新设计消除(默认路径只 self-built 消除 A1 全量 cannbot;sync injection 消除 A2),U3 内部 bug 全部 moot(F1-F4 中 U3 相关的 _init_db/Frontmatter/state 链随 defer 消失),U4 storage 缺失链(self-built path F4)在 U4 内修。
 
 ## Actors
 
-**A1. 算子开发者**（人）—— GPU 工程师迁移算子到 AscendC 时，用 `/learn` 描述来源（目录/URL/"刚才做的"/笔记），或修正 agent 沉淀的 skill。
+**A1. 算子开发者**(人)—— GPU 工程师迁移算子到 AscendC 时,用 `/learn` 描述来源(目录/URL/"刚才做的"/笔记),或修正 agent 沉淀的 skill。
 
-**A2. 前台 agent**（`AIAgent` 主循环）—— 多轮工具调用循环中，按 task_router 路由 + PhaseRunner 编排执行各 task_type（migrate/analyze/optimize/develop）节点；可被 `/learn` 触发一次蒸馏流程；也接收 V2=L3 review fork 的"建议沉淀"通知（仅展示）。
+**A2. 前台 agent**(`AIAgent` 主循环)—— 多轮工具调用循环中,执行 develop task_type 节点(PhaseRunner 编排);可被 `/learn` 触发一次蒸馏流程(`run_conversation` 同步注入);也接收 V2=L3 review fork 的"建议沉淀"通知(仅展示)。
 
-**A3. 后台 review fork**（`AIAgent` 子实例，V2=L3 引入）—— 每 N 轮 fork 独立 agent 实例，重放对话历史，使用同一 `skill_manage` 工具写入 skill；父子不共享 prompt cache（不同 model key），同模型时共享 `_cached_system_prompt`。
+**A3. 后台 review fork**(`AIAgent` 子实例,V2=L3 引入)—— 每 N 轮 fork 独立 agent 实例,重放对话历史,使用同一 `skill_manage` 工具写入 skill;父子不共享 prompt cache(不同 model key),同模型时共享 `_cached_system_prompt`。
 
-**A4. SkillCrystallizer**（V2 reserved，L3 引入）—— L1/PR-A 不实现，仅预留。L3 承担：控制 review fork 触发节奏、把 fork 写入结果经 A2 回调展示、把 fork 的 `skill_manage` 调用写入 provenance（`write_origin="background_review"`）。
+**A4. SkillCrystallizer**(V2 reserved,L3 引入)—— L1/PR-A 不实现,仅预留。L3 承担:控制 review fork 触发节奏、把 fork 写入结果经 A2 回调展示、把 fork 的 `skill_manage` 调用写入 provenance(`write_origin="background_review"`)。
 
 ## Requirements
 
-R-IDs preserved from origin verbatim. Brief re-statement of how PR-A satisfies each:
+R-IDs preserved from origin verbatim. Brief re-statement of how PR-A(收缩后)satisfies each:
 
 | R-ID | Requirement (brief) | PR-A satisfied via |
 |------|---------------------|---------------------|
 | R1 | `skill_manage` 7 action schema | U4 |
-| R2 | 静态校验（必填字段、name class-level、TaskType+Topic、cannbot 不重名、Project Scope 首段） | U4 |
-| R3 | LLM self-check | **PR-A 不实现**（Q6 决议：80/20 折中，推迟到 PR-B 或 skill 数 >20） |
+| R2 | 静态校验(必填字段、name class-level、TaskType+Topic、cannbot 不重名、Project Scope 首段) | U4 |
+| R3 | LLM self-check | **PR-A 不实现**(Q6 决议:80/20 折中,推迟到 PR-B 或 skill 数 >20) |
 | R4 | provenance 写入 | U4 |
 | R5a | Layer 6 全量注入 self-built skill name+description | U2 + U6 |
-| R5b | 路由命中收敛 | PR-B（U2 留 hook） |
-| R6 | 语义检索 | PR-B（U3 提供 FTS5 schema 基础） |
+| R5b | 路由命中收敛 | PR-B(U2 留 hook) |
+| R6 | 语义检索 | **PR-B**(U3 FTS5 schema 扩展整体移 PR-B;PR-A 的 U4 search 用 frontmatter 扫描替代) |
 | R7 | cannbot 在前/自研在后排序 | U2 |
 | R8 | `/learn` CLI + `build_learn_prompt` + `_AUTHORING_STANDARDS` | U5 |
 | R9 | V2=L3 review fork | V2 plan |
-| R10 | TaskType+Topic 元数据 + 存储分离 | U4（frontmatter 元数据）+ U1（cannbot 不落盘边界） |
+| R10 | TaskType+Topic 元数据 + 存储分离 | U4(frontmatter 元数据)+ U1(cannbot 不落盘边界) |
 | R11 | Project Scope 首段 | U4 |
-| R12 | cannbot 同名拒绝（patch 也拦截） | U4（用 U1 的 list_cannbot_skill_names） |
-| R13 | `dimension="reference"` 扩展 | U4（storage 层小扩展） |
-| R14 | 增量 rebuild（用 add_skill） | U3 + U4 |
+| R12 | cannbot 同名拒绝(patch 也拦截) | U4(用 U1 的 list_cannbot_skill_names) |
+| R13 | `dimension="reference"` 扩展 | U4(storage 层 dimension 分支微扩展,独立于 FTS5) |
+| R14 | 增量 rebuild(用 add_skill) | U4(用现有 `add_skill` 4 列,**无 schema 变更**——U3 defer 后 FTS5 schema 不动) |
 | R15 | archive action | U4 |
 | R16 | 结构化错误 | U4 |
 
@@ -65,367 +79,356 @@ AE-IDs preserved from origin verbatim. PR-A coverage:
 | AE-ID | Behavior | PR-A covered in |
 |-------|----------|-----------------|
 | AE1 (PR-A) | `/learn ops_pt build.sh 配置` → create skill → Layer 6 可见 | U5 + U6 integration test |
-| AE2 (PR-B) | env-dep 不被拦截 | 已知代价，U6 量化 false-negative 基线 |
-| AE3 (PR-A 部分) | develop 任务中 `tiling_pitfalls` 命中 | U6 integration test |
+| AE2 (PR-B) | env-dep 不被拦截 | 已知代价,U6 量化 false-negative 基线 |
+| AE3 (PR-A 部分) | develop 任务中 `tiling_pitfalls` 命中 | U6 integration test(仅 develop path;migrate/analyze/optimize dispatch 移 U8/U9) |
 | AE4 | patch cannbot skill 拒绝 | U4 test |
 | AE5a (PR-A) | `/learn` 无参数返回教学错误 | U5 test |
-| AE5b (PR-B/V2) | session-replay 蒸馏 | 推到 PR-B/V2 |
+| AE5b (PR-B/V2) | session-replay 蒸馏 | 推到 PR-B/V2(依赖 Direction B 先 ship,见 Cross-Plan Dependencies) |
 
 ## Scope Boundaries
 
-### Deferred for later（V2 评估后再做，carry from origin）
+### Deferred for later(V2 评估后再做,carry from origin)
 
 - L3 后台 review fork
 - fix_loop 收敛时 hook
 - spike 验证后 hook
 
-### Outside this product's identity（明确不做，carry from origin）
+### Outside this product's identity(明确不做,carry from origin)
 
-- 自研通用迁移知识（cannbot 已覆盖）
+- 自研通用迁移知识(cannbot 已覆盖)
 - 覆盖或修改 cannbot 官方 skill
 - skill 库云端同步 / 团队共享
 - skill 版本号管理与升级提示
 
-### Deferred to Follow-Up Work（plan-local，PR-A 不做）
+### Deferred to Follow-Up Work(plan-local,PR-A 不做)
 
-- **PR-B（独立 plan）：** R5b 任务路由收敛 / R6 语义检索 / R7 分组渲染 / R3 LLM self-check
-- **V2 = L3（独立 plan）：** SkillCrystallizer（A4）实现 / 后台 review fork / fix_loop hook / spike hook
-- **Q4：** L3 review fork N 轮节奏与 profile disable
-- **后续 U8/U9：** TASK_TYPE_MIGRATE 真业务逻辑（Path A 迁移 executor）/ ANALYZE + OPTIMIZE 真业务逻辑
-- **R5a → R5b 数值化 trigger：** self-built >30 时紧急晋升 PR-B R5b（F-4 降级是临时机制）
-- **F-2 V2 进入 checklist：** ≥8 skills + ≤2 patch 冲突 + 0 R2 regression
-- **F-6 metric delta：** PR-B R3 启用后用同一 held-out 集复测 false-negative
-- **R13 `dimension="reference"` AE 覆盖：** 当前 U4 包含 storage 扩展但无 PR-A AE（后续 `/learn` 加 references 时补）
+- **PR-B(独立 plan):** R5b 任务路由收敛 / R6 语义检索 / R7 分组渲染 / R3 LLM self-check / **U3 FTS5 schema 扩展(task_type+topic 列 + schema_meta + `--migrate-skill-index`,整体从 PR-A 移入)** / **CANBOT_BUNDLE_MAP(SKILL_BUNDLES 键空间 1:1 映射,从 U1 移入)**
+- **V2 = L3(独立 plan):** SkillCrystallizer(A4)实现 / 后台 review fork / fix_loop hook / spike hook
+- **Q4:** L3 review fork N 轮节奏与 profile disable
+- **后续 U8/U9:** TASK_TYPE_MIGRATE 真业务逻辑(Path A 迁移 executor,含 stub executor)/ ANALYZE + OPTIMIZE 真业务逻辑(含 stub executor)
+- **R5a → R5b 数值化 trigger:** self-built >30 时紧急晋升 PR-B R5b(F-4 降级是临时机制)
+- **F-2 V2 进入 checklist:** ≥8 skills + ≤2 patch 冲突 + 0 R2 regression
+- **F-6 metric delta:** PR-B R3 启用后用同一 held-out 集复测 false-negative
+- **R13 `dimension="reference"` AE 覆盖:** 当前 U4 包含 storage 扩展但无 PR-A AE(后续 `/learn` 加 references 时补)
+- **codegen `inline_build_template` 修复(独立 codebase bug,round-3 实测发现):** `_render_build_template_section` 在 codegen bundle(`ascendc-direct-invoke-template`/`ascendc-simt-best-practices`)下找不到 `references/add_example`(add_example 实际在 `ascendc-registry-invoke-template`,不在 codegen bundle)。当前 codegen 内联未生效。不属于 PR-A 引入,记入 follow-up。
 
 ## Approach
 
-Plan enriches origin Product Contract by enumerating how each requirement lands in 6 PR-A implementation units. The key architectural shift from round 1 estimate: F-1 forced PR-A to absorb 3 底层重构（TaskRouter/Layer 6/FTS5 schema）that were originally thought to be V2/PR-B infrastructure. PR-A scope expanded from ~1-1.5 wk to ~3-4 wk accordingly.
+Plan enriches origin Product Contract by enumerating how each requirement lands in PR-A implementation units。**2026-07-12-T2 收缩后 PR-A = 5 个 active U(U1 瘦身 + U2 + U4 + U5 + U6),U3 defer 到 PR-B。** 工期从 round-2 估计 ~3-4 周收缩到 ~2 周(砍 U3 FTS5 migration + U1 stub/CANBOT_BUNDLE_MAP + 其 integration 测试)。
+
+收缩的依据不是"省事",是 round-3 ce-doc-review 实证:被砍的部分在 PR-A 无消费者(/learn 不经 dispatch、R5a 不路由、R6 deferred),且 U3 内部 _init_db 设计有 silent-data-corruption bug、token math 虚构、`_pending_input` 不存在——继续保留只会把 P0 带进实现。
 
 ## Key Technical Decisions
 
-**KTD-1 (F-1)：** PR-A 含 3 件底层重构（TaskRouter 扩展 / Layer 6 重写 / FTS5 schema 扩展），是 4 task_type scope 可达性的硬前置。逆命题不成立：不做这三件，scope 扩到 4 task_type 是空头支票。
+**KTD-1(F-1 重开,2026-07-12-T2):** PR-A 含 **2 件**底层重构(① TaskRouter task_type 传透 **develop-only**;② Layer 6 from-scratch 重写)。原 F-1 第三项"SKILL_BUNDLES 键空间不兼容"由 **PR-B R5b 时处理**(CANBOT_BUNDLE_MAP 移 PR-B,PR-A 的 R5a 全量注入不按 task_type 路由,无需映射表)。原 round-2 把第三项 reinterpret 成 FTS5 schema 扩展是误读——FTS5 服务 R6(PR-B deferred),非 F-1 可达性硬前置。逆命题:不做这两件,PR-A 的 develop path + /learn 沉淀是空头支票。
 
-**KTD-2 (F-4 + feasibility P0 #5)：** R5a 全量注入内置降级阈值（self-built >8 时自动收敛为"同 task_type 子集"——不读 last-loaded 历史，消除 jsonl 反向依赖与并发写问题），不依赖 PR-B R5b 接管。阈值 8（非 20）的依据：cannbot ~16 + self-built 8 = 24 skill × ~40 chars ≈ 600 tokens，留 Layer 6 budget 余量。description 截断 ≤40 字符。降级是 PR-A 期间的临时机制，PR-B R5b 上线后取消。
+**KTD-2(F-4 + A1 实测重算,2026-07-12-T2):** Layer 6 渲染分两条路径,token 预算基于实测(`render_skill_bundle_text` + chars/4 粗估;真实 tokenizer 在 U6 ship gate 用 tiktoken 校准):
+- **生产路径(PhaseRunner 节点传 `skills_layer_override`,task_type=develop):** cannbot **phase subset**(实测 62-266 tok,最大 triton_frontend 5 skills=266)+ self-built section。triton phase 最重时 cannbot 266 + self-built budget ≈ 500 tok 留给 ~12 个 self-built。
+- **默认路径(无 override,如纯 `/learn` 聊天,task_type=None):** **只渲染 self-built,不渲染 cannbot**。cannbot 是 phase-specific,默认路径无 phase context,渲染全部 16 cannbot(实测 894 tok,中文真实 ~1300+ tok)既超 budget 又无意义。**这一条消除 A1。**
+- **降级(F-4):** self-built >**12** 时按 task_type 子集注入(task_type 缺失时回退全量,避免空集)。阈值 12 基于实测:生产最重 triton(266 tok)+ 12 self-built(≈480 tok)+ header/footer(≈50)≈ 796 tok ≤ 800。不读 last-loaded 历史(消除 jsonl 反向依赖)。降级是 PR-A 临时机制,PR-B R5b 上线后取消。
+- **不截断 description:** `render_skill_bundle_text` 现状不截断,实测 per-phase subset 可控,保持现状(截断是 dead code);复用该函数渲染 self-built(A6)。
 
-**KTD-3 (F-5)：** Topic 枚举在 PR-A 阶段是 free-form label，不参与 R5a 渲染、不作为 R2 必填校验（仅 warning）。4 task_type × 15 topic 槽位远超 PR-A 目标 5-10 skill，等证据足再冻结。
+**KTD-3(F-5):** Topic 枚举在 PR-A 阶段是 free-form label,不参与 R5a 渲染、不作为 R2 必填校验(仅 warning)。等证据足再冻结。
 
-**KTD-4 (F-6)：** R2 静态护栏 false-negative 基线（5 条语义违规案例预期 ≥60% false-negative）作为 PR-A ship gate 必跑项。PR-B R3 启用后用同一 held-out 集复测，delta 是 R3 真实价值指标。
+**KTD-4(F-6):** R2 静态护栏 false-negative 基线(5 条语义违规案例预期 ≥60% false-negative)作为 PR-A ship gate 必跑项。PR-B R3 启用后用同一 held-out 集复测。
 
-**KTD-5 (Q6)：** PR-A 不实现 R3 LLM self-check。原因：内部工具定位 + GLM rate-limit 脆弱性（CLAUDE.md 已记录）+ 初期 skill 少时静态校验 + 人工 review 够用。
+**KTD-5(Q6):** PR-A 不实现 R3 LLM self-check。原因:内部工具定位 + GLM rate-limit 脆弱性 + 初期 skill 少时静态校验 + 人工 review 够用。
 
-**KTD-6 (Q9)：** Skill 名仅 topic（`tiling_pitfalls`），task_type 只留 metadata。命名跨 task_type 复用，910B3→910B4 升级不触发改名风暴。
+**KTD-6(Q9):** Skill 名仅 topic(`tiling_pitfalls`),task_type 只留 metadata。命名跨 task_type 复用。
 
-**KTD-7：** 7-action 单一工具（而非细粒度多工具或透明 Crystallizer 函数）。理由：L3 fork 调用方零改动；护栏/provenance 集中。R13 `add_reference` action 当前无 PR-A AE 覆盖，作为 storage 扩展先就位。
+**KTD-7:** 7-action 单一工具。L3 fork 调用方零改动;护栏/provenance 集中。R13 `add_reference` action 当前无 PR-A AE 覆盖,作为 storage 扩展先就位。
 
-**KTD-8：** R14 用 `SkillIndex.add_skill`（已存在）作为热路径写入，`rebuild_index` 保留为全量刷新路径（task_type schema 变更后）。R13 的 `dimension="reference"` 是 SkillStorage.save_skill dimension 分支加一档的微扩展。
+**KTD-8(R14 修订,2026-07-12-T2):** U3 defer 后,FTS5 schema **不变更**(保持现有 4 列)。R14 直接用现有 `add_skill`(`skills/index.py:139`,4 列 upsert)作为热路径写入,`rebuild_index` 保留为全量刷新路径。R13 的 `dimension="reference"` 是 SkillStorage.save_skill dimension 分支加一档的微扩展(U4 内,独立于 FTS5)。R6 语义检索的 task_type/topic FTS5 列整体移 PR-B。
 
 ## High-Level Technical Design
 
-PR-A 数据流（用户手动沉淀路径）：
+PR-A 数据流(2026-07-12-T2 收缩后,用户手动沉淀 + sync 注入):
 
 ```mermaid
 flowchart LR
-    A1[算子开发者 /learn CLI] --> U5[/learn handler]
-    U5 --> Q[_pending_input 队列]
-    Q --> A2[前台 agent AIAgent]
+    A1[算子开发者 /learn CLI] --> U5[_handle_learn_command]
+    U5 -->|sync run_conversation learn_prompt| A2[前台 agent AIAgent]
     A2 --> FR[file_read / file_search / web_extract 收集素材]
     A2 --> U4[skill_manage agent 工具 7 action]
     U4 --> R2[R2 静态校验]
-    R2 --> SS[SkillStorage.save_skill]
+    R2 --> SS[SkillStorage.save_skill dimension=self_built]
     SS --> FS[self-built/ 写入 SKILL.md]
-    SS --> SI[SkillIndex.add_skill 热路径]
-    SI --> FTS5[FTS5 task_type+topic 列]
+    SS --> SI[SkillIndex.add_skill 4列 现有]
     A2 -.下一轮 prompt.-> U2[Layer 6 _build_skills_layer]
-    U2 --> CB[扫 vendored cannbot]
-    U2 --> SB[扫 self-built/]
-    U2 --> F4{self-built count &gt;8?}
-    F4 -->|否| ALL[全量注入 name+description]
-    F4 -->|是| SUB[降级: 同 task_type 子集]
+    U2 --> DEC{有 override?}
+    DEC -->|生产路径 task_type=develop| CB[cannbot phase subset 来自 override]
+    DEC -->|默认路径 /learn chat 无 phase| NOCB[不渲染 cannbot]
+    U2 --> SB[扫 self-built 复用 render_skill_bundle_text]
+    SB --> DEG{self-built count &gt;12?}
+    DEG -->|否| ALL[全量注入]
+    DEG -->|是| SUB[降级: 同 task_type 子集]
     CB --> U2
     SB --> U2
     U2 --> A2next[Layer 6 渲染 cannbot 在前]
 ```
 
-Layer 6 R5a → R5b 状态机（F-4 + PR-B 演进）：
+Layer 6 R5a → R5b 状态机(F-4 + PR-B 演进):
 
 ```mermaid
 stateDiagram-v2
     [*] --> R5a_full: PR-A 上线
-    R5a_full --> R5a_degraded: self-built count > 8
-    R5a_degraded --> R5a_full: archive 后 self-built <= 8
+    R5a_full --> R5a_degraded: self-built count > 12
+    R5a_degraded --> R5a_full: archive 后 self-built <= 12
     R5a_full --> R5b_routed: PR-B 上线
     R5a_degraded --> R5b_routed: PR-B 上线
     R5b_routed --> [*]
 ```
 
-底层依赖（U1/U2/U3 协调）：
+底层依赖(U3 defer 后;U-ID 稳定性:U3 留 gap):
 
 ```mermaid
 flowchart TB
-    U1[U1 TaskRouter 扩展] --> U3[U3 FTS5 schema]
-    U1 --> U2[U2 Layer 6 重写]
-    U3 --> U2
-    U2 --> U4[U4 skill_manage 工具]
-    U3 --> U4
-    U1 --> U4
-    U4 --> U5[U5 /learn CLI]
+    U1[U1 task_type 传透 develop + list_cannbot_skill_names] --> U2[U2 Layer 6 重写]
+    U1 --> U4[U4 skill_manage 工具]
+    U4 --> U5[U5 /learn CLI sync 注入]
     U1 --> U5
-    U2 --> U5
     U5 --> U6[U6 ship gate]
     U4 --> U6
     U2 --> U6
+    U1 --> U6
     U6 --> [*]
 ```
 
 ## Implementation Units
 
-### U1. TaskRouter 扩展 + task_type 传透链路 + cannbot 加载器映射
+### U1. TaskRouter task_type 传透链路(develop-only)+ cannbot 加载器 list_cannbot_skill_names
 
-- **Goal:** 让 migrate/analyze/optimize 3 类 task_type 也能跑过 PhaseRunner 节点；建立 `task.type` → PhaseRunner → run_conversation → PromptBuilder 的完整传透链路（让 U2 Layer 6 能拿到 task_type 做降级）；cannbot_loader 暴露 `list_cannbot_skill_names()` 给 R12 用 + 列全 `(graph, phase) → (task_type, topic)` 1:1 映射。这是 F-1 决议三件底层重构第一项 + **feasibility P0 #2/#3 修订**。
-- **Requirements:** F-1 第一项；R12（cannbot 同名校验依赖）；R10（cannbot 不落盘边界）；R5a 降级（task_type 传透是 U2 降级前置）。
-- **Dependencies:** 无（PR-A 第一个 U）。
+- **Goal:** 建立 `task.type` → PhaseRunner → run_conversation → PromptBuilder 的 task_type 传透链路(让 U2 Layer 6 能拿到 task_type 做降级),仅 develop path;migrate/analyze/optimize 的 stub executor 与 CANBOT_BUNDLE_MAP **移出 PR-A**(→ U8/U9、PR-B)。cannbot_loader 暴露 `list_cannbot_skill_names()` 给 R12 用。这是 F-1 决议(2026-07-12-T2 重开)第一项。
+- **Requirements:** F-1 第一项(develop path);R12(cannbot 同名校验依赖);R10(cannbot 不落盘边界);R5a 降级(task_type 传透是 U2 降级前置)。
+- **Dependencies:** 无(PR-A 第一个 U)。
 - **Files:**
-  - `task_router/executor_dispatch.py` — 给 `TASK_TYPE_MIGRATE` / `ANALYZE` / `OPTIMIZE` 三个分支加 stub executor（pass-through：执行 PhaseRunner 节点 + 收集输出 + 返回结果，不真做迁移/分析/优化业务逻辑）。
-  - `task_router/executor_dispatch.py` 的 `_dispatch_*` — 调 `orchestrator.invoke` 前把 `task.type` 写到 PhaseRunner thread state（`state["task_type"] = task.type`），让各 PhaseRunner 节点能从 state 取出
-  - `orchestrator/nodes/common.py:122` — `run_conversation` 调用处改为 `agent.run_conversation(task_prompt, skills_layer_override=skill_bundle_text, task_type=state.get("task_type"))`（从 state 取 task_type 透传）
-  - `orchestrator/nodes/micro_mod.py:108` — 同上
-  - `agent/core.py` — `AIAgent.run_conversation(self, ..., task_type: Optional[str] = None)` 加关键字参数；内部存到 `self._current_task_type`；`build_system_prompt` 读 `self._current_task_type` 传给 `_build_skills_layer(override, task_type)`
-  - `agent/prompt_builder.py` — `build_system_prompt(self, ..., task_type: Optional[str] = None)` 接 task_type，传给 `_build_skills_layer`
-  - `orchestrator/cannbot_loader.py` — 加 `list_cannbot_skill_names(root: Path | None = None) -> set[str]`（`@functools.lru_cache(maxsize=1)` 进程内缓存，不落盘——scope-guardian：~10-20 skill O(N) 微秒级，落盘 cache 是过度工程且无 invalidation 策略）；加 `CANBOT_BUNDLE_MAP` 常量（见 Approach 列全 1:1 映射）
+  - `task_router/executor_dispatch.py` 的 `_dispatch_develop` —— 调 `orchestrator.invoke` 前把 `task.type` 写到 PhaseRunner thread state(`state["task_type"] = task.type`)。**关键(A2 同类坑避免):** `PhaseRunner.invoke`(`orchestrator/state_machine.py:134`)内部创建 state(TaskRouter 不能在 invoke 前 dict-assign),所以 task_type 经 invoke 的 keyword param 传入(`invoke(..., task_type=task.type)`),invoke 内 `initial_state` 后写 `state["task_type"]`。**`orchestrator/state_machine.py` 列入本 U Files。**
+  - `orchestrator/nodes/common.py:122` —— `run_conversation` 调用处改为 `agent.run_conversation(task_prompt, skills_layer_override=skill_bundle_text, task_type=state.get("task_type"))`
+  - `orchestrator/nodes/micro_mod.py:108` —— 同上
+  - `agent/core.py` —— `AIAgent.run_conversation(self, ..., task_type: Optional[str] = None)` 加关键字参数;内部存到 `self._current_task_type`;`build_system_prompt` 读它传给 `_build_skills_layer(override, task_type)`
+  - `agent/prompt_builder.py` —— `build_system_prompt(self, ..., task_type: Optional[str] = None)` 接 task_type,传给 `_build_skills_layer`
+  - `orchestrator/state_machine.py` —— `invoke(self, user_input, thread_id, task_type: Optional[str] = None)` 加 param,`initial_state` 后写 `state["task_type"]`
+  - `orchestrator/cannbot_loader.py` —— 加 `list_cannbot_skill_names(root: Path | None = None) -> set[str]`(`@functools.lru_cache(maxsize=1)` 进程内缓存,不落盘);遍历 `SKILL_BUNDLES` 所有 paths 对应 skill_dir 的 frontmatter name 汇总
 - **Approach:**
-  - **task_type 传透链路（P0 #2 核心）：** 三段式——TaskRouter dispatch 写 thread state → PhaseRunner 节点从 state 取出传给 run_conversation → AIAgent 存 self._current_task_type → build_system_prompt 读它 → `_build_skills_layer(override, task_type)`。非 PhaseRunner 路径（如纯 `/learn` 聊天）task_type=None，U2 降级走"回退全量"。
-  - **CANBOT_BUNDLE_MAP 1:1 列全（P0 #3 核心）：** 现有 SKILL_BUNDLES 全部键的显式翻译（无 `topic_from_key` 动态函数）：
-    - `("migration", "cuda_frontend") → ("migrate", "cuda_frontend")`
-    - `("migration", "triton_frontend") → ("migrate", "triton_frontend")`
-    - `("new_dev", "design") → ("develop", "kernel_pattern")`（design 属算子设计，归 kernel_pattern 桶；lossy 但可追溯）
-    - `("new_dev", "codegen") → ("develop", "build_env")`（codegen 落 build_env 桶）
-    - `("new_dev", "review") → ("develop", "kernel_pattern")`（review 归 kernel_pattern 桶）
-    - `("any", "compile_fix") → ("develop", "build_env")`
-    - `("any", "precision_fix") → ("develop", "precision")`
-    - 映射原则：SKILL_BUNDLES 的 phase（design/codegen/review/compile_fix/precision_fix）是**开发动作**，与 develop topic（tiling/precision/build_env/kernel_pattern/dtype_handling）非同构；采用 lossy 归类（design/review→kernel_pattern，codegen/compile_fix→build_env），在 plan 与 cannbot_loader 注释里写明 lossy 性质。若 PR-B 需要更细粒度，再扩 develop topic 枚举。
-  - Stub executor 不真实现业务，只保证 dispatch 不抛 `TaskGatedError` + `task.type` 上下文传透。后续 U8（Path A 迁移 executor）+ U9（analyze/optimize 真 executor）替换 stub。
-- **Patterns to follow:** `task_router/executor_dispatch.py:69-76` 的 `TASK_TYPE_DEVELOP` 分支结构；`cannbot_loader.py:159-190` 的 `SKILL_BUNDLES` 静态表；`functools.lru_cache` 进程内缓存模式。
+  - **task_type 传透链路三段式:** TaskRouter dispatch 经 invoke keyword → invoke 内 `initial_state` 后写 `state["task_type"]` → PhaseRunner 节点从 state 取出传 `run_conversation(task_type=...)` → AIAgent 存 `self._current_task_type` → `build_system_prompt` → `_build_skills_layer(override, task_type)`。非 PhaseRunner 路径(如纯 `/learn` 聊天)task_type=None,U2 默认路径走"只 self-built"。
+  - **不新增 stub executor / 不新增 CANBOT_BUNDLE_MAP**(2026-07-12-T2 收缩):migrate/analyze/optimize 仍走现有 `TaskGatedError`(不动),stub 推 U8/U9;CANBOT_BUNDLE_MAP 推 PR-B R5b。develop path 现有 dispatch 已 wired,只需补 task_type 传透。
+  - `list_cannbot_skill_names` 复用 `load_skill` 读 frontmatter name,不落盘 cache(submodule 未初始化时返回空 set 且不抛,供 U4 R12 fail-closed 决策)。
+- **Patterns to follow:** `task_router/executor_dispatch.py:69-76` 的 `TASK_TYPE_DEVELOP` 分支结构;`cannbot_loader.py:122` 的 `load_skill`;`functools.lru_cache` 进程内缓存模式。
 - **Test scenarios:**
-  - Happy: 4 task_type 各自 `create_task` + `dispatch` 不抛 `TaskGatedError`
-  - Happy: dispatch 后 PhaseRunner thread state 含 `task_type` 字段
-  - Happy: **task_type 传透端到端**——develop task dispatch 后 next prompt 的 Layer 6（U2）能拿到 task_type=develop（P0 #2 验证）
-  - Happy: `list_cannbot_skill_names(CANNBOT_ROOT)` 在 vendored cannbot 路径上返回非空 set；二次调用走 lru_cache 不重扫
-  - Happy: `CANBOT_BUNDLE_MAP` 遍历所有 `SKILL_BUNDLES` 已存在 7 个键都能 1:1 翻译（P0 #3 验证）
-  - Edge: vendored cannbot submodule 未初始化时 `list_cannbot_skill_names` 返回空 set 且不抛（U4 R12 据此决定 fail-closed 还是 skip，见 U4）
-  - Error: dispatch 在 stub 上执行时 PhaseRunner 节点报错 → stub 返回 error 包到 task_result，不向上抛
-- **Verification:** 4 task_type dispatch 后 thread state + Layer 6 都含 task_type（P0 #2 传透闭环）；`CANBOT_BUNDLE_MAP` 7 键 1:1 翻译覆盖率 100%（P0 #3）；`list_cannbot_skill_names` 空/非空两态 + lru_cache 命中。
+  - Happy: develop task `create_task` + `dispatch` 后 PhaseRunner thread state 含 `task_type=develop` 字段
+  - Happy: **task_type 传透端到端**——develop task dispatch 后 next prompt 的 Layer 6(U2)能拿到 task_type=develop
+  - Happy: `list_cannbot_skill_names(CANNBOT_ROOT)` 在 vendored cannbot 路径返回非空 set;二次调用走 lru_cache 不重扫
+  - Happy: migrate/analyze/optimize task 仍抛 `TaskGatedError`(确认未动现有 gated,stub 推 U8/U9)
+  - Edge: vendored cannbot submodule 未初始化时 `list_cannbot_skill_names` 返回空 set 且不抛
+  - Error: invoke 的 task_type param 在 `initial_state` 之前不可用(避免 A2 同类"在 invoke 前 dict-assign state"坑)
+- **Verification:** develop dispatch 后 thread state + Layer 6 都含 task_type;`list_cannbot_skill_names` 空/非空两态 + lru_cache 命中;migrate/analyze/optimize 仍 gated。
 
-### U2. PromptBuilder Layer 6 重写（override 合并 + 双源 join + F-4 降级）
+### U2. PromptBuilder Layer 6 重写(override 合并 + 双源 join + 实测降级 + 复用 render_skill_bundle_text)
 
-- **Goal:** 让 Layer 6 在**生产路径**（PhaseRunner 节点走 `skills_layer_override` 整段替换）下也能渲染 self-built skill。重写 `_build_skills_layer` 只是默认路径——生产路径的 `skills_layer_override` 必须从"整段替换"改为"合并"：override 提供的 cannbot bundle 段落 + `_build_self_built_section()` 生成的 self-built 段落拼接，cannbot 在前 self-built 在后。self-built 殞数超阈值时按 task_type 子集降级。这是 F-1 决议第二项 + F-4 决议 + **feasibility P0 #1/#5 修订**。
-- **Requirements:** R5a（PR-A 全量注入）、R7（cannbot 在前）、R10（cannbot 不落盘，跨源 join）、F-4（降级阈值）。
-- **Dependencies:** U1（task_type 上下文 + list_cannbot_skill_names + CANBOT_BUNDLE_MAP）。
+- **Goal:** 让 Layer 6 在**生产路径**(override = cannbot phase subset)下也渲染 self-built skill;**默认路径**只渲染 self-built(不渲染 cannbot,消除 A1)。重写 `_build_skills_layer(override, task_type)`:`override`(cannbot)在前 + self-built 段在后;self-built 段**复用 `render_skill_bundle_text`**(A6,不从零写子函数)。self-built 数超阈值时按 task_type 子集降级。这是 F-1 第二项 + F-4 + A1 实测重算。
+- **Requirements:** R5a(PR-A 全量注入)、R7(cannbot 在前)、R10(跨源 join)、F-4(降级阈值)、A1(token budget 实测)。
+- **Dependencies:** U1(task_type 上下文 + list_cannbot_skill_names)。
 - **Files:**
-  - `agent/prompt_builder.py:81-85` — **关键改动：** 把 `if skills_layer_override is not None: layers.append(skills_layer_override) else: layers.append(self._build_skills_layer())` 改为 `layers.append(self._build_skills_layer(skills_layer_override, task_type))` —— override 不再短路，而是作为参数传入 `_build_skills_layer`，函数内部把 override 段落（cannbot）与 `_build_self_built_section(task_type)` 段落（self-built）合并渲染
-  - `agent/prompt_builder.py:151-162` — 重写 `_build_skills_layer(self, override: Optional[str], task_type: Optional[str])`，拆 `_build_self_built_section(task_type)` + `_build_cannbot_section(override)` + `_merge_sections()` + `_maybe_degrade(subset, task_type)` 四个子函数
-  - **不引入新存储文件**（feasibility/adversarial/scope-guardian 三重命中：`skill_loads.jsonl` 反向依赖 + 并发写无保护 + PR-A 期间 >20 阈值永不触发是 dead code）。降级路径只按 task_type 过滤，不读 last-loaded 历史
+  - `agent/prompt_builder.py:81-85` —— **关键改动:** 把 `if skills_layer_override is not None: layers.append(skills_layer_override) else: layers.append(self._build_skills_layer())` 改为 `layers.append(self._build_skills_layer(skills_layer_override, task_type))`——override 不短路,作为参数传入,与 self-built 段合并渲染。
+  - `agent/prompt_builder.py:151-162` —— 重写 `_build_skills_layer(self, override, task_type)`:
+    - 生产路径(override 非空):`override`(cannbot phase subset 文本)+ self-built 段(`render_skill_bundle_text(self_built_skills)` 渲染 name+desc)
+    - 默认路径(override 为 None):**只 self-built 段**(不渲染 cannbot——A1 消除)
+  - **复用 `cannbot_loader.render_skill_bundle_text`(A6 修订):** self-built SKILL.md frontmatter 形状与 CannbotSkill 兼容(name/description),用 thin adapter 构造 CannbotSkill 实例后调 `render_skill_bundle_text`。不新增 4 个 `_build_self_built_section`/`_build_cannbot_section`/`_merge_sections`/`_maybe_degrade` 子函数(原 round-2 设计,被 adversarial A6 否决:重复造已存在的 tested 渲染路径)。
+  - **不引入新存储文件**(`skill_loads.jsonl` 反向依赖 + 并发写无保护)。降级只按 task_type 过滤,不读 last-loaded。
 - **Approach:**
-  - **合并策略（P0 #1 核心）：** `_build_skills_layer(override, task_type)` 统一构造 Layer 6：`override`（cannbot bundle 文本，来自 orchestrator 节点）在前；`_build_self_built_section(task_type)`（扫 `~/.ascend_op_agent/skills/self-built/` 渲染 name+desc）在后。无 override 时（非 PhaseRunner 路径，如纯 `/learn` 聊天）cannbot 段走 `_build_cannbot_section()` 直接扫 vendored。
-  - **token budget 重算（P0 #5）：** 实测 cannbot ~16 skill + self-built 阈值前全量 = 36 skill × ~100 chars ≈ 900 tokens，超出 agent budget。降级阈值从 self-built >20 改为 **self-built >8**（与 cannbot 16 合计 ≤24 skill，~600 tokens 安全）；description 截断从 ≤60 字符改 **≤40 字符**。Verification 测 Layer 6 ≤ 800 tokens（prompt 总量视角，非 Layer 6 单独）。
-  - **降级（F-4 修订）：** self-built >8 时按 task_type 子集注入（task_type 缺失时回退全量，避免空集）；不读 last-loaded 历史，消除 jsonl 反向依赖与并发写问题。
-  - Layer 6 不注入 body，只注入 `name + description + task_type + topic` 摘要。`list_cannbot_skill_names()`（U1）过滤 self-built 与 cannbot 同名的污染。
-- **Patterns to follow:** `agent/prompt_builder.py` 现有 `_build_*_layer` 函数族风格；`skills/storage.py:SkillStorage._build_skill_content` 的 YAML frontmatter 解析。
+  - **合并策略:** `_build_skills_layer(override, task_type)` 统一构造:`override`(cannbot,来自 orchestrator 节点,生产路径)在前;`render_skill_bundle_text(self_built_skills_as_cannbot)`(扫 `~/.ascend_op_agent/skills/self-built/`)在后。无 override 时只渲染 self-built 段。
+  - **self-built 加载:** 扫 `self-built/` 目录(由 U4 `dimension="self_built"` 写入,见 F4 修复),每个 SKILL.md 经 thin adapter → CannbotSkill → `render_skill_bundle_text`。frontmatter 解析失败的 skill 跳过不阻塞。
+  - **降级(F-4 + A1 实测):** self-built >12 时按 task_type 子集(task_type 缺失时回退全量)。阈值 12 基于 KTD-2 实测算预算。
+  - Layer 6 不注入 body,只 name+description 摘要(沿用 cannbot 设计)。`list_cannbot_skill_names()`(U1)过滤 self-built 与 cannbot 同名污染。
+- **Patterns to follow:** `cannbot_loader.py:376` `render_skill_bundle_text`(复用而非重写);`agent/prompt_builder.py` 现有 `_build_*_layer` 函数族;`skills/storage.py` 的 YAML frontmatter 解析。
 - **Test scenarios:**
-  - Happy: **生产路径**（PhaseRunner 节点传 skills_layer_override=cannbot_bundle）下 Layer 6 含 cannbot 段 + self-built 段（P0 #1 验证）
-  - Happy: 0 self-built skill → Layer 6 仅含 cannbot 段（override 或直接扫）
-  - Happy: 5 self-built skill → 全量注入
-  - Edge: 10 self-built skill → 降级模式（同 task_type 子集），cannbot 仍在前
-  - Edge: task_type 缺失（非 PhaseRunner 路径）+ self-built >8 → 回退全量不空集
-  - Edge: vendored cannbot 路径不可读 + 无 override → Layer 6 仅含 self-built
-  - Edge: self-built/ 下某 SKILL.md frontmatter 解析失败 → 跳过该 skill 不阻塞其他
-  - Edge: Layer 6 总长 ≤ 800 tokens（cannbot 16 + self-built ≤8 全量场景实测）
-- **Verification:** 生产路径（override 非空）Layer 6 含双段（P0 #1 通过）；降级阈值 10 self-built 时只剩同 task_type 子集；Layer 6 ≤800 tokens；cannbot 在前不依赖 vendored 可读性。
+  - Happy: **生产路径**(override=cannbot phase subset)Layer 6 含 cannbot 段 + self-built 段
+  - Happy: **默认路径**(无 override,/learn chat)Layer 6 **只含 self-built 段,无 cannbot**(A1 消除验证)
+  - Happy: 0 self-built + 生产路径 → Layer 6 仅含 cannbot 段
+  - Happy: 5 self-built → 全量注入
+  - Edge: 13 self-built + 生产路径 → 降级(同 task_type 子集),cannbot 仍在前
+  - Edge: task_type 缺失(默认路径)+ self-built >12 → 回退全量不空集
+  - Edge: self-built/ 下某 SKILL.md frontmatter 解析失败 → 跳过不阻塞
+  - Edge: Layer 6 总长 ≤ 800 tok(生产 triton phase 最重 + self-built ≤12 场景,U6 用 tiktoken 实测校准)
+- **Verification:** 生产路径(override 非空)Layer 6 含双段;默认路径(override None)只 self-built 段无 cannbot;降级阈值 13 时剩同 task_type 子集;复用 render_skill_bundle_text(无新增 4 子函数);Layer 6 ≤800 tok(tiktoken 实测)。
 
-### U3. SkillIndex FTS5 schema 扩展（task_type + topic 列）+ schema_meta 表 + add_skill 热路径
+### U3. [DEFERRED to PR-B — 2026-07-12-T2] FTS5 schema 扩展 + migration
 
-- **Goal:** FTS5 schema 加 `task_type` + `topic` 两列（供 R6 search action 按 task_type+topic 过滤）；schema 版本号存独立 `schema_meta` 表（**非 FTS5 列**——feasibility P0 #4）；R14 改为热路径用 `add_skill`（已存在 line 139）替代全量 `rebuild_index`。这是 F-1 决议第三项 + R14 增量要求 + **feasibility P0 #4 + adversarial migration 安全修订**。
-- **Requirements:** R6（PR-B search action 的索引前置）、R13（`dimension="reference"` 小扩展）、R14（增量 rebuild）、F-1 第三项。
-- **Dependencies:** U1（cannbot 加载 + task_type 上下文）；可与 U2 并行但 SkillIndex schema migration 协调窗口。
+**此 U 整体移出 PR-A**(round-3 ce-doc-review scope-guardian P1 + product-lens/adversarial 汇聚:服务 R6 PR-B deferred,PR-A 无消费者)。U-ID 留 gap(稳定性规则,不 renumber)。原设计(FTS5 task_type+topic 列 + schema_meta 表 + `--migrate-skill-index` + migration 安全)整体进 PR-B plan,届时一并处理:
+- round-3 发现的 _init_db eager-write `schema_version='2'` 与 detection "raise MigrationRequired" 矛盾(feasibility P0 级 silent-data-corruption)
+- in-memory backup 对 crash 脆弱(adversarial P1)
+
+PR-A 期间:FTS5 schema 保持现有 4 列(`skills/index.py:127-134`)不动;R14 用现有 `add_skill`(`index.py:139`)4 列 upsert;U4 search action 用 frontmatter 扫描(Python filter,5-10 skill 够用)替代 R6 语义检索。
+
+### U4. skill_manage agent 工具(7-action schema + R2 静态校验 + R16 结构化错误 + self-built 写入路径 + frontmatter search)
+
+- **Goal:** 新建 `agent/tools/skill_manage_tool.py`,7 action 独立 schema + R2 静态校验完整版本 + R16 结构化错误 + provenance 元数据 + **self-built 写入路径(F4 修复)** + search action 用 frontmatter 扫描(U3 defer 后无 FTS5)。**不再依赖 U3**(去 U3 依赖,PR-A.1 contingency 由此可 ship)。
+- **Requirements:** R1、R2、R4、R11、R12、R13、R14(现有 add_skill 4 列)、R15、R16、F-5(topic soft 校验)、F4(self-built path)。
+- **Dependencies:** U1(list_cannbot_skill_names)。**不再依赖 U3**(U3 defer)。
 - **Files:**
-  - `skills/index.py` — FTS5 virtual table schema 加 `task_type TEXT, topic TEXT` 两列；**新增普通表 `schema_meta(key TEXT PRIMARY KEY, value TEXT)`** 存 schema 版本号（FTS5 virtual table 无常规列结构，`PRAGMA table_info` 只返回伪列，版本号不能放 FTS5 内——P0 #4）；保留 `rebuild_index` 但加注释"only for full refresh, prefer add_skill"
-  - `skills/index.py:_init_db` — 同事务 `CREATE TABLE IF NOT EXISTS schema_meta (key TEXT PRIMARY KEY, value TEXT)` + 写入 `('schema_version', '2')`
-  - `skills/storage.py:33-35` — 新增 `SUFFIX_REFERENCE = "_reference"` 常量（与 `SUFFIX_BUGFIX`/`SUFFIX_PERFORMANCE` 风格一致）
-  - `skills/storage.py:68-73` save_skill dimension 分支 — 加 `elif dimension == "reference": dir_name = f"{skill.name}{SUFFIX_REFERENCE}"`
-  - `skills/installer.py:81` — rebuild_index 调用点加注释指向 add_skill 作为热路径替代
-  - `ascend_op_agent/cli.py`（或主 CLI 入口）— 新增显式 `--migrate-skill-index` flag 触发一次性 DROP+CREATE+reindex migration（**不**在 SkillIndex.__init__ 自动跑——adversarial：一次性破坏性 op 不该是 agent 启动副作用）
-- **Approach:**
-  - **schema 版本检测（P0 #4 核心）：** `schema_meta` 是普通 SQLite 表（与 FTS5 同库 `self.db_path`）。`SkillIndex.__init__` 读 `SELECT value FROM schema_meta WHERE key='schema_version'`：值为 '2' = 当前 schema，no-op；值为 '1' 或表不存在 = 需 migration，但 **不自动执行**，而是 raise `SkillIndexMigrationRequired` 提示用户跑 `--migrate-skill-index`。这避免 agent 启动时一次性 DROP+CREATE 阻塞 + 失败后索引空（adversarial：silent wrong）。
-  - **migration 安全（adversarial）：** `--migrate-skill-index` 流程——(1) 备份当前 FTS5 内容到内存 list（`SELECT name,description,tags,content FROM skills`）；(2) `DROP TABLE skills` + 重建含 6 列；(3) 重插备份（task_type/topic 暂 NULL）；(4) 写 `schema_meta schema_version='2'`。任一步失败 → restore 备份 + 不升版本号（原子性）。CLI 输出迁移行数 + 耗时。
-  - R6 search 在 task_type/topic NULL 上走 name-only fallback（迁移期容错）。
-  - `add_skill` 已存在（line 139）upsert，写入路径统一调它而非 `rebuild_index`。R13 `dimension="reference"` 在 save_skill dimension 分支加一档（`SUFFIX_REFERENCE="_reference"`）。
-- **Patterns to follow:** `skills/index.py:139` add_skill 已有的 upsert 逻辑；`skills/storage.py:57-85` save_skill 的 dimension 分支；`functools`/原子事务模式。
-- **Test scenarios:**
-  - Happy: `add_skill` 写入带 task_type+topic 的 skill，FTS5 row 含两列且 value 非空
-  - Happy: `add_skill` 后下一次 search 按 task_type 过滤返回该 skill
-  - Happy: `dimension="reference"` 写入后目录名 `{name}_reference`，`load_skill({name}_reference)` 能解析
-  - Happy: schema_meta 表存在且 schema_version='2' 时 SkillIndex.__init__ no-op 不抛
-  - Edge: schema_meta 缺失或 version='1' → SkillIndex.__init__ raise `SkillIndexMigrationRequired`（不自动 DROP，P0 #4 + adversarial）
-  - Edge: `--migrate-skill-index` 在空索引上跑 → 创建 schema_meta + version='2'，无数据损失
-  - Edge: `--migrate-skill-index` 中途失败（mock disk full）→ restore 备份 + version 不升 + 索引可读
-  - Error: `add_skill` 在 FTS5 不可用时（disk full）记录错误不阻塞写入
-- **Verification:** schema_meta 表存在 + schema_version 可读（P0 #4）；`--migrate-skill-index` 原子性（失败 restore）；add_skill 单次调用后无需 rebuild 即被 search 命中；rebuild_index 调用频率从每次写入降为 0；`dimension="reference"` 目录名符合 `{name}_reference`。
-
-### U4. skill_manage agent 工具（7-action schema + R2 静态校验 + R16 结构化错误）
-
-- **Goal:** 新建 `agent/tools/skill_manage_tool.py`，7 action 独立 schema + R2 静态校验完整版本 + R16 结构化错误返回 + provenance 元数据生成。
-- **Requirements:** R1（7 action）、R2（静态校验）、R4（provenance）、R11（Project Scope 首段）、R12（cannbot 同名拒绝）、R13（dimension 扩展）、R14（用 add_skill）、R15（archive）、R16（结构化错误）、F-5（topic soft 校验仅 warning）。
-- **Dependencies:** U1（list_cannbot_skill_names）、U3（add_skill 热路径 + FTS5 schema）。
-- **Files:**
-  - `agent/tools/skill_manage_tool.py` — 新建：7 action dataclass（`CreateSkillArgs` / `PatchSkillArgs` / `AddReferenceArgs` / `ArchiveSkillArgs` / `LoadSkillArgs` / `ListSkillsArgs` / `SearchSkillsArgs`）+ ToolRegistry 注册入口 + 静态校验函数 `_validate_skill_static()` + 错误响应 dataclass（`SkillManageError` 含 `field` + `reason` + `remediation_hint`）+ provenance 元数据生成 `_build_provenance_metadata()` + 调用 `SkillIndex.add_skill` 而非 `rebuild_index`
-  - `agent/tools/__init__.py` — 注册 skill_manage_tool
-  - `agent/tools/skill_manage_tool.py` 的 `archive` action 写 provenance 字段（`archive_at` / `archive_reason`）到 SKILL.md frontmatter
-- **Approach:** 7 action schema 用 dataclass 独立定义（每个 action 一个 `@dataclass` 类，ToolRegistry 用现有 JSON schema 转换）。R2 静态校验清单一次实现完整版本：(a) 必填字段 `name` / `description` / `task_type` / `topic` / `body`；(b) `name` regex `^[a-z][a-z0-9-]*[a-z0-9]$` 且不含 PR 号/错误串/日期/具体任务对象；(c) `task_type ∈ TASK_TYPES`；(d) `topic` soft warn（`logging.getLogger(__name__).warning(...)`，不阻塞，return 字段含 `warning: {field: 'topic', reason: 'not_in_bucket', hint: 'see TASK_TYPE_TOPIC_BUCKETS in cannbot_loader'}`）；(e) 第一段 body 是 `## Project Scope`；(f) cannbot 同名 → reject（用 U1 的 `list_cannbot_skill_names()`）。R16 错误响应 schema：`{"success": false, "error": "validation_failed", "field": "name", "reason": "...", "remediation_hint": "..."}`。
-  - **patch action 语义（feasibility 修订）：full-replacement。** patch schema 字段与 create 相同（name + description + task_type + topic + body + provenance patch），调用方必须重传完整 skill 内容。理由：`SkillStorage.save_skill` 是整段覆盖写（无 load-modify-merge），partial merge 需在工具内部 load + dict merge + 写回，增加复杂度且 R4 provenance 的 `updated_at` 语义在 merge 下含糊。full-replacement 简单可证伪：patch 不传 body → reject `"patch requires full body (full-replacement semantics), not partial merge"`。
-  - **archive action 语义（feasibility 修订）：** 不走 save_skill（_build_skill_content 字段白名单无 archive_*）。archive 直接读 SKILL.md → 字符串注入 `archive_at` / `archive_reason` 到 frontmatter `metadata.ascend_op_agent` 子节点 → 移文件到 `.archived/`。`load_skill` 解析时还原 archive_* 到 Skill.metadata。
-  - **R12 vendored 缺失处置（adversarial 修订）：fail-closed。** `list_cannbot_skill_names` 返回空 set 时，区分两种情况：(1) vendored 路径配置存在但不可读（submodule 未初始化）→ **reject 写入**，返回 `"cannbot submodule unavailable — refusing write to avoid cannbot-name collision risk; run git submodule update --init"`；(2) vendored 路径根本未配置（CANNBOT_ROOT 不存在）→ warn 但允许（开发者明确禁用 cannbot 的场景）。避免 vendored 缺失时静默放行 cannbot 同名 skill 的污染窗口。
-- **Patterns to follow:** `agent/tools/file_write_tool.py` 的 dataclass + ToolRegistry 注册；`skills/storage.py:139` 的 Skill 对象构造；`cannbot_loader.list_cannbot_skill_names`（U1）。
+  - `agent/tools/skill_manage_tool.py` —— 新建:7 action dataclass(`CreateSkillArgs`/`PatchSkillArgs`/`AddReferenceArgs`/`ArchiveSkillArgs`/`LoadSkillArgs`/`ListSkillsArgs`/`SearchSkillsArgs`)+ ToolRegistry 注册 + `_validate_skill_static()` + `SkillManageError` dataclass(field+reason+remediation_hint)+ `_build_provenance_metadata()` + 调 `SkillIndex.add_skill`(现有 4 列,非 rebuild_index)
+  - `agent/tools/__init__.py` —— 注册 skill_manage_tool
+  - `skills/storage.py` —— **F4 修复:** `save_skill` dimension 分支加 `dimension="self_built"` → `dir_name` 写到 `skills_dir/"self-built"/{name}`(非扁平 `skills_dir/{name}{suffix}`)。现有 `_bugfix`/`_performance` dimension 不动。**`skills/storage.py` 列入本 U Files(原 round-2 漏列)。**
+  - `skills/storage.py` —— **R13 微扩展:** 加 `elif dimension == "reference": dir_name = f"{skill.name}_reference"`(独立于 FTS5)
+  - `skills/storage.py:33-35` —— 新增 `SUFFIX_REFERENCE = "_reference"` 常量
+- **Approach:** 7 action schema 用 dataclass 独立定义。R2 静态校验清单一次实现完整:(a) 必填 `name`/`description`/`task_type`/`topic`/`body`;(b) `name` regex `^[a-z][a-z0-9-]*[a-z0-9]$` 且不含 PR 号/错误串/日期/具体任务对象;(c) `task_type ∈ TASK_TYPES`;(d) `topic` soft warn(不阻塞);(e) 第一段 body 是 `## Project Scope`;(f) cannbot 同名 → reject。R16 错误响应:`{"success": false, "error": "validation_failed", "field": "...", "reason": "...", "remediation_hint": "..."}`。
+  - **search action(U3 defer 后):** 按 task_type 过滤走 **frontmatter 扫描**(扫 `self-built/` 读 frontmatter task_type,Python filter),不走 FTS5。5-10 skill 规模 O(N) 扫描足够。PR-B R6 上线后切到 FTS5 task_type/topic 列。
+  - **patch action(full-replacement):** patch schema 字段与 create 相同,调用方重传完整 skill。`SkillStorage.save_skill` 整段覆盖写(无 load-modify-merge)。patch 不传 body → reject。
+  - **archive action:** 不走 save_skill。直接读 SKILL.md → 字符串注入 `archive_at`/`archive_reason` 到 frontmatter `metadata.ascend_op_agent` → 移文件到 `.archived/`(目录不存在则 mkdir)。`load_skill` 解析时还原。
+  - **R12 vendored 缺失 fail-closed:** `list_cannbot_skill_names` 返回空 set 时:(1) vendored 路径配置存在但不可读(submodule 未初始化)→ **reject 写入**;(2) vendored 路径未配置(CANNBOT_ROOT 不存在)→ warn 但允许。
+- **Patterns to follow:** `agent/tools/file_write_tool.py` 的 dataclass + ToolRegistry;`skills/storage.py:57-85` save_skill 的 dimension 分支;`cannbot_loader.list_cannbot_skill_names`(U1)。
 - **Test scenarios:**
   - Happy: 7 action schema 各自接受合法输入
-  - Happy: create 成功后 `self-built/` 下有 SKILL.md + frontmatter 含 task_type/topic/provenance.write_origin=manual
-  - Happy: patch（full-replacement）成功后 frontmatter `updated_at` 字段被更新 + body 完整保留
-  - Happy: archive 成功后 SKILL.md 在 `.archived/` 下 + frontmatter metadata.ascend_op_agent 含 archive_at/archive_reason + load_skill 还原
-  - Happy: search action 按 task_type 过滤返回该 task_type 下的 self-built skill
-  - Edge: topic 不在分桶枚举 → soft warning 不阻塞（F-5）
-  - Edge: patch 不传 body → reject（full-replacement 语义）
-  - Edge: `list_cannbot_skill_names` 返回空 + vendored 路径配置存在 → reject 写入（R12 fail-closed，adversarial）
-  - Edge: `list_cannbot_skill_names` 返回空 + vendored 路径未配置 → warn 但允许
+  - Happy: create 成功后 `self-built/{name}/SKILL.md` 存在 + frontmatter 含 task_type/topic/provenance.write_origin=manual(F4 验证:写到 self-built/ 子目录,非扁平)
+  - Happy: patch(full-replacement)成功后 frontmatter `updated_at` 更新 + body 完整保留
+  - Happy: archive 成功后 SKILL.md 在 `.archived/` + frontmatter 含 archive_at/archive_reason + load_skill 还原
+  - Happy: search action 按 task_type frontmatter 扫描过滤返回该 task_type 下 self-built skill(无 FTS5)
+  - Edge: topic 不在分桶 → soft warning 不阻塞(F-5)
+  - Edge: patch 不传 body → reject(full-replacement)
+  - Edge: `list_cannbot_skill_names` 空 + vendored 配置存在 → reject(R12 fail-closed)
+  - Edge: `list_cannbot_skill_names` 空 + vendored 未配置 → warn 但允许
   - Error: name 含 PR 号 → R16 reject 含 remediation
-  - Error: cannbot 同名 → reject `"Refusing write: cannbot-owned skill name collision: <name>"`
-  - Error: body 缺 Project Scope → reject
-  - Error: 缺 task_type → reject `"task_type must be one of TASK_TYPES: [migrate, analyze, optimize, develop]"`
-- **Verification:** 7 action schema 字段校验覆盖率 100%；patch full-replacement 语义（不传 body reject）；archive frontmatter 注入 + load 还原；R12 vendored 缺失 fail-closed（配置存在时 reject）；R16 错误响应含 `field` / `reason` / `remediation_hint` 三字段；静态校验失败率 ≥99% on 5 条明显违规 held-out set（F-6 ship gate）。
+  - Error: cannbot 同名 → reject
+- **Verification:** 7 action schema 覆盖率 100%;patch full-replacement;archive frontmatter 注入 + load 还原;R12 fail-closed;R16 三字段错误响应;self-built 写到 `self-built/{name}/`(F4);search 走 frontmatter 扫描(无 FTS5 依赖 U3);静态校验失败率 ≥99% on 5 条明显违规 held-out set(F-6 ship gate)。
 
-### U5. /learn Python CLI 命令 + _handle_learn_command（build_learn_prompt 内联）
+### U5. /learn Python CLI 命令 + sync run_conversation 注入(A2 修复)
 
-- **Goal:** 实现 `/learn` **Python CLI** 命令（ascend-op-agent CLI 入口），把 user_request 注入 agent 输入队列，agent 通过 `skill_manage(action="create")` 沉淀 skill；无参数走 AE5a 教学错误。**PR-A 仅 Python CLI**（feasibility 修订：TUI frontend 的 /learn 涉及前端 keybinding + RPC method + backend handler 三处，推到 PR-B/V2 独立覆盖）。
-- **Requirements:** R8（/learn 命令 + build_learn_prompt + `_AUTHORING_STANDARDS`）、AE5a（无参数教学错误）。
-- **Dependencies:** U4（skill_manage 工具已注册）、U1（task_type 上下文在 agent prompt 里可用）。
+- **Goal:** 实现 `/learn` **Python CLI** 命令,把 user_request 经 `build_learn_prompt` 构造后 **sync 调 `agent.run_conversation(learn_prompt)`** 注入(A2 修复:不用不存在的 `_pending_input` 队列);无参数走 AE5a 教学错误。
+- **Requirements:** R8(/learn + build_learn_prompt + `_AUTHORING_STANDARDS`)、AE5a、A2(sync 注入)。
+- **Dependencies:** U4(skill_manage 工具已注册)、U1(task_type 上下文)。
 - **Files:**
-  - `cli.py`（ascend-op-agent Python CLI 入口）— 新增 `_handle_learn_command(cmd: str)` 解析 `/learn <自由文本>` + 内联 `build_learn_prompt(user_request: str) -> str`（scope-guardian：单函数不新建模块；Q3 决议若抽 `agent/skill_standards.py` 时再迁移，避免一次性中间形态）+ `_AUTHORING_STANDARDS` 常量
-  - **PR-A 不动**：TUI frontend（`frontend/` Ink/React）、`backend/rpc/server.py` 的 /learn 相关 RPC method
-- **Approach:** `_handle_learn_command` 解析文本：空字符串 → AE5a 教学错误（不注入 agent，直接 print）；非空 → `build_learn_prompt` 构造 prompt 注入 `_pending_input`。`_AUTHORING_STANDARDS` 内嵌 9 段 body 模板：首段 `## Project Scope`（适用范围 + 版本边界）+ 后续 8 段（When to Use / Prerequisites / How to Run / Quick Reference / Procedure / Pitfalls / Verification / Related Skills）、description ≤60 字符、TaskType+Topic 元数据强制、禁止 cannbot 已覆盖通用知识。Agent 在该轮用 file_read/file_search/web_extract 收集素材后调 `skill_manage(action="create"|"patch")`。
-- **Patterns to follow:** hermes `_handle_learn_command` + `build_learn_prompt`（参考实现）；`cli.py` 现有 slash 命令分发模式。
+  - `cli.py`(ascend-op-agent Python CLI 入口,Click 框架)—— 新增 `_handle_learn_command(user_request: str)`:解析 `/learn <自由文本>` + 内联 `build_learn_prompt(user_request) -> str` + `_AUTHORING_STANDARDS` 常量。**注入方式(A2 修复):** 直接 `agent.run_conversation(build_learn_prompt(user_request))`(sync,阻塞至 skill 写入完成),不引用 `_pending_input`。
+  - **PR-A 不动:** TUI frontend、`backend/rpc/server.py`
+- **Approach:** `_handle_learn_command` 解析文本:空 → AE5a 教学错误(直接 print,不进 run_conversation);非空 → `build_learn_prompt` 构造 prompt → `agent.run_conversation(prompt)`。`_AUTHORING_STANDARDS` 内嵌 9 段 body 模板(首段 `## Project Scope` + When to Use/Prerequisites/How to Run/Quick Reference/Procedure/Pitfalls/Verification/Related Skills)、**description ≤40 字符**(C5 对齐:与 U2/KTD-2 渲染一致,原 round-2 写 ≤60 是矛盾)、TaskType+Topic 元数据强制、禁止 cannbot 已覆盖通用知识。Agent 在该轮用 file_read/file_search/web_extract 收集素材后调 `skill_manage(action="create"|"patch")`。
+  - **A2 sync 语义:** `_handle_learn_command` 在 CLI 进程内持 agent 实例,sync 调 `run_conversation`,阻塞至 agent 完成该轮(skill 写入或返回)。无 async queue、无并发。简单可证伪。
+- **Patterns to follow:** hermes `_handle_learn_command` + `build_learn_prompt`;`cli.py` 现有 Click `@click.command`/`@click.group` 子命令注册模式(cli.py 用 Click,**非** slash dispatcher;`/learn` 作为 Click 子命令或 run 命令内的 input 解析)。
 - **Test scenarios:**
-  - Happy: Python CLI `/learn ops_pt build.sh 配置` → prompt 注入 `_pending_input` 且内嵌 `_AUTHORING_STANDARDS` 关键字串
-  - Happy: agent 在该轮调 `skill_manage(action="create")` 成功沉淀 skill（与 U4 集成）
+  - Happy: Python CLI `/learn ops_pt build.sh 配置` → `agent.run_conversation` 被调用一次(prompt 内嵌 `_AUTHORING_STANDARDS` 关键字串)
+  - Happy: agent 在该轮调 `skill_manage(action="create")` 成功沉淀 skill(与 U4 集成)
   - Happy: prompt 含 `task_type ∈ TASK_TYPES` 提示 + `topic` 分桶建议
-  - Edge: `/learn` 无参数 → 返回教学错误（不进入蒸馏流程，AE5a）
-  - Edge: user_request 含 cannbot 已覆盖通用知识 → prompt 警告 agent 不重复
-  - Error: `_pending_input` 队列满 → 返回 CLI 错误（不丢消息）
-- **Verification:** Python CLI `/learn` 触发后 agent 的 `_pending_input` 队列长度 +1；prompt 内嵌 `_AUTHORING_STANDARDS` 关键字串（含 "Project Scope" + "When to Use" 等 9 段标题）；TUI frontend 在 PR-A 不暴露 /learn。
+  - Edge: `/learn` 无参数 → 返回教学错误(不进 run_conversation,AE5a)
+  - Edge: user_request 含 cannbot 已覆盖通用知识 → prompt 警告
+  - Error: `run_conversation` 抛错 → CLI 报错不吞
+  - **A2 验证:** 全程不引用 `_pending_input`(grep `_pending_input` in cli.py = zero)
+- **Verification:** `/learn` 触发 `run_conversation` 调用(sync);prompt 内嵌 `_AUTHORING_STANDARDS` 9 段标题;description ≤40 字符;TUI frontend 在 PR-A 不暴露 /learn;`_pending_input` 不出现(A2)。
 
-### U6. PR-A 闭环验收：R5a 全量注入 + F-4 降级 + F-6 false-negative 基线 + ship gate
+### U6. PR-A 闭环验收:R5a 注入 + F-4 降级 + F-6 false-negative 基线 + token ship gate(实测)+ ship gate
 
-- **Goal:** 验证 PR-A 6 个 U 串联工作（U1→U2→U3→U4→U5→U2 闭环）；建立 R2 静态护栏 false-negative 基线（F-6 决议）；运行 ship gate。
-- **Requirements:** F-1（PR-A 范围决议：3 件底层重构）、F-3（product-level 观测性 metric）、F-4（>8 降级）、F-6（held-out false-negative 基线）。
-- **Dependencies:** U1, U2, U3, U4, U5。
+- **Goal:** 验证 PR-A 5 个 active U 串联工作(U1→U2→U4→U5→U2 闭环);建立 R2 静态护栏 false-negative 基线(F-6);**用 tiktoken 实测校准 Layer 6 token ship gate(A1)**;运行 ship gate。
+- **Requirements:** F-1(2 件底层重构)、F-3(观测性 metric)、F-4(>12 降级)、F-6(held-out baseline)、A1(tiktoken 实测)。
+- **Dependencies:** U1, U2, U4, U5。
 - **Files:**
-  - `tests/integration/test_skill_crystallization_pr_a.py` — 端到端集成测试：`/learn` → `skill_manage(create)` → SkillStorage 写入 → FTS5 含 → Layer 6 注入 → agent 看到
-  - `tests/fixtures/skill_false_negative_held_out.yaml` — 5 条语义违规案例（env-dep / one-shot / 负面断言 / 等，AE2 是其中之一）
-  - `tests/fixtures/skill_obvious_violations_held_out.yaml` — 5 条明显违规案例（name 含日期、缺 task_type、与 cannbot 同名、缺 Project Scope、缺必填字段）— 静态护栏召回测试
-  - `scripts/ship_ready.py` 加 PR-A 验收 step（schema 合规率 100% + 静态护栏召回 on 明显违规 + Layer 6 注入可观测 + false-negative 基线记录）
-- **Approach:** Held-out 5 条语义违规 fixture（取自 hermes 负面清单 + 项目特定的 CANN 9.1.0 set_env.sh env-dep 案例 = AE2），R2 静态校验预期 false-negative ≥60%（确认 R2 本就拦不住语义违规，为 PR-B R3 baseline）。Ship gate 通过条件：(a) U1-U5 集成测试全绿；(b) R2 schema 合规率 100%（在合法 fixture 集上）；(c) 5 条明显违规案例 R2 全部 reject（静态护栏召回）；(d) Layer 6 注入可观测性测试通过；(e) F-6 false-negative 基线值记录到 `~/.ascend_op_agent/state/metrics/skill_guardrail_baseline.json`（含 timestamp + 测试集 hash + false-negative 率）。F-2 的 ≥8 skills + ≤2 patch 冲突 + 0 regression 是 V2 进入条件（PR-A 内不查，记入 V2 checklist）。
-- **Patterns to follow:** `scripts/ship_ready.py` 现有 step 模式（lint + unit_test + stress + e2e_tui）。
+  - `tests/integration/test_skill_crystallization_pr_a.py` —— 端到端:`/learn` → `skill_manage(create)` → SkillStorage 写 self-built/ → Layer 6 注入 → agent 看到
+  - `tests/fixtures/skill_false_negative_held_out.yaml` —— 5 条语义违规案例(AE2 是其中之一)
+  - `tests/fixtures/skill_obvious_violations_held_out.yaml` —— 5 条明显违规案例(静态护栏召回)
+  - `scripts/ship_ready.py` 加 PR-A 验收 step(schema 合规 + 静态护栏召回 + Layer 6 注入可观测 + **tiktoken 实测 token ≤800** + false-negative 基线)
+- **Approach:** Held-out 5 条语义违规 fixture,R2 预期 false-negative ≥60%(为 PR-B R3 baseline)。Ship gate 通过条件:(a) U1/U2/U4/U5 集成测试全绿;(b) R2 schema 合规率 100%;(c) 5 条明显违规 R2 全 reject;(d) Layer 6 注入可观测;(e) F-6 false-negative 基线入 metric log;(f) **A1 token 实测:** 用 tiktoken(cl100k_base)实测生产路径(triton phase 最重 + self-built ≤12)+ 默认路径(只 self-built)Layer 6 ≤800 tok,KTD-2 的 chars/4 粗估若与 tiktoken 偏差 >20%,回调降级阈值(12 → 实测安全值)。
+- **Patterns to follow:** `scripts/ship_ready.py` 现有 step 模式。
 - **Test scenarios:**
-  - Integration: 端到端 `/learn` → 写入 → 注入 → 看到（**生产路径**：PhaseRunner 节点传 skills_layer_override，验证 override 不短路、self-built 段被合并渲染——P0 #1 闭环）
-  - Integration: 4 task_type 各自端到端 flow 跑通（task_type 从 task_router 传透到 Layer 6——P0 #2 闭环）
-  - Held-out: 5 条明显违规（name 含日期、缺 task_type、与 cannbot 同名、缺 Project Scope、缺必填字段）→ R2 全部 reject
-  - Held-out: 5 条语义违规 → false-negative 率记录（预期 ≥60%）
-  - Edge: 10 self-built skill 时降级阈值触发（同 task_type 子集，不读 last-loaded）
-  - Edge: Layer 6 注入长度 ≤ 800 tokens（cannbot 16 + self-built ≤8 全量场景实测，P0 #5）
-  - Edge: vendored cannbot 不可读 → Layer 6 仅含 self-built
-  - Held-out: `create + add_reference` 同流程 → SkillStorage 写 dimension=reference 后 load_skill 可解析（R13 PR-A 端到端覆盖，RISK-8 缓解落地）
-- **Verification:** ship gate 6 条全过（含 P0 #1 生产路径合并 + P0 #2 task_type 传透）；false-negative 基线值入 metric log；Layer 6 ≤800 tokens；held-out fixture 文件有 schema_version 字段便于后续 PR-B R3 复测。
+  - Integration: 端到端 `/learn` → sync run_conversation → 写入 self-built/ → 注入 → 看到(默认路径只 self-built 段,A1 闭环)
+  - Integration: develop task 端到端(生产路径 cannbot subset + self-built,task_type 从 task_router 传透到 Layer 6)
+  - Held-out: 5 条明显违规 → R2 全 reject
+  - Held-out: 5 条语义违规 → false-negative 率记录(预期 ≥60%)
+  - Edge: 13 self-built 时降级(同 task_type 子集)
+  - Edge: **A1 tiktoken 实测** Layer 6 ≤800 tok(生产 triton + self-built ≤12;默认只 self-built)
+  - Edge: vendored cannbot 不可读 → 生产路径 Layer 6 无 cannbot 段(override 空)+ self-built 段
+  - Held-out: `create + add_reference` → SkillStorage dimension=reference 写入后 load_skill 可解析(R13)
+- **Verification:** ship gate 6 条全过(含 A1 tiktoken 实测 + 默认路径只 self-built);false-negative 基线入 metric log;Layer 6 ≤800 tok(tiktoken)。
 
 ## Verification Contract
 
-PR-A ship gate 5 条（U6 验证）：
+PR-A ship gate 6 条(U6 验证):
 
-1. **Schema 合规率 100%：** 在合法 skill fixture 集上 R2 静态校验通过率 100%。
-2. **静态护栏召回：** 5 条明显违规案例（held-out）R2 全部 reject。
-3. **Layer 6 注入可观测：** 写入 `self-built/` 的 skill 在下一轮 prompt 的 Layer 6（R5a 全量或 F-4 降级子集）可见，agent 通过 `skill_manage(action="load")` 读到 body。
-4. **静态护栏 false-negative 基线：** 5 条语义违规案例（held-out）的 R2 false-negative 率记录到 metric log（PR-B R3 启用后用同一集复测 delta）。
-5. **集成测试全绿：** U1-U5 端到端集成测试覆盖 4 task_type × `/learn` 流程。
-6. **可演进：** skill_manage 工具接口在 L3 review fork 启用时不变更（护栏/provenance 自动生效，KTD-7）——origin Success Criteria 第 4 条 carry。
+1. **Schema 合规率 100%:** 合法 skill fixture 集上 R2 通过率 100%。
+2. **静态护栏召回:** 5 条明显违规(held-out)R2 全 reject。
+3. **Layer 6 注入可观测:** 写入 `self-built/` 的 skill 在下一轮 prompt 的 Layer 6 可见,agent 经 `skill_manage(action="load")` 读到 body。
+4. **A1 token 实测(tiktoken):** 生产路径(triton phase + self-built ≤12)+ 默认路径(只 self-built)Layer 6 ≤800 tok。KTD-2 chars/4 粗估与 tiktoken 偏差 >20% 时回调阈值。
+5. **静态护栏 false-negative 基线:** 5 条语义违规(held-out)R2 false-negative 率入 metric log(PR-B R3 复测 delta)。
+6. **集成测试全绿:** U1/U2/U4/U5 端到端覆盖 develop path × `/learn` sync 流程。
+
+**Design property(carry from origin Success Criteria,非 runnable gate):** skill_manage 工具接口在 L3 review fork 启用时不变更(KTD-7)。
 
 ## Definition of Done
 
-- U1-U6 全部 ship gate 通过
-- PR-A 工期 ~3-4 周（vs round 1 估计 ~1-1.5 周，因 F-1 加了 3 件底层重构）
-- `~/.ascend_op_agent/skills/self-built/` 至少 1 个测试 skill 写入 + 在 Layer 6 可见（集成测试覆盖）
-- F-2 L1→L3 gating（≥8 skills + ≤2 patch 冲突 + 0 regression）条件记录到 V2 启动 checklist
-- F-6 false-negative 基线值入 metric log，等 PR-B R3 启用后 delta 评估
-- 原 origin doc 中所有 5 项 F-决议的产物（held-out fixture、metrics log、降级阈值）有可见产物
-- `cannbot_loader.list_cannbot_skill_names` 暴露给 `skill_manage` 工具
-- 4 task_type 各自至少 1 个 `/learn` 端到端集成测试覆盖
+- U1, U2, U4, U5, U6 全部 ship gate 通过(U3 deferred,U-ID 留 gap)
+- PR-A 工期 ~2 周(2026-07-12-T2 收缩后,vs round-2 ~3-4 周)
+- `~/.ascend_op_agent/skills/self-built/` 至少 1 个测试 skill 写入 + Layer 6 可见
+- F-2 L1→L3 gating 条件记录到 V2 checklist
+- F-6 false-negative 基线入 metric log
+- 6 项 F-决议产物(held-out fixture、metrics log、降级阈值)有可见产物
+- `cannbot_loader.list_cannbot_skill_names` 暴露给 skill_manage 工具
+- develop path + `/learn` default path 各至少 1 个端到端集成测试
+- **A1/A2 闭环:** Layer 6 token tiktoken 实测 ≤800;`_pending_input` 不出现(sync 注入)
 
 ## Risks & Dependencies
 
 ### Cross-Plan Dependencies
 
-与 Direction B（Production-Side Storage Unification，见 `docs/plans/2026-07-12-001-feat-direction-b-storage-unification-plan.md`）的关系：
+与 Direction B(Production-Side Storage Unification,见 `docs/plans/2026-07-12-001-feat-direction-b-storage-unification-plan.md`)的关系:
 
-- **PR-A 完全解耦** —— PR-A 的 `/learn` 是用户手动沉淀路径（素材来自 `file_read`/`file_search`/`web_extract`，见 High-Level Technical Design 数据流图），既不枚举也不读取 workflow conversations，因此**不依赖** Direction B 的统一存储。PR-A 可独立先行。
-- **PR-B/V2 的 AE5b（session-replay 蒸馏）依赖 Direction B 先落地** —— AE5b 需要统一枚举 + 单键 cross-reference 读取 workflow conversations，这正是 Direction B 生产的 index 所提供的能力。**AE5b 启动前，Direction B 必须 ship。**
-- **建议执行顺序：** PR-A（直接实现）→ 观察 `/learn` 实际沉淀的 skill 形态与会话消费需求 → Direction B（基于 PR-A 经验补 planning + 实现，index entry 字段需求届时更明确）→ PR-B/V2 AE5b。
-- **文档对齐注：** Direction B plan 当前把消费者表述为 "skill crystallization's `/learn` flow"，实际对应本计划的 AE5b（PR-B/V2），非 PR-A 的手动 `/learn`。两份文档在此点已对齐，避免 Direction B 被误判为 PR-A 的硬前置。
+- **PR-A 完全解耦** —— PR-A 的 `/learn` 是用户手动沉淀路径(素材来自 `file_read`/`file_search`/`web_extract`,sync 注入),既不枚举也不读取 workflow conversations,因此**不依赖** Direction B。PR-A 可独立先行。
+- **PR-B/V2 的 AE5b(session-replay 蒸馏)依赖 Direction B 先落地** —— AE5b 需要统一枚举 + 单键 cross-reference 读取 workflow conversations。**AE5b 启动前,Direction B 必须 ship。**
+- **建议执行顺序:** PR-A(直接实现)→ 观察实际沉淀形态 → Direction B → PR-B/V2 AE5b。
+- **文档对齐注:** Direction B plan 把消费者表述为 "skill crystallization's `/learn` flow",实际对应 AE5b(PR-B/V2),非 PR-A 手动 `/learn`。
 
-- **RISK-1 (medium):** TaskRouter stub executor 仅做 pass-through；TASK_TYPE_MIGRATE/ANALYZE/OPTIMIZE 真业务逻辑由后续 U8（Path A 迁移 executor）+ U9（analyze/optimize 真 executor）实现，PR-A 不覆盖。**缓解：** PR-A 阶段仅验证 dispatch 不抛错 + task_type 上下文传透，真业务逻辑推迟到 Path A/B 后续 work。
-- **RISK-2 (medium):** FTS5 schema DROP+CREATE migration 期间（U3）skill 索引短暂不可用，影响 R6 search action。**缓解：** migration 步骤在 PR-A 初始化时一次执行（`_init_schema_migration_if_needed()` in `SkillIndex.__init__`），运行时不再触发；存量 skill 的 task_type/topic NULL 容错（name-only fallback）。
-- **RISK-3 (medium):** Layer 6 改动（U2）触及生产路径 `skills_layer_override` 合并语义（P0 #1）+ token budget 重算（P0 #5），回归风险高于纯默认路径重写。**缓解：** U6 集成测试显式覆盖生产路径（override 非空）+ 0/5/10 self-built 三档 + cannbot 可读/不可读两态 + Layer 6 ≤800 tokens 断言。
-- **RISK-4 (low):** 4 task_type × 15 topic 槽位远超 PR-A 目标 5-10 skill，F-5 决议推迟 topic 冻结时机，PR-A 阶段 topic 是 free-form label。**缓解：** PR-A 不查 topic 分桶枚举（仅 warning），PR-B 或 V2 累积 ~10 skill 后再决定冻结。
-- **RISK-5 (high):** Origin Problem Frame "TaskRouter 仅 wired develop" 与新 scope 4 task_type 的张力（feasibility P0）需 U1 显式修补——若 U1 stub executor 不完整，整个 F-1 决议失效。**缓解：** U1 是 ship gate 第一个 U；dispatcher 不抛错的覆盖率测试是强制门槛。
-- **RISK-6 (medium):** SKILL_BUNDLES `(graph, phase) ↔ (task_type, topic)` 映射表的完备性。**缓解：** U1 阶段映射表覆盖所有现有 SKILL_BUNDLES 条目（CANBOT_BUNDLE_MAP 静态表 + 单元测试 1:1 翻译覆盖）。
-- **RISK-7 (medium):** PR-A 工作量从 round 1 估计 ~1-1.5 周扩到 ~3-4 周（因 F-1 3 件底层重构 + feasibility P0 修订进一步细化），若 U2（override 合并）或 U3（FTS5 migration）overrun >1 周，触发 **PR-A.1 contingency（adversarial 建议）**：ship PR-A.1 = U1 + U4 + U5 only（develop-only，Layer 6 保持现有 static literal + skills_layer_override 不合并，skill_manage 工具可用但 agent 暂时看不到 self-built skill），再 PR-A.2 补 U2 + U3。PR-A.1 仍满足 AE1（skill_manage create）+ AE5a（/learn 教学错误）+ AE4（cannbot 拒绝），不满足 AE3（Layer 6 自发现）。这保留 U2/U3 滑期时的可交付进度，不重开 F-1 决议。
-- **RISK-8 (low):** R13 `dimension="reference"` 当前无 PR-A AE 显式覆盖（origin 标注为 PR-A 内小扩展但缺 AE 验证场景）；U4 实现 storage 层扩展但 U6 ship gate 仅做基本 schema 验证，不测 add_reference action 的真实使用。**缓解：** U6 integration test 加 1 条 "create + add_reference 同流程" 端到端覆盖（轻量补丁）。
+- **RISK-1 (medium):** Layer 6 改动(U2)触及生产路径 `skills_layer_override` 合并语义 + token budget 实测重算,回归风险高于纯默认路径重写。**缓解:** U6 tiktoken 实测 + 默认路径只 self-built + 生产路径 triton 最重场景覆盖。
+- **RISK-2 (medium):** 默认路径(/learn chat)只渲染 self-built、不渲染 cannbot —— 用户在 `/learn` 聊天上下文看不到 cannbot phase knowledge。**缓解:** 这是 by-design(cannbot 是 phase-specific,默认路径无 phase context);生产路径(develop dispatch)仍注入 cannbot phase subset;若 `/learn` 需 cannbot 上下文,后续按显式 phase hint 注入(PR-B 评估)。
+- **RISK-3 (low):** 4 task_type × 15 topic 槽位远超 PR-A 目标 5-10 skill,F-5 推迟 topic 冻结。**缓解:** PR-A topic 仅 warning。
+- **RISK-4 (medium):** PR-A 工期从 round-2 ~3-4 周收缩到 ~2 周(砍 U3 + U1 stub/CANBOT_BUNDLE_MAP)。若 U2(override 合并 + 实测阈值)overrun,触发 **PR-A.1 contingency**(2026-07-12-T2 修订:U4 已去 U3 依赖,PR-A.1 = U1 + U4 + U5 可 ship——skill_manage 工具可用 + /learn sync 注入,Layer 6 保持现有 static literal 不合并,agent 暂看不到 self-built)。满足 AE1(create)+ AE5a(/learn 教学错误)+ AE4(cannbot 拒绝),不满足 AE3(Layer 6 自发现)。
+- **RISK-5 (low):** R13 `dimension="reference"` 当前无 PR-A AE 显式覆盖;U4 实现 storage 扩展但 U6 仅基本 schema 验证。**缓解:** U6 integration test 加 1 条 "create + add_reference" 端到端覆盖。
+- **RISK-6 (medium):** migrate/analyze/optimize 仍 `TaskGatedError`(stub 推 U8/U9)—— origin Goal Capsule "4 task_type 执行过程中沉淀" 在 PR-A 只 develop path 落地。**缓解:** PR-A scope 明确收缩(2026-07-12-T2);"4 task_type 执行过程中沉淀"的自动捕获本就是 V2=L3 review fork(非 PR-A);PR-A 的 task_type scope 是元数据校验(skill_manage 接受 task_type=migrate)+ develop path 执行。
 
 ## Stakeholders & System-Wide Impact
 
-- **算子开发者（A1）：** 通过 `/learn` CLI 沉淀/检索经验；Layer 6 注入可观测后无需手动查 `self-built/` 目录
-- **agent（A2）：** 工具表新增 `skill_manage`，Layer 6 路由让 agent 自发现已沉淀经验
-- **orchestrator 维护者：** TaskRouter stub + PhaseRunner task_type 上下文传递（U1 涉及 `orchestrator/nodes/common.py` 与 `micro_mod.py` 的 run_conversation 签名）
-- **skills 模块维护者：** FTS5 schema migration 路径（U3）+ storage layer dimension 扩展（U4）
-- **canbot 加载器维护者：** `(graph, phase) ↔ (task_type, topic)` 映射常量维护（U1）
-- **CLI 维护者：** `/learn` 命令入口（U5）
+- **算子开发者(A1):** `/learn` CLI(sync 注入)沉淀/检索经验;Layer 6 注入可观测后无需手动查 `self-built/`
+- **agent(A2):** 工具表新增 `skill_manage`,Layer 6 让 agent 自发现已沉淀经验
+- **orchestrator 维护者:** TaskRouter task_type 传透(U1 涉及 `state_machine.py:invoke` + `nodes/common.py`/`micro_mod.py` 的 run_conversation 签名)
+- **skills 模块维护者:** storage layer dimension 扩展(self_built + reference,U4)
+- **CLI 维护者:** `/learn` 命令入口(Click,U5)
 
 ## Sources & Research
 
 - **Origin:** [docs/brainstorms/2026-07-12-skill-crystallization-requirements.md](docs/brainstorms/2026-07-12-skill-crystallization-requirements.md) — 完整 Product Contract + Q1-Q9 + F-1~F-6 决议
-- **Codebase references（round 2 feasibility P0×3 揭示的硬约束，PR-A 必须解决的）:**
-  - `task_router/executor_dispatch.py:69-76` — `TASK_TYPE_DEVELOP` 分支 + `TaskGatedError` raise
-  - `agent/prompt_builder.py:151-162` — Layer 6 static literal（即将被 U2 重写）
-  - `agent/prompt_builder.py:81-85` — `skills_layer_override` replaces Layer 6 entirely
-  - `orchestrator/cannbot_loader.py:159-190` — SKILL_BUNDLES (graph, phase) keys
-  - `skills/index.py:127-134` — FTS5 schema 4 列（即将被 U3 加 2 列）
-  - `skills/index.py:139` — `add_skill` 已存在（U4 将用作热路径）
-  - `skills/index.py:445-455` — `rebuild_index` 是全量 DELETE+INSERT
-  - `orchestrator/nodes/common.py:122` — `run_conversation` 调用点（U1 加 task_type 参数）
-  - `orchestrator/nodes/micro_mod.py:108` — `run_conversation` 调用点（U1 加 task_type 参数）
-- **Reference implementation:** hermes `_handle_learn_command` + `build_learn_prompt`（U5 参考实现来源）
+- **Codebase references:**
+  - `task_router/executor_dispatch.py:69-76` — `TASK_TYPE_DEVELOP` 分支
+  - `orchestrator/state_machine.py:134` — `PhaseRunner.invoke` 内部 `initial_state`(task_type 经 keyword param 传入,A2 同类坑避免)
+  - `agent/prompt_builder.py:81-85` — `skills_layer_override` 短路(将被 U2 改合并)
+  - `agent/prompt_builder.py:151-162` — Layer 6 static literal(U2 重写)
+  - `orchestrator/cannbot_loader.py:376` — `render_skill_bundle_text`(U2 复用,A6)
+  - `orchestrator/cannbot_loader.py:419` — `desc_first = description.strip().split('\n',1)[0]` 不截断(A1 实测点)
+  - `orchestrator/cannbot_loader.py:159-190` — `SKILL_BUNDLES` 7 phase bucket
+  - `skills/index.py:127-134` — FTS5 schema 4 列(PR-A 不动,U3 defer)
+  - `skills/index.py:139` — `add_skill` 现有 4 列 upsert(R14 直接用)
+  - `skills/storage.py:57-85` — save_skill dimension 分支(U4 加 self_built + reference)
+  - `orchestrator/nodes/common.py:122`、`orchestrator/nodes/micro_mod.py:108` — run_conversation 调用点
+- **A1 token 实测(2026-07-12-T2,`render_skill_bundle_text` + chars/4):**
+  - 生产 per-phase subset:review 62t / precision_fix 114t / codegen 143t / design 154t / compile_fix 165t / cuda_frontend 168t / triton_frontend 266t(最重)
+  - 默认全量 16 cannbot:894t(chars/4,中文真实 ~1300+ tok,tiktoken 待 U6 校准)→ 超 800 ship gate → 默认路径只 self-built
+  - desc_first 110-530 chars(cuda2ascend-simt=530 最长)
+  - codegen `inline_build_template` 当前未生效(+build_tpl == render,add_example 不在 codegen bundle)→ 独立 codebase bug,follow-up
+- **Reference implementation:** hermes `_handle_learn_command` + `build_learn_prompt`(U5 参考实现来源)
 - **STRATEGY.md:** Skill Crystallization track + "Skill reuse rate" 指标
+- **Round-3 ce-doc-review findings(2026-07-12-T2,驱动本次修订):** adversarial(A1 token math、A2 _pending_input、A3 stub 不 load-bearing、A4 migration crash、A5 cli pattern、A6 reuse render_skill_bundle_text)、feasibility(F1-F4 storage/state 缺失链、F5 codegen token)、scope-guardian(U3 服务 PR-B R6)、product-lens(stub/CANBOT_BUNDLE_MAP premature、PR-A.1 contingency U4→U3 依赖)、coherence(RISK-2 vs U3 矛盾、count/mermaid 修正)。safe_auto 4 条已 apply(F-count、ship gate header、mermaid 依赖图、cli pattern 引用)。
 
 ## Open Questions
 
-[carry from origin Q2/Q3/Q4 as Deferred to Planning, re-stated for plan-local context]
+[carry from origin Q2/Q3/Q4 + 2026-07-12-T2 新增]
 
-- **Q2 (Deferred to Planning):** Layer 6 "路由命中" skill 列表最大长度上限（R5b PR-B）？
-- **Q3 (Deferred to Planning):** R3 LLM self-check prompt 模板是写在 `skill_manage_tool.py` 里独立维护，还是抽出到 `agent/skill_standards.py` 与 `/learn` 的 `_AUTHORING_STANDARDS` 共用？
-- **Q4 (Deferred to Planning):** L3 review fork N 轮节奏（默认 10）配置化与 profile disable 接口？
+- **Q2 (Deferred to Planning):** Layer 6 "路由命中" skill 列表最大长度上限(R5b PR-B)?
+- **Q3 (Deferred to Planning):** R3 LLM self-check prompt 模板位置?
+- **Q4 (Deferred to Planning):** L3 review fork N 轮节奏配置化?
+- **Q-T1 (2026-07-12-T2):** KTD-2 降级阈值 12 基于 chars/4 粗估,U6 tiktoken 实测后若偏差 >20% 调到实测安全值。阈值是否需随 cannbot submodule 增减 skill 动态计算(PR-B 评估)?
+- **Q-T2 (2026-07-12-T2):** `/learn` 默认路径只 self-built 不渲染 cannbot —— 若用户在 /learn 聊天显式需要某 cannbot 知识,是否加 phase hint 参数显式拉取(PR-B 评估)?
 
 ## Deferred to Follow-Up Work
 
-- **PR-B（独立 plan）：** R5b 任务路由收敛 / R6 语义检索 / R7 分组渲染 / R3 LLM self-check / CANBOT_BUNDLE_MAP 在 PR-B 阶段补全（U1 仅覆盖现有 SKILL_BUNDLES）
-- **V2 = L3（独立 plan）：** SkillCrystallizer（A4）实现 / 后台 review fork / fix_loop 收敛 hook / spike 验证后 hook
-- **Q4：** L3 review fork N 轮节奏与 profile disable（推到 V2）
-- **U8：** TASK_TYPE_MIGRATE 真业务逻辑（Path A 迁移 executor，替换 U1 stub）
-- **U9：** TASK_TYPE_ANALYZE + OPTIMIZE 真业务逻辑（独立 plan，替换 U1 stub）
-- **R5a → R5b 数值化 trigger：** self-built skill >30 时紧急晋升 PR-B R5b（F-4 降级是临时机制）
-- **F-2 V2 进入 checklist：** ≥8 skills + ≤2 patch 冲突 + 0 R2 regression
-- **F-6 metric delta：** PR-B R3 启用后用同一 held-out 集复测 false-negative 率，delta 是 R3 真实价值指标
-- **R13 `dimension='reference'` AE 覆盖：** 当前 U4 包含 storage 扩展但无 PR-A AE（后续 `/learn` 加 references 时补）
-- **origin Alternatives Considered 中"thinner wrapper"（adversarial P1 finding）：** 此处不引入更激进的简化（已 F-1+F-4 决议覆盖）
+- **PR-B(独立 plan):** R5b 任务路由收敛 / R6 语义检索 / R7 分组渲染 / R3 LLM self-check / **U3 FTS5 schema 扩展(整体从 PR-A 移入,含 _init_db detection 修复 + crash-safe migration)** / **CANBOT_BUNDLE_MAP(从 U1 移入)**
+- **V2 = L3(独立 plan):** SkillCrystallizer(A4)实现 / 后台 review fork / fix_loop hook / spike hook
+- **Q4:** L3 review fork N 轮节奏与 profile disable(推到 V2)
+- **U8:** TASK_TYPE_MIGRATE 真业务逻辑(Path A 迁移 executor,含 stub executor,替换现有 TaskGatedError)
+- **U9:** TASK_TYPE_ANALYZE + OPTIMIZE 真业务逻辑(独立 plan,含 stub executor)
+- **R5a → R5b 数值化 trigger:** self-built >30 时紧急晋升 PR-B R5b
+- **F-2 V2 进入 checklist:** ≥8 skills + ≤2 patch 冲突 + 0 R2 regression
+- **F-6 metric delta:** PR-B R3 启用后复测 false-negative 率
+- **R13 `dimension='reference'` AE 覆盖:** 后续 `/learn` 加 references 时补
+- **codegen `inline_build_template` 修复(独立 codebase bug):** `_render_build_template_section` 找 add_example 的 skill 范围修正(add_example 在 `ascendc-registry-invoke-template`,非 codegen bundle 的 `ascendc-direct-invoke-template`)

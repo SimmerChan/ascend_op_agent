@@ -16,7 +16,7 @@ mock agent_factory 避开真实 LLM 调用;真实 wiring 在 F5/U7 落地。
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 
@@ -70,9 +70,12 @@ class FakeAgent:
         self,
         user_input: str,
         skills_layer_override: Any = None,
+        *,
+        task_type: Optional[str] = None,
     ) -> str:
         self.last_prompt = user_input
         self.last_skills_override = skills_layer_override
+        self.last_task_type = task_type
         # 把 user_input 作为本轮输入追加到 history(与真 agent 一致)
         self._conversation_history.append({"role": "user", "content": user_input})
         # 简单 echo:把 memory 里所有内容拼到 response
@@ -142,9 +145,18 @@ def test_llm_node_rehydrates_conversation_history(tmp_path) -> None:
         # 拦截 run_conversation,记录入口 history
         orig_run = a.run_conversation
 
-        def _spy_run(user_input, skills_layer_override=None):
+        def _spy_run(
+            user_input,
+            skills_layer_override=None,
+            *,
+            task_type=None,
+        ):
             seen_histories.append(list(a._conversation_history))
-            return orig_run(user_input, skills_layer_override)
+            return orig_run(
+                user_input,
+                skills_layer_override,
+                task_type=task_type,
+            )
 
         a.run_conversation = _spy_run  # type: ignore[method-assign]
         return a
@@ -195,9 +207,18 @@ def test_skill_bundle_text_injected_to_prompt_builder(tmp_path) -> None:
         a = FakeAgent()
         orig_run = a.run_conversation
 
-        def _capture(user_input, skills_layer_override=None):
+        def _capture(
+            user_input,
+            skills_layer_override=None,
+            *,
+            task_type=None,
+        ):
             captured["override"] = skills_layer_override
-            return orig_run(user_input, skills_layer_override)
+            return orig_run(
+                user_input,
+                skills_layer_override,
+                task_type=task_type,
+            )
 
         a.run_conversation = _capture  # type: ignore[method-assign]
         return a
@@ -237,11 +258,20 @@ def test_memory_pools_persist_across_nodes(tmp_path) -> None:
         a = orig_factory()
         orig_run = a.run_conversation
 
-        def _spy_run(user_input, skills_layer_override=None):
+        def _spy_run(
+            user_input,
+            skills_layer_override=None,
+            *,
+            task_type=None,
+        ):
             # 验证 memory 已被 rehydrate 到 agent
             items = a.memory.get("memory")
             second_seen.extend(items)
-            return orig_run(user_input, skills_layer_override)
+            return orig_run(
+                user_input,
+                skills_layer_override,
+                task_type=task_type,
+            )
 
         a.run_conversation = _spy_run  # type: ignore[method-assign]
         return a

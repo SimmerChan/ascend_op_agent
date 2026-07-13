@@ -15,6 +15,7 @@ from ascend_op_agent.agent.tools.shell_tool import register as _shell
 from ascend_op_agent.agent.tools.python_exec_tool import register as _python_exec
 from ascend_op_agent.agent.tools.git_tool import register as _git
 from ascend_op_agent.agent.tools.npu_tool import register as _npu
+from ascend_op_agent.agent.tools.skill_manage_tool import register as _skill_manage  # PR-A U4
 
 # Register all tools using direct function + schema
 _file_read(tool_registry)
@@ -25,6 +26,7 @@ _shell(tool_registry)
 _python_exec(tool_registry)
 _git(tool_registry)
 _npu(tool_registry)
+_skill_manage(tool_registry)
 
 
 def list_tools():

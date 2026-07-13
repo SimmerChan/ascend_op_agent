@@ -26,9 +26,15 @@
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from ascend_op_agent.agent.memory import MemoryStore
+
+
+# PR-A KTD-2 + A1 fix: self-built degradation threshold (实测预算驱动).
+# cannbot phase subset (production max ~266 tok for triton_frontend) +
+# 12 self-built × ~40 tok ≈ 480 tok ≈ total 746 tok < 800 ship gate.
+SELF_BUILT_DEGRADE_THRESHOLD = 12
 
 
 class PromptBuilder:
@@ -49,6 +55,7 @@ class PromptBuilder:
         workspace_path: str,
         memory_store: MemoryStore,
         skills_layer_override: Optional[str] = None,
+        task_type: Optional[str] = None,
     ) -> str:
         """构建完整的系统Prompt（7层组装）
 
@@ -57,6 +64,10 @@ class PromptBuilder:
             memory_store: 记忆存储
             skills_layer_override: 可选,注入该阶段 cannbot skill 包替换默认 Layer 6。
                 由编排器 LLM 节点调用时传入(hybrid 集成的编排层入口);
+            task_type: 可选,任务类型(``develop``/``migrate``/``analyze``/``optimize``)
+                用于 Layer 6 降级决策(U2 实现)。PR-A 阶段(U1)仅 plumbing:U2
+                重写 ``_build_skills_layer`` 时按此值分流,默认 None 走"只 self-built"
+                路径。
 
         Returns:
             组装后的完整系统Prompt
@@ -79,10 +90,10 @@ class PromptBuilder:
         layers.append(self._build_memory_layer(memory_store))
 
         # Layer 6: Skills Index(支持编排器 scope 注入 cannbot skill 包)
-        if skills_layer_override is not None:
-            layers.append(skills_layer_override)
-        else:
-            layers.append(self._build_skills_layer())
+        # U1:把 override 和 task_type 一并传给 _build_skills_layer,
+        # 留给 U2 按 task_type 决定降级策略。当前(U1)该函数暂未实现
+        # task_type 分流,签名先就位。
+        layers.append(self._build_skills_layer(skills_layer_override, task_type))
 
         # Layer 7: Context Files + Timestamp + Env
         layers.append(self._build_context_layer(workspace_path))
@@ -92,7 +103,7 @@ class PromptBuilder:
     def _build_identity_layer(self) -> str:
         """Layer 1: Agent Identity"""
         if self._soul_path.exists():
-            with open(self._soul_path, 'r', encoding='utf-8') as f:
+            with open(self._soul_path, "r", encoding="utf-8") as f:
                 return f.read()
         return ""
 
@@ -148,29 +159,114 @@ class PromptBuilder:
 [Memory]:\n{memory_content}
 """
 
-    def _build_skills_layer(self) -> str:
-        """Layer 6: Skills Index"""
-        return """## Available Skills
+    def _build_skills_layer(
+        self,
+        override: Optional[str] = None,
+        task_type: Optional[str] = None,
+    ) -> str:
+        """Layer 6: Skills Index (U2 — A1 fix + KTD-2 降级)
 
-Skills存储在 ~/.ascend_op_agent/skills/ 目录
-每个Skill包含:
-- SKILL.md: Skill定义和描述
-- templates/: 代码模板
-- references/: 参考资料
+        Two paths:
+          - Production path (override non-None, PhaseRunner node): ``override``
+            (cannbot phase subset) + self-built section merged.
+          - Default path (``/learn`` chat, override None): **self-built section only** —
+            NO cannbot. Default-path full-cannbot rendering was the A1 token-budget
+            bug (894 tok for all 16 cannbot in default path).
 
-使用skill_ops工具搜索和加载相关Skill。
-"""
+        Degradation (KTD-2 / F-4): self-built count > ``SELF_BUILT_DEGRADE_THRESHOLD``
+        → filter by ``task_type`` subset; ``task_type`` missing → fall back to full
+        (avoid empty). Threshold 12 ≈ triton phase (266 tok) + 12 self-built (480 tok)
+        + 50 header/footer ≈ 796 tok ≤ 800.
+
+        Args:
+            override: cannbot phase-subset text from PhaseRunner node, or None
+                (default path: ``/learn`` CLI sync to ``agent.run_conversation``).
+            task_type: ``"develop"`` for PhaseRunner path; ``None`` for default path.
+
+        Returns:
+            Layer 6 text
+        """
+        from ascend_op_agent.orchestrator.cannbot_loader import render_skill_bundle_text
+        from ascend_op_agent.skills.storage import SkillStorage
+
+        # Load self-built skills via existing SkillStorage (already self-built-aware).
+        storage = SkillStorage()
+        self_built_skills = self._load_self_built_skills(storage)
+
+        # Degradation (F-4 / KTD-2): filter by task_type if over threshold.
+        if len(self_built_skills) > SELF_BUILT_DEGRADE_THRESHOLD and task_type:
+            self_built_skills = [
+                s for s in self_built_skills if self._self_built_task_type(s) == task_type
+            ]
+        # else: keep all (threshold not exceeded OR task_type missing → avoid empty)
+
+        # Render self-built section via reused cannbot_loader function (A6 fix).
+        # Override phase=None so render_skill_bundle_text emits "## Available Skills".
+        self_built_section = (
+            render_skill_bundle_text(self_built_skills) if self_built_skills else ""
+        )
+
+        if override is not None:
+            # Production path: cannbot phase subset + self-built merge.
+            if self_built_section:
+                return override + "\n\n" + self_built_section
+            return override
+
+        # Default path (/learn chat, no phase context): self-built only.
+        if not self_built_section:
+            return (
+                "## Available Skills\n\n"
+                "(暂无自研 skill 沉淀 — use `/learn <topic>` to crystallize knowledge "
+                "from GPU-Ascend operator development.)\n"
+            )
+        return self_built_section
+
+    @staticmethod
+    def _self_built_task_type(skill) -> Optional[str]:
+        """Extract task_type from a skill. ``CannbotSkill`` stores its frontmatter
+        dict under ``.frontmatter`` (not ``.metadata``); we set it from
+        ``Skill.metadata`` in the thin adapter so the original nesting
+        ``{"ascend_op_agent": {"task_type": ...}}`` survives.
+        """
+        fm = getattr(skill, "frontmatter", None) or {}
+        aa = fm.get("ascend_op_agent", {}) if isinstance(fm, dict) else {}
+        return aa.get("task_type")
+
+    @staticmethod
+    def _load_self_built_skills(storage) -> list:
+        """Wrap SkillStorage-loaded self-built skills into CannbotSkill-compatible
+        instances so ``render_skill_bundle_text`` (cannbot_loader) can render them.
+        """
+        from ascend_op_agent.orchestrator.cannbot_loader import CannbotSkill
+
+        names = storage.list_skills()
+        skills = []
+        for name in names:
+            loaded = storage.load_skill(name)
+            if loaded is None:
+                continue
+            base_dir = Path(loaded.local_path) if loaded.local_path else Path(storage.skills_dir)
+            skills.append(
+                CannbotSkill(
+                    name=loaded.name,
+                    description=loaded.description,
+                    body=loaded.content,
+                    base_dir=base_dir,
+                    frontmatter=loaded.metadata or {},
+                )
+            )
+        return skills
 
     def _build_context_layer(self, workspace_path: str) -> str:
         """Layer 7: Context Files + Timestamp + Env"""
         parts = []
 
         # Context文件（优先级互斥模式）
-        priority_files = ['.hermes.md', 'AGENTS.md', 'CLAUDE.md', '.cursorrules']
+        priority_files = [".hermes.md", "AGENTS.md", "CLAUDE.md", ".cursorrules"]
         for filename in priority_files:
             filepath = os.path.join(workspace_path, filename)
             if os.path.exists(filepath):
-                with open(filepath, 'r', encoding='utf-8') as f:
+                with open(filepath, "r", encoding="utf-8") as f:
                     content = f.read()
                 # 安全扫描
                 content = self._sanitize(content)
@@ -179,6 +275,7 @@ Skills存储在 ~/.ascend_op_agent/skills/ 目录
 
         # Timestamp
         from datetime import datetime
+
         parts.append(f"### Current Time\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
         # Environment
@@ -192,9 +289,12 @@ Skills存储在 ~/.ascend_op_agent/skills/ 目录
 
         # 不可见字符
         invisible_patterns = [
-            r'\x00', r'\u200b', r'\u202b', r'\ufeff',
+            r"\x00",
+            r"\u200b",
+            r"\u202b",
+            r"\ufeff",
         ]
         for pattern in invisible_patterns:
-            content = re.sub(pattern, '', content)
+            content = re.sub(pattern, "", content)
 
         return content

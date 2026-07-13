@@ -58,6 +58,8 @@ class _FakeAgent:
         self,
         user_input: str,
         skills_layer_override: Any = None,
+        *,
+        task_type: Any = None,
     ) -> str:
         self.captured_inputs.append(user_input)
         self.captured_overrides.append(skills_layer_override)
@@ -218,9 +220,18 @@ def test_framework_adapt_runs_llm_when_torch_npu() -> None:
         agent = _FakeAgent(responses=["torch_npu ext code"])
         orig_run = agent.run_conversation
 
-        def _spy_run(user_input, skills_layer_override=None):
+        def _spy_run(
+            user_input,
+            skills_layer_override=None,
+            *,
+            task_type=None,
+        ):
             seen_overrides.append(skills_layer_override)
-            return orig_run(user_input, skills_layer_override)
+            return orig_run(
+                user_input,
+                skills_layer_override,
+                task_type=task_type,
+            )
 
         agent.run_conversation = _spy_run  # type: ignore[method-assign]
         return agent

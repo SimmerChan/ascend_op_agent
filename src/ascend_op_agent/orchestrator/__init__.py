@@ -9,7 +9,9 @@
 from ascend_op_agent.orchestrator.cannbot_loader import (
     CANNBOT_ROOT,
     CannbotSkill,
+    SKILL_BUNDLES,
     build_skill_bundle,
+    list_cannbot_skill_names,
     load_skill,
     render_skill_bundle_text,
 )
@@ -76,7 +78,9 @@ __all__ = [
     # cannbot
     "CANNBOT_ROOT",
     "CannbotSkill",
+    "SKILL_BUNDLES",
     "build_skill_bundle",
+    "list_cannbot_skill_names",
     "load_skill",
     "render_skill_bundle_text",
     # checkpoint

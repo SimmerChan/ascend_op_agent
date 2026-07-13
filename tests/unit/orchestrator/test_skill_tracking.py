@@ -178,7 +178,13 @@ class _FakeAgent:
         self.memory = _FakeMem()
         self._tool_calls_log = list(tool_calls or [])
 
-    def run_conversation(self, user_input, skills_layer_override=None):
+    def run_conversation(
+        self,
+        user_input,
+        skills_layer_override=None,
+        *,
+        task_type=None,
+    ):
         return "ok"
 
 

@@ -36,7 +36,13 @@ class _FakeAgent:
         self._tool_calls_log: list[dict] = list(tool_calls or [])
         self._response = response
 
-    def run_conversation(self, user_input, skills_layer_override=None) -> str:
+    def run_conversation(
+        self,
+        user_input,
+        skills_layer_override=None,
+        *,
+        task_type=None,
+    ) -> str:
         self._conversation_history.append({"role": "user", "content": user_input})
         return self._response
 
@@ -219,7 +225,13 @@ def test_template_vars_injected_into_prompt() -> None:
     captured = {}
 
     class _CapturingAgent(_FakeAgent):
-        def run_conversation(self, user_input, skills_layer_override=None):
+        def run_conversation(
+            self,
+            user_input,
+            skills_layer_override=None,
+            *,
+            task_type=None,
+        ):
             captured["prompt"] = user_input
             return "ok"
 
@@ -238,7 +250,13 @@ def test_template_vars_none_keeps_original_behavior() -> None:
     captured = {}
 
     class _CapturingAgent(_FakeAgent):
-        def run_conversation(self, user_input, skills_layer_override=None):
+        def run_conversation(
+            self,
+            user_input,
+            skills_layer_override=None,
+            *,
+            task_type=None,
+        ):
             captured["prompt"] = user_input
             return "ok"
 
@@ -257,7 +275,13 @@ def test_template_vars_unknown_placeholder_falls_back() -> None:
     captured = {}
 
     class _CapturingAgent(_FakeAgent):
-        def run_conversation(self, user_input, skills_layer_override=None):
+        def run_conversation(
+            self,
+            user_input,
+            skills_layer_override=None,
+            *,
+            task_type=None,
+        ):
             captured["prompt"] = user_input
             return "ok"
 

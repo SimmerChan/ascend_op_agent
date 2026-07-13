@@ -29,7 +29,13 @@ class MockAgent:
         self.call_count = 0
         self.reset_called = False
 
-    def run_conversation(self, user_input: str) -> str:
+    def run_conversation(
+        self,
+        user_input: str,
+        skills_layer_override=None,
+        *,
+        task_type=None,
+    ) -> str:
         """模拟对话"""
         self.call_count += 1
         return f"Mock response to: {user_input}"

@@ -119,9 +119,13 @@ def make_llm_node(
             task_prompt = task_prompt_template
 
         # 6. 调用 agent(scoped skill 注入 Layer 6)
+        # U1:把 task_type 从 state 透传给 agent —— PromptBuilder Layer 6 降级前置。
+        # PhaseRunner.invoke(task_type=...) 写入 state["task_type"],这里读出
+        # 传进 run_conversation,后者存到 self._current_task_type 供 build_system_prompt 用。
         response = agent.run_conversation(
             task_prompt,
             skills_layer_override=skill_bundle_text,
+            task_type=state.get("task_type"),
         )
 
         # 7. 抓取 memory 快照(merge 现有)

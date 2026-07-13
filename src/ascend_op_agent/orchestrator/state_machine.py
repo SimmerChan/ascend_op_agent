@@ -131,14 +131,35 @@ class PhaseRunner:
 
     # ---- 公共 API ----
 
-    def invoke(self, user_input: str, thread_id: str) -> OpState:
-        """启动新 thread。"""
+    def invoke(
+        self,
+        user_input: str,
+        thread_id: str,
+        task_type: Optional[str] = None,
+    ) -> OpState:
+        """启动新 thread。
+
+        Args:
+            user_input: 用户输入。
+            thread_id: thread 标识。
+            task_type: 可选,TaskRouter 传入的任务类型(如 ``"develop"`` /
+                ``"migrate"`` / ``"analyze"`` / ``"optimize"``)。None 时不写
+                ``state["task_type"]``(下游 ``state.get("task_type")`` 返回 None)。
+                **不在 invoke 前 dict-assign state**:state 由 ``initial_state``
+                内部创建,调用方无法在 invoke 前设置(与 A2 `_pending_input` 同类
+                坑避免)。U1 skill-crystallization 需要 task_type 传透到
+                AIAgent → PromptBuilder(Layer 6 降级前置)。
+        """
         state = initial_state(thread_id)
         state["messages"] = [{"role": "user", "content": user_input}]
+        if task_type is not None:
+            state["task_type"] = task_type
         self.store.save(
             thread_id, state, current_phase="", status=STATUS_RUNNING
         )
-        logger.info(f"PhaseRunner.invoke thread={thread_id}")
+        logger.info(
+            f"PhaseRunner.invoke thread={thread_id} task_type={task_type}"
+        )
         return self._run_from(state, start_index=0)
 
     def resume(

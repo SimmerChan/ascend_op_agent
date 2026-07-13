@@ -95,6 +95,12 @@ class AIAgent:
         self._max_iterations = 10
         self._current_iteration = 0
         self._current_session_id: Optional[str] = None
+        # U1:TaskRouter 传入的任务类型(develop/migrate/analyze/optimize)。
+        # 由 ``run_conversation(task_type=...)`` 设置,``build_system_prompt``
+        # 在组装 Layer 6 时读取。PhaseRunner 编排路径由编排节点传入;非 PhaseRunner
+        # 路径(如纯 /learn 聊天)保持 None → PromptBuilder 默认路径只渲染 self-built
+        # 段(不渲染 cannbot 全量,消除 A1 token 虚构)。
+        self._current_task_type: Optional[str] = None
 
     def _safe_append(self, entry: Entry) -> None:
         """安全追加 entry，session_manager 为 None 时不抛异常"""
@@ -111,6 +117,8 @@ class AIAgent:
         self,
         user_input: str,
         skills_layer_override: Optional[str] = None,
+        *,
+        task_type: Optional[str] = None,
     ) -> str:
         """运行对话
 
@@ -118,6 +126,11 @@ class AIAgent:
             user_input: 用户输入
             skills_layer_override: 可选,注入该阶段 cannbot skill 包替换 Layer 6。
                 由编排器 LLM 节点传入(hybrid 集成);默认 None 保持原行为。
+            task_type: 可选,任务类型(``"develop"`` / ``"migrate"`` / ``"analyze"``
+                / ``"optimize"``)。由 PhaseRunner 编排节点透传;非 PhaseRunner
+                路径(如纯 ``/learn`` 聊天)保持 None。PromptBuilder Layer 6 据此
+                做降级决策(U2):生产路径(``develop``)保留 cannbot phase subset +
+                self-built,默认路径(None)只渲染 self-built 段。
 
         Returns:
             Agent响应
@@ -125,6 +138,10 @@ class AIAgent:
         session_id = self._get_or_create_session_id()
         model = self.config.llm.model
         provider = self.config.llm.provider
+
+        # U1:先把 task_type 存到 self(供 build_system_prompt 读取)
+        if task_type is not None:
+            self._current_task_type = task_type
 
         # 记录用户输入
         user_entry_id = str(uuid.uuid4())
@@ -152,6 +169,7 @@ class AIAgent:
                 workspace_path=self.config.local.workspace,
                 memory_store=self.memory,
                 skills_layer_override=skills_layer_override,
+                task_type=task_type,
             )
 
             # 记录 system prompt
