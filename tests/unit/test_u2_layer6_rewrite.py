@@ -131,13 +131,18 @@ def test_degradation_filters_by_task_type_when_over_threshold(tmp_path, monkeypa
 
 
 def test_no_degradation_when_under_threshold(tmp_path, monkeypatch):
-    """self-built <= 12 emits all even if task_type is set (no filtering)."""
+    """PR-B U3 (R5b) update: task_type 严格命中 — task_type="develop" 时
+    即使总数 ≤ HERMES_LAYER_LIMIT=10, mig-* 仍被过滤(R5b 路由命中,非
+    PR-A KTD-2 threshold-guarded)。PR-A 的 "≤12 不过滤" 行为已被 R5b 取代。
+
+    8 个 skill (5 dev + 3 mig) + task_type="develop" → 只 dev-* 输出。
+    """
     _use_tmp_storage(tmp_path, monkeypatch)
     from ascend_op_agent.agent.prompt_builder import PromptBuilder
     from ascend_op_agent.skills.storage import SkillStorage
 
     storage = SkillStorage()
-    for i in range(8):  # 5 develop + 3 migrate, total 8 <= 12
+    for i in range(8):  # 5 develop + 3 migrate
         _create_skill(
             storage, f"dev-{i:02d}", task_type="develop"
         ) if i < 5 else _create_skill(
@@ -147,13 +152,21 @@ def test_no_degradation_when_under_threshold(tmp_path, monkeypatch):
     pb = PromptBuilder()
     out = pb._build_skills_layer(override=None, task_type="develop")
 
-    # Both kinds present (under threshold = no filtering)
+    # R5b 严格命中: 只 dev-*
     assert "dev-00" in out
-    assert "mig-05" in out
+    assert "mig-05" not in out
 
 
 def test_no_degradation_when_task_type_missing(tmp_path, monkeypatch):
-    """self-built > 12 + task_type=None: fall back to full (avoid empty)."""
+    """PR-B U3 (R5b) update: task_type=None + R5b HERMES cap=10 适用全部路径。
+
+    PR-A KTD-2 仅在 production path 用 threshold guard;PR-B 让 cap=10 适用
+    全部 (含 default path),避免 12+ self-built + 不带 task_type 时也炸预算
+    (plan Q2 决议:Layer 6 上限=10 hermes 默认)。
+
+    13 个 self-built + task_type=None → 渲染只前 10 个(skill-00..09),
+    11+ 被 cap drop(原 PR-A "task_type=None 兜底全保" 被 PR-B 取代)。
+    """
     _use_tmp_storage(tmp_path, monkeypatch)
     from ascend_op_agent.agent.prompt_builder import PromptBuilder
     from ascend_op_agent.skills.storage import SkillStorage
@@ -165,21 +178,28 @@ def test_no_degradation_when_task_type_missing(tmp_path, monkeypatch):
     pb = PromptBuilder()
     out = pb._build_skills_layer(override=None, task_type=None)
 
-    # No filtering when task_type is None
+    # 前 10 全在
     assert "skill-00" in out
-    assert "skill-12" in out
+    assert "skill-09" in out
+    # 11+ 被 cap drop
+    assert "skill-10" not in out
+    assert "skill-12" not in out
 
 
 def test_build_system_prompt_passes_task_type_to_skills_layer(monkeypatch):
-    """build_system_prompt forwards task_type to _build_skills_layer (U1 plumbing)."""
+    """PR-B U3 update: build_system_prompt 透传 task_type + recent_loads 到 _build_skills_layer。
+
+    PR-A U1 仅 plumbing task_type;PR-B U3 加 recent_loads(R5b 路由命中 R3 最新 5 轮 load)。
+    """
     from ascend_op_agent.agent.prompt_builder import PromptBuilder
     from ascend_op_agent.agent.memory import MemoryStore
 
     captured = {}
 
-    def fake_skills_layer(_self, override=None, task_type=None):
+    def fake_skills_layer(_self, override=None, task_type=None, recent_loads=None):
         captured["override"] = override
         captured["task_type"] = task_type
+        captured["recent_loads"] = recent_loads
         return "MOCK-LAYER-6"
 
     monkeypatch.setattr(
@@ -192,9 +212,14 @@ def test_build_system_prompt_passes_task_type_to_skills_layer(monkeypatch):
     out = pb.build_system_prompt(
         workspace_path="/tmp", memory_store=mem,
         skills_layer_override="OVR", task_type="develop",
+        recent_loads=["recent-a", "recent-b"],
     )
     assert "MOCK-LAYER-6" in out
-    assert captured == {"override": "OVR", "task_type": "develop"}
+    assert captured == {
+        "override": "OVR",
+        "task_type": "develop",
+        "recent_loads": ["recent-a", "recent-b"],
+    }
 
 
 def test_self_built_skill_uses_frontmatter_description_in_render(tmp_path, monkeypatch):
