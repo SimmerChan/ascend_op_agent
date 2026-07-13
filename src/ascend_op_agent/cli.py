@@ -825,5 +825,143 @@ def task_progress(ctx: click.Context, task_id: Optional[str]) -> None:
         console.print(f"  thread {th['thread_id']}: {th['status']} @ {th['phase']}")
 
 
+# ---- U5: /learn command (skill crystallization, sync injection — A2 fix) ----
+
+_AUTHORING_STANDARDS = """## Skill Authoring Standards (PR-A)
+
+When crystallizing a self-built skill via `skill_manage(action="create")`, follow:
+
+1. **## Project Scope** (first body section, mandatory) — applicability + hardware/version
+   boundaries (e.g., "Applies to 910B3 + ops_pt + CANN 9.1.0 only").
+2. **When to Use** — trigger conditions.
+3. **Prerequisites** — env / inputs needed.
+4. **How to Run** — concrete invocation.
+5. **Quick Reference** — one-liner cheat sheet.
+6. **Procedure** — step-by-step.
+7. **Pitfalls** — known traps.
+8. **Verification** — how to confirm it worked.
+9. **Related Skills** — cross-refs.
+
+Constraints:
+- `name`: kebab-case `^[a-z][a-z0-9-]*[a-z0-9]$`, no PR numbers / dates / task objects.
+- `description`: ≤40 chars (Layer 6 truncates beyond; keep it tight).
+- `task_type`: one of migrate | analyze | optimize | develop.
+- `topic`: free-form label (PR-A; bucketing deferred).
+- **Do not** duplicate cannbot-covered 通用迁移知识 (cannbot owns that; self-built
+  scope = project/hardware-specific 增量 like 910B3 + ops_pt + CANN 9.1.0 quirks).
+"""
+
+
+def build_learn_prompt(user_request: str) -> str:
+    """Construct the /learn crystallization prompt (U5). Inline `_AUTHORING_STANDARDS`.
+
+    Empty / whitespace-only `user_request` returns "" — caller handles AE5a tutorial.
+    """
+    req = (user_request or "").strip()
+    if not req:
+        return ""
+    return (
+        "# Skill Crystallization Request (/learn)\n\n"
+        f"User request:\n{req}\n\n"
+        "Crystallize this into a reusable self-built skill. Collect source material "
+        "first (file_read / file_search / web_extract on the directories, URLs, or "
+        "notes the user referenced), then call `skill_manage(action=\"create\")` with "
+        "the full skill body.\n\n"
+        + _AUTHORING_STANDARDS
+    )
+
+
+def _handle_learn_command(
+    user_request: str,
+    run_callable: Optional[callable] = None,
+) -> dict:
+    """Parse `/learn <text>`.
+
+    - Empty → AE5a tutorial (no agent call).
+    - Non-empty → sync `run_callable(build_learn_prompt(user_request))` (A2 fix:
+      no `_pending_input` queue; direct sync call into the agent).
+
+    Args:
+        user_request: free-form text after `/learn`.
+        run_callable: callable(prompt: str) -> str. Production: ``agent.run_conversation``.
+            Tests: a recorder. None → returns tutorial/error without agent.
+
+    Returns:
+        {"status": "tutorial" | "crystallized" | "error", "response": str}
+    """
+    req = (user_request or "").strip()
+    if not req:
+        return {
+            "status": "tutorial",
+            "response": (
+                "Usage: /learn <source-description>\n\n"
+                "Describe where the knowledge comes from:\n"
+                "  - a directory:  /learn /home/hsl/ops_agent/build_configs\n"
+                "  - a URL:        /learn https://example.com/ascend-tiling-guide\n"
+                "  - \"just now\":   /learn the build.sh ASCEND_COMPUTE_UNIT fix we just made\n"
+                "  - a note:       /learn 910B3 set_env.sh must be sourced before msopgen\n\n"
+                "The agent will collect material and crystallize a self-built skill "
+                "via skill_manage(action=\"create\")."
+            ),
+        }
+    if run_callable is None:
+        return {"status": "error", "response": "no agent run_callable provided"}
+    try:
+        prompt = build_learn_prompt(req)
+        result = run_callable(prompt)
+        return {"status": "crystallized", "response": result}
+    except Exception as e:  # noqa: BLE001 - CLI出口聚合
+        return {"status": "error", "response": f"skill_manage failed: {e}"}
+
+
+@main.command()
+@click.argument("user_request", nargs=-1, required=False)
+@click.pass_context
+def learn(ctx: click.Context, user_request: tuple[str, ...]) -> None:
+    """Crystallize a self-built skill from a source description (PR-A U5).
+
+    Sync injection: builds an AIAgent in-process and calls run_conversation with the
+    /learn prompt. Blocks until the skill is written. No `_pending_input` queue (A2).
+
+    USER_REQUEST: free-form text (directory / URL / "just now" / note).
+
+    Examples:
+
+      ascend-op-agent learn /home/hsl/ops_agent/build_configs\n
+      ascend-op-agent learn the build.sh ASCEND_COMPUTE_UNIT fix we just made
+    """
+    from ascend_op_agent.agent.context import ContextEngine
+    from ascend_op_agent.agent.core import AIAgent
+    from ascend_op_agent.agent.memory import MemoryStore
+    from ascend_op_agent.agent.prompt_builder import PromptBuilder
+    from ascend_op_agent.agent.tool_registry import tool_registry
+
+    config = ctx.obj["config"]
+    text = " ".join(user_request) if user_request else ""
+
+    # AE5a tutorial fast-path: skip agent construction when input is empty.
+    if not text.strip():
+        tut = _handle_learn_command("")
+        console.print(tut["response"])
+        return
+
+    prompt_builder = PromptBuilder()
+    context_engine = ContextEngine()
+    memory_store = MemoryStore()
+    agent = AIAgent(
+        config=config,
+        tool_registry=tool_registry,
+        prompt_builder=prompt_builder,
+        context_engine=context_engine,
+        memory_store=memory_store,
+    )
+
+    outcome = _handle_learn_command(text, run_callable=agent.run_conversation)
+    if outcome["status"] == "error":
+        console.print(f"[red]{outcome['response']}[/red]")
+        raise SystemExit(1)
+    console.print(outcome["response"])
+
+
 if __name__ == "__main__":
     main()
