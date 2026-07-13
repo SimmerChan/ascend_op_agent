@@ -865,9 +865,8 @@ def build_learn_prompt(user_request: str) -> str:
         f"User request:\n{req}\n\n"
         "Crystallize this into a reusable self-built skill. Collect source material "
         "first (file_read / file_search / web_extract on the directories, URLs, or "
-        "notes the user referenced), then call `skill_manage(action=\"create\")` with "
-        "the full skill body.\n\n"
-        + _AUTHORING_STANDARDS
+        'notes the user referenced), then call `skill_manage(action="create")` with '
+        "the full skill body.\n\n" + _AUTHORING_STANDARDS
     )
 
 
@@ -898,10 +897,10 @@ def _handle_learn_command(
                 "Describe where the knowledge comes from:\n"
                 "  - a directory:  /learn /home/hsl/ops_agent/build_configs\n"
                 "  - a URL:        /learn https://example.com/ascend-tiling-guide\n"
-                "  - \"just now\":   /learn the build.sh ASCEND_COMPUTE_UNIT fix we just made\n"
+                '  - "just now":   /learn the build.sh ASCEND_COMPUTE_UNIT fix we just made\n'
                 "  - a note:       /learn 910B3 set_env.sh must be sourced before msopgen\n\n"
                 "The agent will collect material and crystallize a self-built skill "
-                "via skill_manage(action=\"create\")."
+                'via skill_manage(action="create").'
             ),
         }
     if run_callable is None:

@@ -50,6 +50,7 @@ class _FakeAgent:
 def _factory(agent: _FakeAgent):
     def _f() -> _FakeAgent:
         return agent
+
     return _f
 
 
@@ -112,8 +113,16 @@ def test_multiple_file_writes_accumulate_in_order() -> None:
     agent = _FakeAgent(
         response="wrote 3 files",
         tool_calls=[
-            {"name": "file_write", "args": {"path": "/tmp/op/a.cpp", "content": "A"}, "result": "ok"},
-            {"name": "file_write", "args": {"path": "/tmp/op/b.cpp", "content": "B"}, "result": "ok"},
+            {
+                "name": "file_write",
+                "args": {"path": "/tmp/op/a.cpp", "content": "A"},
+                "result": "ok",
+            },
+            {
+                "name": "file_write",
+                "args": {"path": "/tmp/op/b.cpp", "content": "B"},
+                "result": "ok",
+            },
             {"name": "file_write", "args": {"path": "/tmp/op/c.h", "content": "C"}, "result": "ok"},
         ],
     )
@@ -124,9 +133,7 @@ def test_multiple_file_writes_accumulate_in_order() -> None:
     )
     update = node.func(_base_state())
     files = update["code_result"]["files"]
-    assert [f["path"] for f in files] == [
-        "/tmp/op/a.cpp", "/tmp/op/b.cpp", "/tmp/op/c.h"
-    ]
+    assert [f["path"] for f in files] == ["/tmp/op/a.cpp", "/tmp/op/b.cpp", "/tmp/op/c.h"]
 
 
 # ---- 混合其他 tool 调用,只抽 file_write ----
@@ -137,7 +144,11 @@ def test_only_file_write_is_extracted_from_mixed_tools() -> None:
         response="did several things",
         tool_calls=[
             {"name": "shell_exec", "args": {"cmd": "ls"}, "result": "out"},
-            {"name": "file_write", "args": {"path": "/tmp/op/x.py", "content": "x"}, "result": "ok"},
+            {
+                "name": "file_write",
+                "args": {"path": "/tmp/op/x.py", "content": "x"},
+                "result": "ok",
+            },
             {"name": "python_exec", "args": {"script": "1+1"}, "result": "2"},
         ],
     )
@@ -159,7 +170,11 @@ def test_existing_code_result_files_are_preserved() -> None:
     agent = _FakeAgent(
         response="added more",
         tool_calls=[
-            {"name": "file_write", "args": {"path": "/tmp/op/new.cpp", "content": "new"}, "result": "ok"},
+            {
+                "name": "file_write",
+                "args": {"path": "/tmp/op/new.cpp", "content": "new"},
+                "result": "ok",
+            },
         ],
     )
     node = make_llm_node(
@@ -203,7 +218,11 @@ def test_messages_and_last_phase_result_still_present() -> None:
     agent = _FakeAgent(
         response="assistant said X",
         tool_calls=[
-            {"name": "file_write", "args": {"path": "/tmp/op/k.cpp", "content": "k"}, "result": "ok"},
+            {
+                "name": "file_write",
+                "args": {"path": "/tmp/op/k.cpp", "content": "k"},
+                "result": "ok",
+            },
         ],
     )
     node = make_llm_node(

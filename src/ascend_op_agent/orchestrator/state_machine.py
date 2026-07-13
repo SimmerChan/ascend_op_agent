@@ -123,9 +123,7 @@ class PhaseRunner:
         if not nodes:
             raise ValueError("PhaseRunner requires at least one node")
         self.nodes = nodes
-        self._node_index: dict[str, int] = {
-            n.name: i for i, n in enumerate(nodes)
-        }
+        self._node_index: dict[str, int] = {n.name: i for i, n in enumerate(nodes)}
         self.store = store
         self._phase_callback = phase_callback
 
@@ -154,12 +152,8 @@ class PhaseRunner:
         state["messages"] = [{"role": "user", "content": user_input}]
         if task_type is not None:
             state["task_type"] = task_type
-        self.store.save(
-            thread_id, state, current_phase="", status=STATUS_RUNNING
-        )
-        logger.info(
-            f"PhaseRunner.invoke thread={thread_id} task_type={task_type}"
-        )
+        self.store.save(thread_id, state, current_phase="", status=STATUS_RUNNING)
+        logger.info(f"PhaseRunner.invoke thread={thread_id} task_type={task_type}")
         return self._run_from(state, start_index=0)
 
     def resume(
@@ -195,9 +189,7 @@ class PhaseRunner:
                 state["pending_confirmation"] = merged
             else:
                 state["pending_confirmation"] = base
-            logger.info(
-                f"PhaseRunner.resume HITL thread={thread_id} phase={pending.phase}"
-            )
+            logger.info(f"PhaseRunner.resume HITL thread={thread_id} phase={pending.phase}")
         elif payload is not None:
             state["pending_confirmation"] = payload
             logger.info(f"PhaseRunner.resume explicit-payload thread={thread_id}")
@@ -220,9 +212,7 @@ class PhaseRunner:
 
     # ---- 内部 ----
 
-    def _emit_phase(
-        self, phase: str, event: str, error: Optional[str] = None
-    ) -> None:
+    def _emit_phase(self, phase: str, event: str, error: Optional[str] = None) -> None:
         # 统一传 dict(失败时打包 {"error": str}),避免回调收到 str 期望 dict
         payload: dict = {} if error is None else {"error": error}
         if self._phase_callback is not None:
@@ -276,9 +266,7 @@ class PhaseRunner:
                 )
                 self.store.mark_waiting(thread_id, node.name, payload)
                 self._emit_phase(node.name, "interrupted")
-                logger.info(
-                    f"Node {node.name} interrupted (HITL) thread={thread_id}"
-                )
+                logger.info(f"Node {node.name} interrupted (HITL) thread={thread_id}")
                 return state
 
             # 显式终止
@@ -295,9 +283,7 @@ class PhaseRunner:
                     node.name,
                     "completed" if terminal_status == STATUS_DONE else "failed",
                 )
-                logger.info(
-                    f"Node {node.name} terminal={terminal_status} thread={thread_id}"
-                )
+                logger.info(f"Node {node.name} terminal={terminal_status} thread={thread_id}")
                 return state
 
             # 正常完成:落 checkpoint + 继续下一节点

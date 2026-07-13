@@ -27,7 +27,7 @@ def test_build_learn_prompt_nonempty_inlines_authoring_standards():
     prompt = build_learn_prompt("ops_pt build.sh 配置")
     assert "ops_pt build.sh 配置" in prompt
     assert "## Project Scope" in prompt  # authoring standards
-    assert "skill_manage(action=\"create\")" in prompt  # action hint
+    assert 'skill_manage(action="create")' in prompt  # action hint
     assert "When to Use" in prompt
     assert "Pitfalls" in prompt
     assert "Verification" in prompt

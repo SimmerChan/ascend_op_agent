@@ -199,6 +199,7 @@ def test_cuda_frontend_node_parses_json_into_state(tmp_path) -> None:
 
 def test_cuda_frontend_node_preserves_existing_design_doc(tmp_path) -> None:
     """已有 design_doc 字段时,仅 merge arch_mapping,不丢既有内容。"""
+
     def factory() -> _FakeAgent:
         return _FakeAgent(responses=[_CUDA_JSON_RESPONSE])
 
@@ -219,6 +220,7 @@ def test_cuda_frontend_node_preserves_existing_design_doc(tmp_path) -> None:
 
 def test_cuda_frontend_node_parse_error_non_fatal(tmp_path) -> None:
     """LLM 不输出 JSON 时,parse_error 写入 last_phase_result,不阻塞。"""
+
     def factory() -> _FakeAgent:
         return _FakeAgent(responses=[_NO_JSON_RESPONSE])
 
@@ -310,9 +312,7 @@ def test_cuda_migration_invoke_interrupts_at_design(tmp_path) -> None:
 def test_cuda_migration_resume_after_approval_completes_all_phases(tmp_path) -> None:
     """design 批准后 → ... → delivery_mode HITL → resume(sample) → done。"""
     store = CheckpointStore(tmp_path / "ck.db")
-    factory = _factory_from(
-        [_CUDA_JSON_RESPONSE, "design doc", "kernel.cpp", "LGTM"]
-    )
+    factory = _factory_from([_CUDA_JSON_RESPONSE, "design doc", "kernel.cpp", "LGTM"])
 
     runner = build_migration_graph(
         store=store,
@@ -423,9 +423,7 @@ def test_explicit_frontend_skill_text_overrides_real_bundles(tmp_path) -> None:
 
 def test_custom_compile_node_factory_replaces_placeholder(tmp_path) -> None:
     store = CheckpointStore(tmp_path / "ck.db")
-    factory = _factory_from(
-        [_CUDA_JSON_RESPONSE, "design doc", "kernel.cpp", "LGTM"]
-    )
+    factory = _factory_from([_CUDA_JSON_RESPONSE, "design doc", "kernel.cpp", "LGTM"])
 
     def custom_compile_factory() -> Node:
         def _real_compile(state: dict) -> dict:
@@ -439,6 +437,7 @@ def test_custom_compile_node_factory_replaces_placeholder(tmp_path) -> None:
                     "custom": True,
                 },
             }
+
         return Node(name="compile", func=_real_compile)
 
     runner = build_migration_graph(

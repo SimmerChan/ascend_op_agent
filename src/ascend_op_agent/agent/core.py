@@ -145,15 +145,17 @@ class AIAgent:
 
         # 记录用户输入
         user_entry_id = str(uuid.uuid4())
-        self._safe_append(UserEntry(
-            id=user_entry_id,
-            timestamp=time.time(),
-            session_id=session_id,
-            model=model,
-            provider=provider,
-            turn_id=0,
-            content=user_input,
-        ))
+        self._safe_append(
+            UserEntry(
+                id=user_entry_id,
+                timestamp=time.time(),
+                session_id=session_id,
+                model=model,
+                provider=provider,
+                turn_id=0,
+                content=user_input,
+            )
+        )
 
         self._conversation_history.append({"role": "user", "content": user_input})
         self._current_iteration = 0
@@ -174,19 +176,23 @@ class AIAgent:
 
             # 记录 system prompt
             system_entry_id = str(uuid.uuid4())
-            self._safe_append(SystemEntry(
-                id=system_entry_id,
-                timestamp=time.time(),
-                session_id=session_id,
-                model=model,
-                provider=provider,
-                turn_id=self._current_iteration,
-                content=system_prompt,
-            ))
+            self._safe_append(
+                SystemEntry(
+                    id=system_entry_id,
+                    timestamp=time.time(),
+                    session_id=session_id,
+                    model=model,
+                    provider=provider,
+                    turn_id=self._current_iteration,
+                    content=system_prompt,
+                )
+            )
 
             # 2. 调用LLM
             # 构建 input_messages
-            input_messages = [{"role": "system", "content": system_prompt}] + self._conversation_history
+            input_messages = [
+                {"role": "system", "content": system_prompt}
+            ] + self._conversation_history
             tools = self.tool_registry.to_openai_format()
 
             llm_entry_id = str(uuid.uuid4())
@@ -200,7 +206,9 @@ class AIAgent:
                     logger.warning(f"status_callback error: {e}")
 
             # 启动超时追踪器
-            timeout_tracker = TimeoutTracker(60, lambda: self._status_callback("waiting") if self._status_callback else None)
+            timeout_tracker = TimeoutTracker(
+                60, lambda: self._status_callback("waiting") if self._status_callback else None
+            )
             timeout_tracker.start()
 
             try:
@@ -223,43 +231,53 @@ class AIAgent:
             tool_calls = self._parse_tool_calls(response)
 
             # 记录 LLMEntry
-            self._safe_append(LLMEntry(
-                id=llm_entry_id,
-                timestamp=time.time(),
-                session_id=session_id,
-                model=model,
-                provider=provider,
-                turn_id=self._current_iteration,
-                parent_id=llm_entry_parent_id,
-                input_messages=input_messages,
-                output_content=response,
-                tool_calls=tool_calls,
-            ))
+            self._safe_append(
+                LLMEntry(
+                    id=llm_entry_id,
+                    timestamp=time.time(),
+                    session_id=session_id,
+                    model=model,
+                    provider=provider,
+                    turn_id=self._current_iteration,
+                    parent_id=llm_entry_parent_id,
+                    input_messages=input_messages,
+                    output_content=response,
+                    tool_calls=tool_calls,
+                )
+            )
 
             # 检查是否为 Native Function Calling 响应
             if isinstance(response, ToolCallResult):
                 # Native Function Calling 模式：直接使用结构化数据
                 tool_result = self._execute_tool_call_from_result(response, llm_entry_id)
-                self._conversation_history.append({
-                    "role": "assistant",
-                    "content": f"tool_call({response.tool_name})",
-                })
-                self._conversation_history.append({
-                    "role": "tool",
-                    "content": tool_result,
-                })
+                self._conversation_history.append(
+                    {
+                        "role": "assistant",
+                        "content": f"tool_call({response.tool_name})",
+                    }
+                )
+                self._conversation_history.append(
+                    {
+                        "role": "tool",
+                        "content": tool_result,
+                    }
+                )
                 # 继续迭代
             elif self._is_tool_call(response):
                 # 旧版 XML 格式兼容
                 tool_result = self._execute_tool_call(response, llm_entry_id)
-                self._conversation_history.append({
-                    "role": "assistant",
-                    "content": response,
-                })
-                self._conversation_history.append({
-                    "role": "tool",
-                    "content": tool_result,
-                })
+                self._conversation_history.append(
+                    {
+                        "role": "assistant",
+                        "content": response,
+                    }
+                )
+                self._conversation_history.append(
+                    {
+                        "role": "tool",
+                        "content": tool_result,
+                    }
+                )
                 # 继续迭代
             else:
                 # 直接回复
@@ -296,30 +314,33 @@ class AIAgent:
         """
         if isinstance(response, ToolCallResult):
             # Native Function Calling 模式
-            return [{
-                "tool_call_id": response.tool_call_id,
-                "name": response.tool_name,
-                "arguments": response.arguments,
-            }]
+            return [
+                {
+                    "tool_call_id": response.tool_call_id,
+                    "name": response.tool_name,
+                    "arguments": response.arguments,
+                }
+            ]
         elif self._is_tool_call(response):
             # XML 格式
             import re
             import json
+
             tool_calls = []
             matches = re.findall(
-                r'<tool_call\s+name="(\w+)">(.+?)</tool_call>',
-                response,
-                re.DOTALL | re.IGNORECASE
+                r'<tool_call\s+name="(\w+)">(.+?)</tool_call>', response, re.DOTALL | re.IGNORECASE
             )
             for match in matches:
                 tool_name = match[0]
                 args_str = match[1].strip()
                 try:
                     args = json.loads(args_str)
-                    tool_calls.append({
-                        "name": tool_name,
-                        "arguments": args,
-                    })
+                    tool_calls.append(
+                        {
+                            "name": tool_name,
+                            "arguments": args,
+                        }
+                    )
                 except json.JSONDecodeError:
                     pass
             return tool_calls
@@ -337,7 +358,9 @@ class AIAgent:
         import re
 
         # Match the first tool_call block (may span multiple lines), case-insensitive
-        match = re.search(r'<tool_call\s+name="(\w+)">(.+?)</tool_call>', response, re.DOTALL | re.IGNORECASE)
+        match = re.search(
+            r'<tool_call\s+name="(\w+)">(.+?)</tool_call>', response, re.DOTALL | re.IGNORECASE
+        )
         if not match:
             return "错误: 无效的工具调用格式"
 
@@ -345,6 +368,7 @@ class AIAgent:
         args_str = match.group(2).strip()
 
         import json
+
         try:
             args = json.loads(args_str)
         except json.JSONDecodeError:
@@ -371,27 +395,31 @@ class AIAgent:
             result_str = str(result)
 
             # side-channel:供编排器提取(编排器拿不到 _conversation_history 里的 args)
-            self._tool_calls_log.append({
-                "name": tool_name,
-                "args": args,
-                "result": result_str,
-            })
+            self._tool_calls_log.append(
+                {
+                    "name": tool_name,
+                    "args": args,
+                    "result": result_str,
+                }
+            )
 
             # 记录工具调用
             tool_entry_id = str(uuid.uuid4())
-            self._safe_append(ToolEntry(
-                id=tool_entry_id,
-                timestamp=time.time(),
-                session_id=session_id,
-                model=model,
-                provider=provider,
-                turn_id=self._current_iteration,
-                parent_id=parent_id,
-                tool_name=tool_name,
-                arguments=args,
-                result=result_str,
-                success=True,
-            ))
+            self._safe_append(
+                ToolEntry(
+                    id=tool_entry_id,
+                    timestamp=time.time(),
+                    session_id=session_id,
+                    model=model,
+                    provider=provider,
+                    turn_id=self._current_iteration,
+                    parent_id=parent_id,
+                    tool_name=tool_name,
+                    arguments=args,
+                    result=result_str,
+                    success=True,
+                )
+            )
 
             # 触发 tool.complete 回调
             if self._tool_progress_callback:
@@ -406,25 +434,29 @@ class AIAgent:
 
             # 记录工具调用失败
             tool_entry_id = str(uuid.uuid4())
-            self._safe_append(ToolEntry(
-                id=tool_entry_id,
-                timestamp=time.time(),
-                session_id=session_id,
-                model=model,
-                provider=provider,
-                turn_id=self._current_iteration,
-                parent_id=parent_id,
-                tool_name=tool_name,
-                arguments=args,
-                result="",
-                success=False,
-                error=error_msg,
-            ))
+            self._safe_append(
+                ToolEntry(
+                    id=tool_entry_id,
+                    timestamp=time.time(),
+                    session_id=session_id,
+                    model=model,
+                    provider=provider,
+                    turn_id=self._current_iteration,
+                    parent_id=parent_id,
+                    tool_name=tool_name,
+                    arguments=args,
+                    result="",
+                    success=False,
+                    error=error_msg,
+                )
+            )
 
             # 触发 tool.error 回调
             if self._tool_progress_callback:
                 try:
-                    self._tool_progress_callback("tool.error", tool_name, error_code="EXECUTION_ERROR", error_message=str(e))
+                    self._tool_progress_callback(
+                        "tool.error", tool_name, error_code="EXECUTION_ERROR", error_message=str(e)
+                    )
                 except Exception as cb_e:
                     logger.warning(f"tool_progress_callback error: {cb_e}")
 
@@ -448,21 +480,23 @@ class AIAgent:
         if not tool:
             error_msg = f"错误: 未知工具: {tool_call_info.tool_name}"
             tool_entry_id = str(uuid.uuid4())
-            self._safe_append(ToolEntry(
-                id=tool_entry_id,
-                timestamp=time.time(),
-                session_id=session_id,
-                model=model,
-                provider=provider,
-                turn_id=self._current_iteration,
-                parent_id=parent_id,
-                tool_name=tool_call_info.tool_name,
-                tool_call_id=tool_call_info.tool_call_id,
-                arguments=tool_call_info.arguments,
-                result="",
-                success=False,
-                error=error_msg,
-            ))
+            self._safe_append(
+                ToolEntry(
+                    id=tool_entry_id,
+                    timestamp=time.time(),
+                    session_id=session_id,
+                    model=model,
+                    provider=provider,
+                    turn_id=self._current_iteration,
+                    parent_id=parent_id,
+                    tool_name=tool_call_info.tool_name,
+                    tool_call_id=tool_call_info.tool_call_id,
+                    arguments=tool_call_info.arguments,
+                    result="",
+                    success=False,
+                    error=error_msg,
+                )
+            )
             return error_msg
 
         try:
@@ -477,33 +511,39 @@ class AIAgent:
             result_str = str(result)
 
             # side-channel:供编排器提取
-            self._tool_calls_log.append({
-                "name": tool_call_info.tool_name,
-                "args": dict(tool_call_info.arguments),
-                "result": result_str,
-            })
+            self._tool_calls_log.append(
+                {
+                    "name": tool_call_info.tool_name,
+                    "args": dict(tool_call_info.arguments),
+                    "result": result_str,
+                }
+            )
 
             # 记录工具调用
             tool_entry_id = str(uuid.uuid4())
-            self._safe_append(ToolEntry(
-                id=tool_entry_id,
-                timestamp=time.time(),
-                session_id=session_id,
-                model=model,
-                provider=provider,
-                turn_id=self._current_iteration,
-                parent_id=parent_id,
-                tool_name=tool_call_info.tool_name,
-                tool_call_id=tool_call_info.tool_call_id,
-                arguments=tool_call_info.arguments,
-                result=result_str,
-                success=True,
-            ))
+            self._safe_append(
+                ToolEntry(
+                    id=tool_entry_id,
+                    timestamp=time.time(),
+                    session_id=session_id,
+                    model=model,
+                    provider=provider,
+                    turn_id=self._current_iteration,
+                    parent_id=parent_id,
+                    tool_name=tool_call_info.tool_name,
+                    tool_call_id=tool_call_info.tool_call_id,
+                    arguments=tool_call_info.arguments,
+                    result=result_str,
+                    success=True,
+                )
+            )
 
             # 触发 tool.complete 回调
             if self._tool_progress_callback:
                 try:
-                    self._tool_progress_callback("tool.complete", tool_call_info.tool_name, success=True)
+                    self._tool_progress_callback(
+                        "tool.complete", tool_call_info.tool_name, success=True
+                    )
                 except Exception as e:
                     logger.warning(f"tool_progress_callback error: {e}")
 
@@ -513,26 +553,33 @@ class AIAgent:
 
             # 记录工具调用失败
             tool_entry_id = str(uuid.uuid4())
-            self._safe_append(ToolEntry(
-                id=tool_entry_id,
-                timestamp=time.time(),
-                session_id=session_id,
-                model=model,
-                provider=provider,
-                turn_id=self._current_iteration,
-                parent_id=parent_id,
-                tool_name=tool_call_info.tool_name,
-                tool_call_id=tool_call_info.tool_call_id,
-                arguments=tool_call_info.arguments,
-                result="",
-                success=False,
-                error=error_msg,
-            ))
+            self._safe_append(
+                ToolEntry(
+                    id=tool_entry_id,
+                    timestamp=time.time(),
+                    session_id=session_id,
+                    model=model,
+                    provider=provider,
+                    turn_id=self._current_iteration,
+                    parent_id=parent_id,
+                    tool_name=tool_call_info.tool_name,
+                    tool_call_id=tool_call_info.tool_call_id,
+                    arguments=tool_call_info.arguments,
+                    result="",
+                    success=False,
+                    error=error_msg,
+                )
+            )
 
             # 触发 tool.error 回调
             if self._tool_progress_callback:
                 try:
-                    self._tool_progress_callback("tool.error", tool_call_info.tool_name, error_code="EXECUTION_ERROR", error_message=str(e))
+                    self._tool_progress_callback(
+                        "tool.error",
+                        tool_call_info.tool_name,
+                        error_code="EXECUTION_ERROR",
+                        error_message=str(e),
+                    )
                 except Exception as cb_e:
                     logger.warning(f"tool_progress_callback error: {cb_e}")
 
@@ -600,12 +647,12 @@ class LLMClient:
 
     def __init__(self, llm_config):
         self.config = llm_config
-        self.max_retries = getattr(llm_config, 'max_retries', 3)
+        self.max_retries = getattr(llm_config, "max_retries", 3)
         self.backoff_factor = 2
-        self.timeout = getattr(llm_config, 'timeout', 120)
+        self.timeout = getattr(llm_config, "timeout", 120)
 
         # Create adapter based on provider
-        provider = getattr(llm_config, 'provider', 'openai').lower()
+        provider = getattr(llm_config, "provider", "openai").lower()
         adapter_class = self._ADAPTERS.get(provider)
 
         if adapter_class is None:
@@ -638,14 +685,17 @@ class LLMClient:
 
 class RateLimitError(Exception):
     """速率限制错误"""
+
     pass
 
 
 class ServiceUnavailableError(Exception):
     """服务不可用错误"""
+
     pass
 
 
 class MaxRetriesExceededError(Exception):
     """超过最大重试次数"""
+
     pass

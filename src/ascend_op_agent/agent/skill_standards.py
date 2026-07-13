@@ -126,7 +126,8 @@ def should_trigger_self_check(
         return False
     if skill_count is None:
         skill_count = count_self_built_skills(
-            skills_dir=skills_dir, task_type=cfg.task_type,
+            skills_dir=skills_dir,
+            task_type=cfg.task_type,
         )
     return skill_count > cfg.threshold
 
@@ -189,12 +190,14 @@ def render_system_prompt_with_self_check(
     if not cfg.enabled:
         return base_prompt
     skill_count = count_self_built_skills(
-        skills_dir=skills_dir, task_type=cfg.task_type,
+        skills_dir=skills_dir,
+        task_type=cfg.task_type,
     )
     if skill_count <= cfg.threshold:
         return base_prompt
     self_check_section = build_self_check_prompt(
-        skill_count=skill_count, threshold=cfg.threshold,
+        skill_count=skill_count,
+        threshold=cfg.threshold,
     )
     return base_prompt + "\n\n" + self_check_section
 

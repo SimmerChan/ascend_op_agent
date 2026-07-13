@@ -42,9 +42,7 @@ def test_fresh_db_creates_6_columns_and_schema_meta(tmp_path):
     cols = [r[1] for r in cur.fetchall()]
     assert "task_type" in cols
     assert "topic" in cols
-    cur.execute(
-        "SELECT value FROM schema_meta WHERE key = 'schema_version'"
-    )
+    cur.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'")
     assert cur.fetchone()[0] == "2"
     conn.close()
 
@@ -53,8 +51,7 @@ def test_add_skill_with_task_type_topic_stored_in_columns(tmp_path):
     """add_skill 新增 task_type/topic keyword-only 参数,写入 FTS5 列."""
     idx = _make_index(tmp_path)
     idx.add_skill(
-        Skill(name="tiling-pitfalls", description="d", content="c",
-              tags=["t1"]),
+        Skill(name="tiling-pitfalls", description="d", content="c", tags=["t1"]),
         task_type="develop",
         topic="tiling",
     )
@@ -87,12 +84,14 @@ def test_migration_v1_to_v2_with_persist_backup(tmp_path):
     # 手工创建 v1 schema(4 列,无 schema_meta)
     conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
-    cur.execute("""
+    cur.execute(
+        """
         CREATE VIRTUAL TABLE skills USING fts5(
             name, description, tags, content,
             tokenize='porter unicode61'
         )
-    """)
+    """
+    )
     cur.execute(
         "INSERT INTO skills (name, description, tags, content) "
         "VALUES ('old-skill', 'old-desc', 'a,b', 'old-content')"
@@ -134,15 +133,19 @@ def test_migration_crash_restore_from_disk_backup(tmp_path):
     # 手工创建 v1 + 写 crash-state backup
     conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
-    cur.execute("""
+    cur.execute(
+        """
         CREATE VIRTUAL TABLE skills USING fts5(
             name, description, tags, content, task_type, topic,
             tokenize='porter unicode61'
         )
-    """)
-    cur.execute("""
+    """
+    )
+    cur.execute(
+        """
         CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT)
-    """)
+    """
+    )
     # 不写 schema_version='2',模拟崩溃
     conn.commit()
     conn.close()
@@ -202,12 +205,21 @@ def test_migration_idempotent_on_already_v2(tmp_path):
 def test_search_filters_by_task_type(tmp_path):
     """search(query, k, task_type=...) 只返回 task_type 匹配的 skill."""
     idx = _make_index(tmp_path)
-    idx.add_skill(Skill(name="dev-a", description="alpha skill", content="c"),
-                  task_type="develop", topic="tiling")
-    idx.add_skill(Skill(name="dev-b", description="beta skill", content="c"),
-                  task_type="develop", topic="runtime")
-    idx.add_skill(Skill(name="mig-c", description="gamma skill", content="c"),
-                  task_type="migrate", topic="cuda_frontend")
+    idx.add_skill(
+        Skill(name="dev-a", description="alpha skill", content="c"),
+        task_type="develop",
+        topic="tiling",
+    )
+    idx.add_skill(
+        Skill(name="dev-b", description="beta skill", content="c"),
+        task_type="develop",
+        topic="runtime",
+    )
+    idx.add_skill(
+        Skill(name="mig-c", description="gamma skill", content="c"),
+        task_type="migrate",
+        topic="cuda_frontend",
+    )
 
     # query "skill" 命中所有 desc,task_type 过滤后只留 matching
     only_dev = idx.hybrid_search(query="skill", k=10, task_type="develop")
@@ -218,10 +230,12 @@ def test_search_filters_by_task_type(tmp_path):
 
 def test_search_filters_by_topic(tmp_path):
     idx = _make_index(tmp_path)
-    idx.add_skill(Skill(name="a", description="a-skill", content="c"),
-                  task_type="develop", topic="tiling")
-    idx.add_skill(Skill(name="b", description="b-skill", content="c"),
-                  task_type="develop", topic="runtime")
+    idx.add_skill(
+        Skill(name="a", description="a-skill", content="c"), task_type="develop", topic="tiling"
+    )
+    idx.add_skill(
+        Skill(name="b", description="b-skill", content="c"), task_type="develop", topic="runtime"
+    )
 
     only_tiling = idx.hybrid_search(query="skill", k=10, topic="tiling")
     assert [s.name for s in only_tiling] == ["a"]
@@ -231,25 +245,35 @@ def test_search_filters_by_topic(tmp_path):
 
 def test_search_combined_task_type_and_topic_AND(tmp_path):
     idx = _make_index(tmp_path)
-    idx.add_skill(Skill(name="dev-tiling", description="skill", content="c"),
-                  task_type="develop", topic="tiling")
-    idx.add_skill(Skill(name="dev-runtime", description="skill", content="c"),
-                  task_type="develop", topic="runtime")
-    idx.add_skill(Skill(name="mig-tiling", description="skill", content="c"),
-                  task_type="migrate", topic="tiling")
+    idx.add_skill(
+        Skill(name="dev-tiling", description="skill", content="c"),
+        task_type="develop",
+        topic="tiling",
+    )
+    idx.add_skill(
+        Skill(name="dev-runtime", description="skill", content="c"),
+        task_type="develop",
+        topic="runtime",
+    )
+    idx.add_skill(
+        Skill(name="mig-tiling", description="skill", content="c"),
+        task_type="migrate",
+        topic="tiling",
+    )
 
-    res = idx.hybrid_search(query="skill", k=10,
-                            task_type="develop", topic="tiling")
+    res = idx.hybrid_search(query="skill", k=10, task_type="develop", topic="tiling")
     assert [s.name for s in res] == ["dev-tiling"]
 
 
 def test_search_no_filter_returns_all_matching(tmp_path):
     """不传 task_type/topic → 不过滤,返回所有 FTS5 匹配."""
     idx = _make_index(tmp_path)
-    idx.add_skill(Skill(name="dev", description="x", content="c"),
-                  task_type="develop", topic="tiling")
-    idx.add_skill(Skill(name="mig", description="x", content="c"),
-                  task_type="migrate", topic="cuda")
+    idx.add_skill(
+        Skill(name="dev", description="x", content="c"), task_type="develop", topic="tiling"
+    )
+    idx.add_skill(
+        Skill(name="mig", description="x", content="c"), task_type="migrate", topic="cuda"
+    )
     res = idx.hybrid_search(query="x", k=10)
     assert sorted(s.name for s in res) == ["dev", "mig"]
 
@@ -259,12 +283,9 @@ def test_search_no_filter_returns_all_matching(tmp_path):
 
 def test_search_by_task_type_returns_only_matching(tmp_path):
     idx = _make_index(tmp_path)
-    idx.add_skill(Skill(name="a", description="x", content="c"),
-                  task_type="develop", topic="t1")
-    idx.add_skill(Skill(name="b", description="x", content="c"),
-                  task_type="develop", topic="t2")
-    idx.add_skill(Skill(name="c", description="x", content="c"),
-                  task_type="migrate", topic="t3")
+    idx.add_skill(Skill(name="a", description="x", content="c"), task_type="develop", topic="t1")
+    idx.add_skill(Skill(name="b", description="x", content="c"), task_type="develop", topic="t2")
+    idx.add_skill(Skill(name="c", description="x", content="c"), task_type="migrate", topic="t3")
     res = idx.search_by_task_type("develop")
     assert sorted(s.name for s in res) == ["a", "b"]
 
@@ -277,8 +298,7 @@ def test_canbot_bundle_map_covers_all_skill_bundles():
     sb_keys = set(SKILL_BUNDLES.keys())
     cbm_keys = set(CANBOT_BUNDLE_MAP.keys())
     assert sb_keys == cbm_keys, (
-        f"missing in CANBOT_BUNDLE_MAP: {sb_keys - cbm_keys}; "
-        f"extra: {cbm_keys - sb_keys}"
+        f"missing in CANBOT_BUNDLE_MAP: {sb_keys - cbm_keys}; " f"extra: {cbm_keys - sb_keys}"
     )
 
 

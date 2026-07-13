@@ -64,6 +64,7 @@ def _fake_skill(name: str, *, task_type: str = "", topic: str = "") -> CannbotSk
 def _skill_lines(out: str) -> list[str]:
     """Extract rendered self-built skill name lines ("- **NAME**: ...") from output."""
     import re
+
     return re.findall(r"- \*\*([\w-]+)\*\*:", out)
 
 
@@ -90,28 +91,39 @@ def override_cannbot():
 
 def test_r5b_task_type_filters_self_built(pb, monkeypatch, override_cannbot):
     """task_type=develop → 只返回 task_type=develop 的 self-built."""
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        _fake_skill("dev-tiling", task_type="develop"),
-        _fake_skill("dev-runtime", task_type="develop"),
-        _fake_skill("mig-cuda", task_type="migrate"),
-    ])
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [
+            _fake_skill("dev-tiling", task_type="develop"),
+            _fake_skill("dev-runtime", task_type="develop"),
+            _fake_skill("mig-cuda", task_type="migrate"),
+        ],
+    )
     out = pb._build_skills_layer(
-        override=override_cannbot, task_type="develop",
+        override=override_cannbot,
+        task_type="develop",
     )
     lines = _skill_lines(out)
     assert "dev-tiling" in lines
     assert "dev-runtime" in lines
     assert "mig-cuda" not in lines
     # cannbot (override) 在前
-    assert out.index("## Available Skills (phase=design)") < out.index("## Available Skills (self-built)")
+    assert out.index("## Available Skills (phase=design)") < out.index(
+        "## Available Skills (self-built)"
+    )
 
 
 def test_r5b_no_task_type_no_recent_loads_returns_all(pb, monkeypatch, override_cannbot):
     """无 task_type 无 recent_loads → 兜底返回全部 self-built (PR-A 兼容)."""
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        _fake_skill("a", task_type="develop"),
-        _fake_skill("b", task_type="migrate"),
-    ])
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [
+            _fake_skill("a", task_type="develop"),
+            _fake_skill("b", task_type="migrate"),
+        ],
+    )
     out = pb._build_skills_layer(override=override_cannbot)
     lines = _skill_lines(out)
     assert "a" in lines and "b" in lines
@@ -119,11 +131,15 @@ def test_r5b_no_task_type_no_recent_loads_returns_all(pb, monkeypatch, override_
 
 def test_r5b_recent_loads_supplements_when_task_type_set(pb, monkeypatch, override_cannbot):
     """task_type=develop + recent_loads=['mig-x'] → task_type 命中 + recent_loads 补."""
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        _fake_skill("dev-tiling", task_type="develop"),
-        _fake_skill("mig-x", task_type="migrate"),   # 被 recent_loads 拉进来
-        _fake_skill("mig-y", task_type="migrate"),   # 保持在外
-    ])
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [
+            _fake_skill("dev-tiling", task_type="develop"),
+            _fake_skill("mig-x", task_type="migrate"),  # 被 recent_loads 拉进来
+            _fake_skill("mig-y", task_type="migrate"),  # 保持在外
+        ],
+    )
     out = pb._build_skills_layer(
         override=override_cannbot,
         task_type="develop",
@@ -131,15 +147,19 @@ def test_r5b_recent_loads_supplements_when_task_type_set(pb, monkeypatch, overri
     )
     lines = _skill_lines(out)
     assert "dev-tiling" in lines
-    assert "mig-x" in lines   # recent_loads 拉进来
+    assert "mig-x" in lines  # recent_loads 拉进来
     assert "mig-y" not in lines  # 不在 recent_loads 也没 task_type 命中
 
 
 def test_r5b_recent_loads_dedupes(pb, monkeypatch, override_cannbot):
     """recent_loads 含已有 task_type 命中的 skill → 去重不重复."""
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        _fake_skill("dev-tiling", task_type="develop"),
-    ])
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [
+            _fake_skill("dev-tiling", task_type="develop"),
+        ],
+    )
     out = pb._build_skills_layer(
         override=override_cannbot,
         task_type="develop",
@@ -152,11 +172,15 @@ def test_r5b_recent_loads_dedupes(pb, monkeypatch, override_cannbot):
 
 def test_r5b_recent_loads_only(pb, monkeypatch, override_cannbot):
     """task_type=None + recent_loads=['a','b'] → 只 recent_loads 中的."""
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        _fake_skill("a"),
-        _fake_skill("b"),
-        _fake_skill("c"),
-    ])
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [
+            _fake_skill("a"),
+            _fake_skill("b"),
+            _fake_skill("c"),
+        ],
+    )
     out = pb._build_skills_layer(
         override=override_cannbot,
         task_type=None,
@@ -169,9 +193,9 @@ def test_r5b_recent_loads_only(pb, monkeypatch, override_cannbot):
 
 def test_r5b_recent_loads_capped_to_MAX(pb, monkeypatch, override_cannbot):
     """recent_loads 超过 RECENT_LOADS_MAX=5 → 只用前 5 个."""
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        _fake_skill(f"s{i}") for i in range(10)
-    ])
+    monkeypatch.setattr(
+        pb, "_load_self_built_skills", lambda storage: [_fake_skill(f"s{i}") for i in range(10)]
+    )
     out = pb._build_skills_layer(
         override=override_cannbot,
         recent_loads=[f"s{i}" for i in range(10)],
@@ -187,9 +211,11 @@ def test_r5b_recent_loads_capped_to_MAX(pb, monkeypatch, override_cannbot):
 
 def test_r5b_cap_10(pb, monkeypatch, override_cannbot):
     """15 个 self-built → cap 到 HERMES_LAYER_LIMIT=10."""
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        _fake_skill(f"skill-{i}", task_type="develop") for i in range(15)
-    ])
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [_fake_skill(f"skill-{i}", task_type="develop") for i in range(15)],
+    )
     out = pb._build_skills_layer(
         override=override_cannbot,
         task_type="develop",
@@ -211,16 +237,23 @@ def test_r5b_cap_10(pb, monkeypatch, override_cannbot):
 
 def test_r7_both_groups_have_distinct_titles(pb, monkeypatch, override_cannbot):
     """canbot (override) 在前 + self-built (标题含 "(self-built)") 在后."""
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        _fake_skill("dev-tiling", task_type="develop"),
-    ])
-    out = pb._build_skills_layer(
-        override=override_cannbot, task_type="develop",
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [
+            _fake_skill("dev-tiling", task_type="develop"),
+        ],
     )
-    assert "## Available Skills (phase=design)" in out   # cannbot phase 标题
-    assert "## Available Skills (self-built)" in out      # self-built 标题
+    out = pb._build_skills_layer(
+        override=override_cannbot,
+        task_type="develop",
+    )
+    assert "## Available Skills (phase=design)" in out  # cannbot phase 标题
+    assert "## Available Skills (self-built)" in out  # self-built 标题
     # cannbot 在前
-    assert out.index("## Available Skills (phase=design)") < out.index("## Available Skills (self-built)")
+    assert out.index("## Available Skills (phase=design)") < out.index(
+        "## Available Skills (self-built)"
+    )
 
 
 def test_r7_only_cannbot_returns_override_intact(pb, monkeypatch):
@@ -233,9 +266,13 @@ def test_r7_only_cannbot_returns_override_intact(pb, monkeypatch):
 
 def test_r7_only_self_built_adds_marker(pb, monkeypatch):
     """无 override + 有 self-built → 加上 (self-built) 标题标记."""
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        _fake_skill("only-self", task_type="develop"),
-    ])
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [
+            _fake_skill("only-self", task_type="develop"),
+        ],
+    )
     out = pb._build_skills_layer(override=None, task_type="develop")
     assert "## Available Skills (self-built)" in out
     assert "- **only-self**:" in out

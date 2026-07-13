@@ -73,6 +73,7 @@ def _factory_from(responses: list[str]):
     def _factory() -> _FakeAgent:
         agent_responses = queue[:] if (queue := list(responses)) else ["fallback"]
         return _FakeAgent(responses=agent_responses)
+
     return _factory
 
 
@@ -126,7 +127,7 @@ def test_recommend_returns_sample_for_pure_kernel() -> None:
     state = {
         "code_result": {
             "files": [
-                {"path": "kernel.cpp", "content": "extern \"C\" __global__ void add() {}"},
+                {"path": "kernel.cpp", "content": 'extern "C" __global__ void add() {}'},
             ]
         }
     }
@@ -323,15 +324,13 @@ def test_new_dev_sample_mode_completes_to_done(tmp_path) -> None:
     # framework_adapt 跑了但跳过
     assert state["framework_adapt_result"]["skipped"] is True
     expected_tail = ["precision", "delivery_mode", "framework_adapt", "done"]
-    assert state["phase_history"][-len(expected_tail):] == expected_tail
+    assert state["phase_history"][-len(expected_tail) :] == expected_tail
 
 
 def test_new_dev_torch_npu_mode_runs_framework_adapt(tmp_path) -> None:
     """torch_npu 模式:framework_adapt 真跑 LLM(再多一个 response)。"""
     store = CheckpointStore(tmp_path / "ck.db")
-    factory = _factory_from(
-        ["analyze", "design", "codegen", "LGTM", "framework adapt code"]
-    )
+    factory = _factory_from(["analyze", "design", "codegen", "LGTM", "framework adapt code"])
 
     runner = build_new_dev_graph(store=store, agent_factory=factory)
     runner.invoke("add op", thread_id="t1")
@@ -356,9 +355,7 @@ def test_cuda_migration_delivery_mode_interrupts(tmp_path) -> None:
     store = CheckpointStore(tmp_path / "ck.db")
     factory = _factory_from([cuda_json, "design", "codegen", "LGTM"])
 
-    runner = build_migration_graph(
-        store=store, source_type="cuda", agent_factory=factory
-    )
+    runner = build_migration_graph(store=store, source_type="cuda", agent_factory=factory)
     runner.invoke("cuda code", thread_id="t1")
     runner.resume("t1", payload={"approved": True})
 
@@ -376,9 +373,7 @@ def test_triton_migration_pybind_mode_completes(tmp_path) -> None:
     store = CheckpointStore(tmp_path / "ck.db")
     factory = _factory_from([triton_json, "design", "codegen", "LGTM"])
 
-    runner = build_migration_graph(
-        store=store, source_type="triton", agent_factory=factory
-    )
+    runner = build_migration_graph(store=store, source_type="triton", agent_factory=factory)
     runner.invoke("triton code", thread_id="t1")
     runner.resume("t1", payload={"approved": True})
     state = runner.resume("t1", payload={"mode": "pybind"})

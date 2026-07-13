@@ -75,10 +75,13 @@ def test_scaffold_codegen_single_node_path(tmp_path) -> None:
     不可靠 55% 失败率的兜底)。"""
     store = CheckpointStore(tmp_path / "ck.db")
     runner = build_new_dev_graph(
-        store=store, agent_factory=_factory, use_scaffold_codegen=True,
+        store=store,
+        agent_factory=_factory,
+        use_scaffold_codegen=True,
     )
     # 准备 scaffold 目录让节点能读到
     import os
+
     scaffold_op = Path("/tmp/e2e_ops_local/op_add")
     if not scaffold_op.exists():
         # 跑这个单测时没有 scaffold,只验证 phase_history 顺序对就行
@@ -90,8 +93,16 @@ def test_scaffold_codegen_single_node_path(tmp_path) -> None:
 
     # scaffold 路径只 1 个 codegen 节点
     expected = [
-        "entry", "analyze", "design", "codegen", "review_fix",
-        "compile", "precision", "delivery_mode", "framework_adapt", "done",
+        "entry",
+        "analyze",
+        "design",
+        "codegen",
+        "review_fix",
+        "compile",
+        "precision",
+        "delivery_mode",
+        "framework_adapt",
+        "done",
     ]
     assert state["phase_history"] == expected
     assert state["current_phase"] == "done"
@@ -112,11 +123,20 @@ def test_new_dev_runs_all_phases_after_design_approval(tmp_path) -> None:
 
     # 全阶段访问(codegen 默认 5 个独立 LLM 节点)
     expected = [
-        "entry", "analyze", "design",
-        "codegen_kernel_cpp", "codegen_host_cpp", "codegen_cmakelists",
-        "codegen_build_sh", "codegen_kernel_ini",
-        "review_fix", "compile", "precision",
-        "delivery_mode", "framework_adapt", "done",
+        "entry",
+        "analyze",
+        "design",
+        "codegen_kernel_cpp",
+        "codegen_host_cpp",
+        "codegen_cmakelists",
+        "codegen_build_sh",
+        "codegen_kernel_ini",
+        "review_fix",
+        "compile",
+        "precision",
+        "delivery_mode",
+        "framework_adapt",
+        "done",
     ]
     assert state["phase_history"] == expected
     assert state["current_phase"] == "done"
@@ -172,11 +192,20 @@ def test_resume_after_design_approval_completes_all_phases(tmp_path) -> None:
     assert state["current_phase"] == "done"
     assert store.get_status("t1") == STATUS_DONE
     expected = [
-        "entry", "analyze", "design",
-        "codegen_kernel_cpp", "codegen_host_cpp", "codegen_cmakelists",
-        "codegen_build_sh", "codegen_kernel_ini",
-        "review_fix", "compile", "precision",
-        "delivery_mode", "framework_adapt", "done",
+        "entry",
+        "analyze",
+        "design",
+        "codegen_kernel_cpp",
+        "codegen_host_cpp",
+        "codegen_cmakelists",
+        "codegen_build_sh",
+        "codegen_kernel_ini",
+        "review_fix",
+        "compile",
+        "precision",
+        "delivery_mode",
+        "framework_adapt",
+        "done",
     ]
     assert state["phase_history"] == expected
 
@@ -287,6 +316,7 @@ def test_custom_compile_node_factory_replaces_placeholder(tmp_path) -> None:
                     "custom": True,
                 },
             }
+
         return Node(name="compile", func=_real_compile)
 
     runner = build_new_dev_graph(
@@ -319,6 +349,7 @@ def test_custom_precision_node_factory_replaces_placeholder(tmp_path) -> None:
                     "custom": True,
                 },
             }
+
         return Node(name="precision", func=_real_precision)
 
     runner = build_new_dev_graph(

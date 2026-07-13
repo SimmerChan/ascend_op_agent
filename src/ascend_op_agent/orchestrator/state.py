@@ -37,10 +37,10 @@ class OpState(TypedDict, total=False):
     delivery_mode: Optional[str]
 
     # 累加器字段 —— reducer 在 PhaseRunner._apply_update 内手动应用
-    messages: list[dict]              # list[{"role","content"}] —— append
-    memory_pools: dict[str, Any]      # 跨节点 Layer 5 持久化 —— dict merge
-    phase_history: list[str]          # 已执行节点名 —— append
-    retry_counts: dict[str, int]      # 各节点重试计数 —— dict merge
+    messages: list[dict]  # list[{"role","content"}] —— append
+    memory_pools: dict[str, Any]  # 跨节点 Layer 5 持久化 —— dict merge
+    phase_history: list[str]  # 已执行节点名 —— append
+    retry_counts: dict[str, int]  # 各节点重试计数 —— dict merge
 
     # 控制字段 —— last-write-wins
     current_phase: Optional[str]

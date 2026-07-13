@@ -47,8 +47,9 @@ VALID_BODY = "## Project Scope\nscope body\n\n## Notes\nnotes body\n"
 # ---- shared helpers --------------------------------------------------------
 
 
-def _write_skill_md(skills_dir: Path, name: str, *, task_type: str, topic: str,
-                    description: str, content_body: str) -> None:
+def _write_skill_md(
+    skills_dir: Path, name: str, *, task_type: str, topic: str, description: str, content_body: str
+) -> None:
     """Write SKILL.md via raw frontmatter(模拟 skill_manage save 结果)."""
     skill_dir = skills_dir / "self-built" / name
     skill_dir.mkdir(parents=True, exist_ok=True)
@@ -75,18 +76,38 @@ def e2e_fixture(tmp_path, monkeypatch):
     skills_dir.mkdir()
 
     # Seed 4 raw SKILL.md 文件
-    _write_skill_md(skills_dir, "dev-tiling", task_type="develop", topic="tiling",
-                    description="Tiling skill for develop",
-                    content_body=VALID_BODY)
-    _write_skill_md(skills_dir, "dev-runtime", task_type="develop", topic="runtime",
-                    description="Runtime skill for develop",
-                    content_body=VALID_BODY)
-    _write_skill_md(skills_dir, "mig-tiling", task_type="migrate", topic="tiling",
-                    description="Tiling skill for migrate",
-                    content_body=VALID_BODY)
-    _write_skill_md(skills_dir, "mig-cuda", task_type="migrate", topic="cuda",
-                    description="CUDA frontend migration",
-                    content_body=VALID_BODY)
+    _write_skill_md(
+        skills_dir,
+        "dev-tiling",
+        task_type="develop",
+        topic="tiling",
+        description="Tiling skill for develop",
+        content_body=VALID_BODY,
+    )
+    _write_skill_md(
+        skills_dir,
+        "dev-runtime",
+        task_type="develop",
+        topic="runtime",
+        description="Runtime skill for develop",
+        content_body=VALID_BODY,
+    )
+    _write_skill_md(
+        skills_dir,
+        "mig-tiling",
+        task_type="migrate",
+        topic="tiling",
+        description="Tiling skill for migrate",
+        content_body=VALID_BODY,
+    )
+    _write_skill_md(
+        skills_dir,
+        "mig-cuda",
+        task_type="migrate",
+        topic="cuda",
+        description="CUDA frontend migration",
+        content_body=VALID_BODY,
+    )
 
     # SkillIndex tmp
     idx = SkillIndex(
@@ -95,8 +116,10 @@ def e2e_fixture(tmp_path, monkeypatch):
         vector_store_dir=str(tmp_path / "vectors"),
     )
     monkeypatch.setattr(
-        type(idx), "embedding_model",
-        property(lambda self: None), raising=True,
+        type(idx),
+        "embedding_model",
+        property(lambda self: None),
+        raising=True,
     )
 
     # 注册同名 SkillsIndex row(task_type/topic 列)
@@ -108,7 +131,8 @@ def e2e_fixture(tmp_path, monkeypatch):
     ]:
         idx.add_skill(
             Skill(name=s_name, description=s_desc, content="c"),
-            task_type=s_tt, topic=s_tp,
+            task_type=s_tt,
+            topic=s_tp,
         )
 
     monkeypatch.setattr(smt, "_make_skill_index", lambda: idx, raising=True)
@@ -144,27 +168,39 @@ def test_e2e_search_then_layer6_route(e2e_fixture):
     monkey = pytest.MonkeyPatch()
 
     # 关键: simulate PhaseRunner injection
-    monkey.setattr(pb, "_load_self_built_skills", lambda storage: [
-        CannbotSkill(
-            name="dev-tiling", description="Tiling skill for develop",
-            body="", base_dir=Path("/tmp/_fake"),
-            frontmatter={"ascend_op_agent": {"task_type": "develop", "topic": "tiling"}},
-        ),
-        CannbotSkill(
-            name="dev-runtime", description="Runtime skill for develop",
-            body="", base_dir=Path("/tmp/_fake"),
-            frontmatter={"ascend_op_agent": {"task_type": "develop", "topic": "runtime"}},
-        ),
-        CannbotSkill(
-            name="mig-cuda", description="CUDA frontend", body="",
-            base_dir=Path("/tmp/_fake"),
-            frontmatter={"ascend_op_agent": {"task_type": "migrate", "topic": "cuda"}},
-        ),
-    ])
+    monkey.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [
+            CannbotSkill(
+                name="dev-tiling",
+                description="Tiling skill for develop",
+                body="",
+                base_dir=Path("/tmp/_fake"),
+                frontmatter={"ascend_op_agent": {"task_type": "develop", "topic": "tiling"}},
+            ),
+            CannbotSkill(
+                name="dev-runtime",
+                description="Runtime skill for develop",
+                body="",
+                base_dir=Path("/tmp/_fake"),
+                frontmatter={"ascend_op_agent": {"task_type": "develop", "topic": "runtime"}},
+            ),
+            CannbotSkill(
+                name="mig-cuda",
+                description="CUDA frontend",
+                body="",
+                base_dir=Path("/tmp/_fake"),
+                frontmatter={"ascend_op_agent": {"task_type": "migrate", "topic": "cuda"}},
+            ),
+        ],
+    )
 
     cannbot = "## Available Skills (phase=design)\n\n- **arch**: desc\n"
     out = pb._build_skills_layer(
-        override=cannbot, task_type="develop", recent_loads=None,
+        override=cannbot,
+        task_type="develop",
+        recent_loads=None,
     )
     lines = _skill_lines(out)
     assert "dev-tiling" in lines
@@ -182,20 +218,29 @@ def test_e2e_search_then_layer6_route(e2e_fixture):
 def test_e2e_recent_loads_preserves_order(e2e_fixture, monkeypatch):
     """R5b: recent_loads=[dev-runtime, dev-tiling] → 顺序保留(非字母)."""
     pb = PromptBuilder()
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        CannbotSkill(
-            name="dev-tiling", description="d", body="",
-            base_dir=Path("/tmp/_fake"),
-            frontmatter={"ascend_op_agent": {"task_type": "develop", "topic": "tiling"}},
-        ),
-        CannbotSkill(
-            name="dev-runtime", description="d", body="",
-            base_dir=Path("/tmp/_fake"),
-            frontmatter={"ascend_op_agent": {"task_type": "develop", "topic": "runtime"}},
-        ),
-    ])
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [
+            CannbotSkill(
+                name="dev-tiling",
+                description="d",
+                body="",
+                base_dir=Path("/tmp/_fake"),
+                frontmatter={"ascend_op_agent": {"task_type": "develop", "topic": "tiling"}},
+            ),
+            CannbotSkill(
+                name="dev-runtime",
+                description="d",
+                body="",
+                base_dir=Path("/tmp/_fake"),
+                frontmatter={"ascend_op_agent": {"task_type": "develop", "topic": "runtime"}},
+            ),
+        ],
+    )
     out = pb._build_skills_layer(
-        override=None, task_type="develop",
+        override=None,
+        task_type="develop",
         recent_loads=["dev-runtime", "dev-tiling"],  # 反字母序
     )
     lines = _skill_lines(out)
@@ -210,17 +255,25 @@ def test_e2e_recent_loads_preserves_order(e2e_fixture, monkeypatch):
 def test_e2e_layer6_caps_to_10(e2e_fixture, monkeypatch):
     """12 self-built skills (all task_type=develop) → Layer 6 渲染只前 10."""
     pb = PromptBuilder()
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        CannbotSkill(
-            name=f"skill-{i:02d}", description=f"d{i}", body="",
-            base_dir=Path("/tmp/_fake"),
-            frontmatter={"ascend_op_agent": {"task_type": "develop", "topic": "t"}},
-        )
-        for i in range(12)
-    ])
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [
+            CannbotSkill(
+                name=f"skill-{i:02d}",
+                description=f"d{i}",
+                body="",
+                base_dir=Path("/tmp/_fake"),
+                frontmatter={"ascend_op_agent": {"task_type": "develop", "topic": "t"}},
+            )
+            for i in range(12)
+        ],
+    )
     cannbot = "## Available Skills (phase=design)\n\n- **x**: d\n"
     out = pb._build_skills_layer(
-        override=cannbot, task_type="develop", recent_loads=None,
+        override=cannbot,
+        task_type="develop",
+        recent_loads=None,
     )
     self_built_names = [n for n in _skill_lines(out) if n.startswith("skill-")]
     assert len(self_built_names) == HERMES_LAYER_LIMIT  # 10
@@ -239,16 +292,23 @@ def test_e2e_r7_cannbot_then_self_built(e2e_fixture):
     """完整 R7 验证:cannbot phase header 在前, self-built header 在后."""
     pb = PromptBuilder()
     monkey = pytest.MonkeyPatch()
-    monkey.setattr(pb, "_load_self_built_skills", lambda storage: [
-        CannbotSkill(
-            name="dev-tiling", description="d", body="",
-            base_dir=Path("/tmp/_fake"),
-            frontmatter={"ascend_op_agent": {"task_type": "develop", "topic": "tiling"}},
-        ),
-    ])
+    monkey.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [
+            CannbotSkill(
+                name="dev-tiling",
+                description="d",
+                body="",
+                base_dir=Path("/tmp/_fake"),
+                frontmatter={"ascend_op_agent": {"task_type": "develop", "topic": "tiling"}},
+            ),
+        ],
+    )
     cannbot = "## Available Skills (phase=design)\n\n- **ascendc-tiling-design**: d\n"
     out = pb._build_skills_layer(
-        override=cannbot, task_type="develop",
+        override=cannbot,
+        task_type="develop",
     )
     cannbot_idx = out.index("## Available Skills (phase=design)")
     self_built_idx = out.index("## Available Skills (self-built)")
@@ -266,7 +326,8 @@ def test_e2e_r3_dormant_default_no_section(e2e_fixture):
     """R3 默认 enabled=False → render_system_prompt_with_self_check 无变化."""
     base = "## Layer 6\n- **x**: d\n"
     out = render_system_prompt_with_self_check(
-        base, SkillSelfCheckConfig(enabled=False, threshold=20),
+        base,
+        SkillSelfCheckConfig(enabled=False, threshold=20),
     )
     assert out == base
 
@@ -280,7 +341,8 @@ def test_e2e_r3_trigger_when_skill_count_exceeds(monkeypatch):
     )
     base = "## Layer 6\n- **x**: d\n"
     out = render_system_prompt_with_self_check(
-        base, SkillSelfCheckConfig(enabled=True, threshold=20),
+        base,
+        SkillSelfCheckConfig(enabled=True, threshold=20),
     )
     # R3 段必须在
     assert "## Skill Self-Check (R3)" in out
@@ -297,7 +359,8 @@ def test_e2e_r3_no_trigger_when_below(monkeypatch):
     )
     base = "## Layer 6\n- **x**: d\n"
     out = render_system_prompt_with_self_check(
-        base, SkillSelfCheckConfig(enabled=True, threshold=20),
+        base,
+        SkillSelfCheckConfig(enabled=True, threshold=20),
     )
     assert "## Skill Self-Check (R3)" not in out
 

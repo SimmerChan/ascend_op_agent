@@ -98,7 +98,5 @@ class TaskRouter:
         # develop type → 转 op: 调用 PhaseRunner(insertion point 决策,F3)。
         # U1:把 task_type 传给 invoke,内部写入 state["task_type"],下游 LLM 节点
         # 从 state.get("task_type") 取出来 → AIAgent → PromptBuilder(Layer 6 降级前置)。
-        state = self.orchestrator.invoke(
-            user_input, thread_id=tid, task_type=task.type
-        )
+        state = self.orchestrator.invoke(user_input, thread_id=tid, task_type=task.type)
         return {"thread_id": tid, "state": state}

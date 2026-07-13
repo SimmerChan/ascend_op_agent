@@ -484,6 +484,7 @@ def _make_skill_index() -> Any:
     to inject a tmp-index without going through sentence-transformers loads.
     """
     from ascend_op_agent.skills.index import SkillIndex
+
     return SkillIndex()
 
 
@@ -548,12 +549,14 @@ def _action_search(args: SearchSkillsArgs) -> dict[str, Any]:
         storage = SkillStorage()
         loaded = storage.load_skill(s.name)
         meta = (loaded.metadata or {}).get("ascend_op_agent", {}) if loaded else {}
-        results.append({
-            "name": s.name,
-            "description": s.description,
-            "task_type": meta.get("task_type"),
-            "topic": meta.get("topic"),
-        })
+        results.append(
+            {
+                "name": s.name,
+                "description": s.description,
+                "task_type": meta.get("task_type"),
+                "topic": meta.get("topic"),
+            }
+        )
     return {"success": True, "data": results}
 
 

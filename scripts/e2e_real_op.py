@@ -440,7 +440,7 @@ def _setup_scaffold_only(local_workdir: Path) -> None:
         for item in SCAFFOLD_DIR.iterdir():
             dest = op_dir / item.name
             if item.is_dir():
-                shutil.copytree(item, dest)
+                shutil.copytree(item, dest, ignore_dangling_symlinks=True)
             else:
                 shutil.copy2(item, dest)
         print(f"[setup] scaffold copied once from {SCAFFOLD_DIR} to {op_dir}")
@@ -470,7 +470,7 @@ def _do_one_run_stress(
         for item in SCAFFOLD_DIR.iterdir():
             dest = op_dir / item.name
             if item.is_dir():
-                shutil.copytree(item, dest)
+                shutil.copytree(item, dest, ignore_dangling_symlinks=True)
             else:
                 shutil.copy2(item, dest)
 
@@ -526,7 +526,7 @@ def _do_one_run(
         for item in SCAFFOLD_DIR.iterdir():
             dest = op_dir / item.name
             if item.is_dir():
-                shutil.copytree(item, dest)
+                shutil.copytree(item, dest, ignore_dangling_symlinks=True)
             else:
                 shutil.copy2(item, dest)
         if run_index <= 1:

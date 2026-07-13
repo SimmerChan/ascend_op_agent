@@ -50,11 +50,7 @@ class TestAgentResponse:
 
     def test_agent_response_structure(self):
         """测试 AgentResponse 结构"""
-        response: AgentResponse = {
-            "status": "completed",
-            "response": "test response",
-            "data": None
-        }
+        response: AgentResponse = {"status": "completed", "response": "test response", "data": None}
 
         assert response["status"] == "completed"
         assert response["response"] == "test response"
@@ -65,7 +61,7 @@ class TestAgentResponse:
         response: AgentResponse = {
             "status": "waiting_confirmation",
             "response": None,
-            "data": {"type": "confirm", "options": ["yes", "no"]}
+            "data": {"type": "confirm", "options": ["yes", "no"]},
         }
 
         assert response["status"] == "waiting_confirmation"

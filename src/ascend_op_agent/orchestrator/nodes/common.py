@@ -65,9 +65,7 @@ def make_llm_node(
         Node —— PhaseRunner 直接消费
     """
     if agent_factory is None:
-        raise ValueError(
-            "agent_factory is required (use lambda for production wiring)"
-        )
+        raise ValueError("agent_factory is required (use lambda for production wiring)")
 
     def _node(state: dict) -> dict:
         # 1. HITL 恢复:幂等跳过 LLM 调用
@@ -99,9 +97,7 @@ def make_llm_node(
         user_input = ""
         messages = state.get("messages", [])
         if messages:
-            first_user = next(
-                (m for m in messages if m.get("role") == "user"), None
-            )
+            first_user = next((m for m in messages if m.get("role") == "user"), None)
             if first_user is not None:
                 user_input = first_user.get("content", "")
 
@@ -169,6 +165,7 @@ def make_llm_node(
                 # lang 可选: cpp / c++ / c / cmake / bash / sh / text / ini
                 # 路径注释前缀: `//` (cpp/c) 或 `#` (cmake/bash/ini)
                 import re
+
                 for m_re in re.finditer(
                     r"```(?:cpp|c\+\+|c|cmake|bash|sh|text|ini)?\s*\n(?P<body>.*?)\n```",
                     c,
@@ -178,9 +175,7 @@ def make_llm_node(
                     # 路径注释: // /path 或 # /path(支持跨行,避免 shebang 占用第一行)
                     # 路径必须以 / 开头(absolute),避免误匹配 `set -e`/`# comment` 等普通注释
                     # 搜前 500 字符(覆盖 bash 的 shebang 偏移)
-                    pm = re.search(
-                        r"(?://|#)\s*(/[/\w.\-]+\.\S+)", body[:500]
-                    )
+                    pm = re.search(r"(?://|#)\s*(/[/\w.\-]+\.\S+)", body[:500])
                     if not pm:
                         continue
                     path = pm.group(1)
@@ -196,6 +191,7 @@ def make_llm_node(
                     # rsync 一个空目录,LLM 输出不到 910B)。try/except 保护:测试无 I/O 不阻塞。
                     try:
                         from pathlib import Path as _P
+
                         _p = _P(path)
                         if _p.is_absolute() and not _p.exists():
                             _p.parent.mkdir(parents=True, exist_ok=True)
@@ -226,9 +222,7 @@ def make_llm_node(
                 )
 
                 thread_id = state.get("thread_id", "")
-                used = extract_used_skills(
-                    list(getattr(agent, "_tool_calls_log", []))
-                )
+                used = extract_used_skills(list(getattr(agent, "_tool_calls_log", [])))
                 reg = SkillUsageRegistry.instance()
                 reg.record_load(thread_id, phase, skill_names)
                 reg.record_use(thread_id, phase, used)
@@ -240,9 +234,8 @@ def make_llm_node(
                 }
             except Exception as e:  # 跟踪不应阻塞主流程
                 import logging as _logging
-                _logging.getLogger(__name__).warning(
-                    f"skill tracking failed (phase={phase}): {e}"
-                )
+
+                _logging.getLogger(__name__).warning(f"skill tracking failed (phase={phase}): {e}")
 
         return update
 

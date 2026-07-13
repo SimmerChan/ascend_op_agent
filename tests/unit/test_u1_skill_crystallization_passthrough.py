@@ -367,7 +367,9 @@ def _fake_config_for_agent() -> Any:
     return _Cfg()
 
 
-def test_ai_agent_run_conversation_stores_task_type_and_passes_to_prompt_builder(tmp_path, monkeypatch) -> None:
+def test_ai_agent_run_conversation_stores_task_type_and_passes_to_prompt_builder(
+    tmp_path, monkeypatch
+) -> None:
     """``AIAgent.run_conversation(..., task_type='develop')``:
 
     1. 存 ``self._current_task_type = 'develop'``
@@ -499,7 +501,9 @@ def test_list_cannbot_skill_names_returns_set_of_strings(cannbot_available: bool
         assert n  # 非空
 
 
-def test_list_cannbot_skill_names_matches_skill_bundles_known_paths(cannbot_available: bool) -> None:
+def test_list_cannbot_skill_names_matches_skill_bundles_known_paths(
+    cannbot_available: bool,
+) -> None:
     """已知 vendored skill 路径对应的 frontmatter name 都应出现。"""
     if not cannbot_available:
         pytest.skip("cannbot-skills submodule not initialized")
@@ -520,9 +524,7 @@ def test_list_cannbot_skill_names_matches_skill_bundles_known_paths(cannbot_avai
         "ascendc-precision",
         "pypto-precision",
     )
-    matched = sum(
-        1 for n in names for s in expected_substrings if s in n
-    )
+    matched = sum(1 for n in names for s in expected_substrings if s in n)
     # 至少 6 个核心 skill 名命中(避免硬编码 10 —— 后续 cannbot 改名可放宽)
     assert matched >= 6, f"only {matched} known names in {names}"
 
@@ -582,6 +584,7 @@ def test_list_cannbot_skill_names_explicit_root_does_not_use_cache(tmp_path, mon
 
     # monkey-patch SKILL_BUNDLES 以含一个虚拟 skill 路径
     import ascend_op_agent.orchestrator.cannbot_loader as cl
+
     original_bundles = cl.SKILL_BUNDLES
     monkeypatch.setattr(
         cl,
@@ -625,6 +628,7 @@ def test_list_cannbot_skill_names_explicit_root_skips_unreadable(tmp_path, monke
     # 不创建 SKILL.md
 
     import ascend_op_agent.orchestrator.cannbot_loader as cl
+
     original_bundles = cl.SKILL_BUNDLES
     monkeypatch.setattr(
         cl,

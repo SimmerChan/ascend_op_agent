@@ -38,9 +38,7 @@ def test_build_skill_bundle_returns_loaded_skills_for_design() -> None:
     assert len(skills) > 0
     names = {s.name for s in skills}
     # SKILL_BUNDLES 里 (new_dev, design) 列了 3 个 skill
-    assert "ascendc-tiling-design" in names or any(
-        "tiling-design" in n for n in names
-    )
+    assert "ascendc-tiling-design" in names or any("tiling-design" in n for n in names)
 
 
 def test_render_skill_bundle_text_empty_returns_empty_string() -> None:
@@ -91,10 +89,17 @@ class _FakeAgent:
     def __init__(self) -> None:
         self._h: list[dict] = []
         self.captured_overrides: list[Any] = []
+
         class _Mem:
-            def __init__(self): self._p = {}
-            def add(self, p, c): self._p.setdefault(p, []).append(c)
-            def get(self, p): return list(self._p.get(p, []))
+            def __init__(self):
+                self._p = {}
+
+            def add(self, p, c):
+                self._p.setdefault(p, []).append(c)
+
+            def get(self, p):
+                return list(self._p.get(p, []))
+
         self.memory = _Mem()
 
     def run_conversation(
@@ -207,9 +212,7 @@ def test_skill_bundle_text_contains_cannbot_skill_names(tmp_path) -> None:
     non_empty = [o for o in analyze_overrides if o]
     assert len(non_empty) >= 1
     # 至少含一个 cannbot skill 名
-    has_cannbot_skill_name = any(
-        "tiling-design" in o or "npu-arch" in o for o in non_empty
-    )
+    has_cannbot_skill_name = any("tiling-design" in o or "npu-arch" in o for o in non_empty)
     assert has_cannbot_skill_name, f"cannbot skill name missing in {non_empty}"
 
 

@@ -109,9 +109,7 @@ def test_precision_metrics_to_dict_round_trip() -> None:
     d = metrics.to_dict()
     assert d["cos_sim"] == pytest.approx(0.9999)
     assert d["allclose"] is False
-    assert set(d.keys()) == {
-        "abs_err_max", "abs_err_mean", "rel_err_max", "cos_sim", "allclose"
-    }
+    assert set(d.keys()) == {"abs_err_max", "abs_err_mean", "rel_err_max", "cos_sim", "allclose"}
 
 
 # ---- run_precision ----
@@ -138,9 +136,7 @@ def test_run_precision_archives_json(tmp_path) -> None:
     """归档目录存在时,写 precision_*.json 文件。"""
     archive = tmp_path / "archive"
     executor = NpuExecutor(archive_dir=archive)
-    executor.run_precision("add", [
-        {"golden": np.array([1.0]), "actual": np.array([1.0])}
-    ])
+    executor.run_precision("add", [{"golden": np.array([1.0]), "actual": np.array([1.0])}])
     files = list(archive.glob("precision_*.json"))
     assert len(files) == 1
     data = json.loads(files[0].read_text())
@@ -177,10 +173,8 @@ def test_compile_cann_not_available_returns_failure(tmp_path) -> None:
     # 模拟无 CANN env
     with patch.dict("os.environ", {}, clear=False):
         import os
-        env_backup = {
-            k: os.environ.pop(k, None)
-            for k in ("ASCEND_OPP_PATH", "CANN_HOME")
-        }
+
+        env_backup = {k: os.environ.pop(k, None) for k in ("ASCEND_OPP_PATH", "CANN_HOME")}
         try:
             assert NpuExecutor.is_cann_available() is False
             outcome = executor.compile(str(operator_path))
@@ -200,10 +194,12 @@ def test_compile_success_mock_subprocess(tmp_path) -> None:
 
     executor = NpuExecutor()
     fake_completed = _FakeCompletedProcess(returncode=0, stdout="build ok", stderr="")
-    with patch("ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available",
-               return_value=True), \
-         patch("ascend_op_agent.orchestrator.npu_exec.subprocess.run",
-               return_value=fake_completed):
+    with (
+        patch(
+            "ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available", return_value=True
+        ),
+        patch("ascend_op_agent.orchestrator.npu_exec.subprocess.run", return_value=fake_completed),
+    ):
         outcome = executor.compile(str(operator_path))
     assert outcome.success is True
     assert outcome.return_code == 0
@@ -217,13 +213,13 @@ def test_compile_failure_mock_subprocess(tmp_path) -> None:
     operator_path.write_text("// kernel")
 
     executor = NpuExecutor()
-    fake_completed = _FakeCompletedProcess(
-        returncode=1, stdout="", stderr="syntax error in line 5"
-    )
-    with patch("ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available",
-               return_value=True), \
-         patch("ascend_op_agent.orchestrator.npu_exec.subprocess.run",
-               return_value=fake_completed):
+    fake_completed = _FakeCompletedProcess(returncode=1, stdout="", stderr="syntax error in line 5")
+    with (
+        patch(
+            "ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available", return_value=True
+        ),
+        patch("ascend_op_agent.orchestrator.npu_exec.subprocess.run", return_value=fake_completed),
+    ):
         outcome = executor.compile(str(operator_path))
     assert outcome.success is False
     assert outcome.return_code == 1
@@ -233,14 +229,20 @@ def test_compile_failure_mock_subprocess(tmp_path) -> None:
 def test_compile_timeout(tmp_path) -> None:
     """subprocess 抛 TimeoutExpired → success=False,return_code=124。"""
     import subprocess as sp
+
     operator_path = tmp_path / "op.cpp"
     operator_path.write_text("// kernel")
 
     executor = NpuExecutor(compile_timeout=1)
-    with patch("ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available",
-               return_value=True), \
-         patch("ascend_op_agent.orchestrator.npu_exec.subprocess.run",
-               side_effect=sp.TimeoutExpired(cmd="bash build.sh", timeout=1)):
+    with (
+        patch(
+            "ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available", return_value=True
+        ),
+        patch(
+            "ascend_op_agent.orchestrator.npu_exec.subprocess.run",
+            side_effect=sp.TimeoutExpired(cmd="bash build.sh", timeout=1),
+        ),
+    ):
         outcome = executor.compile(str(operator_path))
     assert outcome.success is False
     assert outcome.return_code == 124
@@ -253,10 +255,14 @@ def test_compile_binary_not_found(tmp_path) -> None:
     operator_path.write_text("// kernel")
 
     executor = NpuExecutor()
-    with patch("ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available",
-               return_value=True), \
-         patch("ascend_op_agent.orchestrator.npu_exec.subprocess.run",
-               side_effect=FileNotFoundError()):
+    with (
+        patch(
+            "ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available", return_value=True
+        ),
+        patch(
+            "ascend_op_agent.orchestrator.npu_exec.subprocess.run", side_effect=FileNotFoundError()
+        ),
+    ):
         outcome = executor.compile(str(operator_path))
     assert outcome.success is False
     assert outcome.return_code == 127
@@ -271,10 +277,12 @@ def test_compile_to_dict_archives(tmp_path) -> None:
 
     executor = NpuExecutor(archive_dir=archive)
     fake_completed = _FakeCompletedProcess(returncode=0, stdout="ok", stderr="")
-    with patch("ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available",
-               return_value=True), \
-         patch("ascend_op_agent.orchestrator.npu_exec.subprocess.run",
-               return_value=fake_completed):
+    with (
+        patch(
+            "ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available", return_value=True
+        ),
+        patch("ascend_op_agent.orchestrator.npu_exec.subprocess.run", return_value=fake_completed),
+    ):
         result = executor.compile_to_dict(str(operator_path))
     assert result["success"] is True
     files = list(archive.glob("compile_*.json"))
@@ -290,7 +298,10 @@ class _FakeExecutor:
     def __init__(self, compile_result=None, precision_report=None):
         self._compile_result = compile_result or {"success": True, "return_code": 0}
         self._precision_report = precision_report or {
-            "operator_name": "add", "total_cases": 1, "passed_cases": 1, "failed_cases": 0
+            "operator_name": "add",
+            "total_cases": 1,
+            "passed_cases": 1,
+            "failed_cases": 0,
         }
 
     def compile_to_dict(self, *a, **kw):
@@ -318,10 +329,15 @@ def test_make_real_compile_node_writes_compile_result() -> None:
 
 def test_make_real_precision_node_writes_precision_report() -> None:
     """U4: node 调 executor.run_st_driver(走 ST 驱动),写 precision_report。"""
-    executor = _FakeExecutor(precision_report={
-        "operator_name": "softmax", "total_cases": 5, "passed_cases": 5, "failed_cases": 0,
-        "success": True,
-    })
+    executor = _FakeExecutor(
+        precision_report={
+            "operator_name": "softmax",
+            "total_cases": 5,
+            "passed_cases": 5,
+            "failed_cases": 0,
+            "success": True,
+        }
+    )
     node = make_real_precision_node(
         executor=executor,  # type: ignore[arg-type]
         operator_path_resolver=lambda s: "/tmp/op_test",
@@ -336,9 +352,14 @@ def test_make_real_precision_node_writes_precision_report() -> None:
 
 def test_make_real_precision_node_default_name_resolver_falls_back_to_op_info() -> None:
     """U4: operator_name_resolver=None 时,从 op_info.name 取,fallback 'unknown'。"""
-    executor = _FakeExecutor(precision_report={
-        "operator_name": "unknown", "total_cases": 0, "passed_cases": 0, "failed_cases": 0
-    })
+    executor = _FakeExecutor(
+        precision_report={
+            "operator_name": "unknown",
+            "total_cases": 0,
+            "passed_cases": 0,
+            "failed_cases": 0,
+        }
+    )
     node = make_real_precision_node(
         executor=executor,  # type: ignore[arg-type]
         operator_path_resolver=lambda s: "/tmp/op",
@@ -350,9 +371,9 @@ def test_make_real_precision_node_default_name_resolver_falls_back_to_op_info() 
 
 def test_make_real_precision_node_skips_when_compile_failed() -> None:
     """U4: compile_result.success=False → 跳过 ST 驱动,返回 compile_not_ready。"""
-    executor = _FakeExecutor(precision_report={
-        "operator_name": "x", "total_cases": 99, "passed_cases": 99
-    })
+    executor = _FakeExecutor(
+        precision_report={"operator_name": "x", "total_cases": 99, "passed_cases": 99}
+    )
     node = make_real_precision_node(
         executor=executor,  # type: ignore[arg-type]
         operator_path_resolver=lambda s: "/tmp/op",
@@ -367,7 +388,9 @@ def test_make_real_precision_node_skips_when_compile_failed() -> None:
 
 
 def test_operator_path_from_code_result_extracts_first_file_path() -> None:
-    state = {"code_result": {"files": [{"path": "/ops/add/kernel.cpp"}, {"path": "/ops/add/op.cpp"}]}}
+    state = {
+        "code_result": {"files": [{"path": "/ops/add/kernel.cpp"}, {"path": "/ops/add/op.cpp"}]}
+    }
     assert operator_path_from_code_result(state) == "/ops/add/kernel.cpp"
 
 
@@ -389,10 +412,17 @@ class _FakeAgent:
     def __init__(self):
         self._h: list = []
         self.captured_input: str = ""
+
         class _Mem:
-            def __init__(self): self._p = {}
-            def add(self, p, c): self._p.setdefault(p, []).append(c)
-            def get(self, p): return list(self._p.get(p, []))
+            def __init__(self):
+                self._p = {}
+
+            def add(self, p, c):
+                self._p.setdefault(p, []).append(c)
+
+            def get(self, p):
+                return list(self._p.get(p, []))
+
         self.memory = _Mem()
 
     def run_conversation(
@@ -411,11 +441,13 @@ def test_make_compile_fix_node_prompt_mentions_compile_result() -> None:
     """compile_fix 节点 task_prompt 含 compile_result / stderr 关键字。"""
     agent = _FakeAgent()
     node = make_compile_fix_node(agent_factory=lambda: agent)
-    node.func({
-        "messages": [{"role": "user", "content": "x"}],
-        "memory_pools": {},
-        "pending_confirmation": None,
-    })
+    node.func(
+        {
+            "messages": [{"role": "user", "content": "x"}],
+            "memory_pools": {},
+            "pending_confirmation": None,
+        }
+    )
     assert "compile_result" in agent.captured_input
     assert "stderr" in agent.captured_input
 
@@ -423,11 +455,13 @@ def test_make_compile_fix_node_prompt_mentions_compile_result() -> None:
 def test_make_precision_fix_node_prompt_mentions_precision_report() -> None:
     agent = _FakeAgent()
     node = make_precision_fix_node(agent_factory=lambda: agent)
-    node.func({
-        "messages": [{"role": "user", "content": "x"}],
-        "memory_pools": {},
-        "pending_confirmation": None,
-    })
+    node.func(
+        {
+            "messages": [{"role": "user", "content": "x"}],
+            "memory_pools": {},
+            "pending_confirmation": None,
+        }
+    )
     assert "precision_report" in agent.captured_input
 
 
@@ -438,16 +472,16 @@ def test_make_compile_fix_loop_node_writes_named_result() -> None:
     """compile_fix_loop 节点跑完写 state['compile_fix_loop_result']。"""
     review_node = Node(name="review", func=lambda s: {"clean": True, "raw_response": "LGTM"})
     fix_node = Node(name="fix", func=lambda s: {})
-    loop_node = make_compile_fix_loop_node(
-        review_node=review_node, fix_node=fix_node, max_rounds=2
-    )
+    loop_node = make_compile_fix_loop_node(review_node=review_node, fix_node=fix_node, max_rounds=2)
     update = loop_node.func({})
     assert "compile_fix_loop_result" in update
     assert update["compile_fix_loop_result"]["status"] == "done"
 
 
 def test_make_precision_fix_loop_node_writes_named_result() -> None:
-    review_node = Node(name="review", func=lambda s: {"clean": False, "issues": ["x"], "raw_response": "broken"})
+    review_node = Node(
+        name="review", func=lambda s: {"clean": False, "issues": ["x"], "raw_response": "broken"}
+    )
     fix_node = Node(name="fix", func=lambda s: {})
     loop_node = make_precision_fix_loop_node(
         review_node=review_node, fix_node=fix_node, max_rounds=1
@@ -614,6 +648,7 @@ def test_compile_remote_timeout() -> None:
 
 def test_compile_remote_ssh_exception_returns_126() -> None:
     """SSH execute 抛异常 → return_code=126,不向上抛。"""
+
     class _ExplodingSSHEnv(_FakeSSHEnv):
         def execute(self, *a, **kw):
             cmd = a[0] if a else kw.get("command", "")
@@ -785,6 +820,7 @@ def test_run_st_driver_local_cann_unavailable_returns_failure() -> None:
     executor = NpuExecutor()
     with patch.dict("os.environ", {}, clear=False):
         import os as _os
+
         backup = {k: _os.environ.pop(k, None) for k in ("ASCEND_OPP_PATH", "CANN_HOME")}
         try:
             report = executor.run_st_driver("/tmp/op", "add_example")
@@ -865,7 +901,6 @@ def test_run_st_driver_remote_empty_path_returns_failure() -> None:
     assert "operator_path is empty" in report["error"]
 
 
-
 # ---- U3 cosmetic compile success (build.sh false negative) ----
 
 
@@ -915,15 +950,18 @@ def test_compile_success_mock_subprocess_cosmetic_pass(tmp_path) -> None:
     executor = NpuExecutor()
     fake_completed = _FakeCompletedProcess(
         returncode=1,
-        stdout='custom_opp.run successfully created.\n[ERROR] Package not found',
+        stdout="custom_opp.run successfully created.\n[ERROR] Package not found",
         stderr="",
     )
-    with patch(
-        "ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available",
-        return_value=True,
-    ), patch(
-        "ascend_op_agent.orchestrator.npu_exec.subprocess.run",
-        return_value=fake_completed,
+    with (
+        patch(
+            "ascend_op_agent.orchestrator.npu_exec.NpuExecutor.is_cann_available",
+            return_value=True,
+        ),
+        patch(
+            "ascend_op_agent.orchestrator.npu_exec.subprocess.run",
+            return_value=fake_completed,
+        ),
     ):
         outcome = executor.compile(str(operator_path))
     assert outcome.success is True  # cosmetic pass

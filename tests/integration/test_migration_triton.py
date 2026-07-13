@@ -71,6 +71,7 @@ def _factory_from(responses: list[str]):
     def _factory() -> _FakeAgent:
         agent_responses = queue[:] if (queue := list(responses)) else ["fallback"]
         return _FakeAgent(responses=agent_responses)
+
     return _factory
 
 
@@ -111,6 +112,7 @@ _NO_JSON_RESPONSE = "I cannot parse this"
 
 def test_triton_frontend_node_parses_json_into_state() -> None:
     """mock LLM 返回 JSON → op_info + design_doc.arch_mapping 写入 state。"""
+
     def factory() -> _FakeAgent:
         return _FakeAgent(responses=[_TRITON_JSON_RESPONSE])
 
@@ -131,6 +133,7 @@ def test_triton_frontend_node_parses_json_into_state() -> None:
 
 def test_triton_frontend_node_parse_error_non_fatal() -> None:
     """LLM 不输出 JSON 时,parse_error 写入 last_phase_result,不阻塞。"""
+
     def factory() -> _FakeAgent:
         return _FakeAgent(responses=[_NO_JSON_RESPONSE])
 
@@ -204,9 +207,7 @@ def test_triton_migration_invoke_interrupts_at_design(tmp_path) -> None:
 def test_triton_migration_resume_completes_all_phases(tmp_path) -> None:
     """design 批准后 → ... → delivery_mode HITL → resume(sample) → done。"""
     store = CheckpointStore(tmp_path / "ck.db")
-    factory = _factory_from(
-        [_TRITON_JSON_RESPONSE, "design doc", "kernel.cpp", "LGTM"]
-    )
+    factory = _factory_from([_TRITON_JSON_RESPONSE, "design doc", "kernel.cpp", "LGTM"])
 
     runner = build_migration_graph(
         store=store,
@@ -336,9 +337,7 @@ def test_real_triton_skill_text_contains_all_5_skill_names(tmp_path) -> None:
 def test_custom_compile_node_factory_works_for_triton(tmp_path) -> None:
     """triton 路径同样支持 compile_node_factory 注入。"""
     store = CheckpointStore(tmp_path / "ck.db")
-    factory = _factory_from(
-        [_TRITON_JSON_RESPONSE, "design doc", "kernel.cpp", "LGTM"]
-    )
+    factory = _factory_from([_TRITON_JSON_RESPONSE, "design doc", "kernel.cpp", "LGTM"])
 
     def custom_compile_factory() -> Node:
         def _real_compile(state: dict) -> dict:
@@ -352,6 +351,7 @@ def test_custom_compile_node_factory_works_for_triton(tmp_path) -> None:
                     "custom": True,
                 },
             }
+
         return Node(name="compile", func=_real_compile)
 
     runner = build_migration_graph(

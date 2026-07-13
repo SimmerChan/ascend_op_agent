@@ -168,8 +168,12 @@ def test_extract_used_skills_handles_missing_path_arg() -> None:
 class _FakeMem:
     def __init__(self):
         self._p = {}
-    def add(self, p, c): self._p.setdefault(p, []).append(c)
-    def get(self, p): return list(self._p.get(p, []))
+
+    def add(self, p, c):
+        self._p.setdefault(p, []).append(c)
+
+    def get(self, p):
+        return list(self._p.get(p, []))
 
 
 class _FakeAgent:
@@ -204,9 +208,7 @@ def test_make_llm_node_records_skill_load_when_skill_names_given(tmp_path) -> No
     root = tmp_path / "cannbot-skills"
     (root / "cuda2ascend-simt").mkdir(parents=True)
     skill_file = root / "cuda2ascend-simt" / "SKILL.md"
-    agent = _FakeAgent(tool_calls=[
-        {"name": "file_read", "args": {"path": str(skill_file)}}
-    ])
+    agent = _FakeAgent(tool_calls=[{"name": "file_read", "args": {"path": str(skill_file)}}])
     node = make_llm_node(
         phase="analyze",
         task_prompt_template="x",
@@ -215,9 +217,11 @@ def test_make_llm_node_records_skill_load_when_skill_names_given(tmp_path) -> No
     )
     # patch extract_used_skills 用我们的 tmp root(避免依赖真实 submodule)
     with patch(
-        "ascend_op_agent.orchestrator.nodes.common.extract_used_skills"
-        if False else
-        "ascend_op_agent.orchestrator.cannbot_loader.CANNBOT_ROOT",
+        (
+            "ascend_op_agent.orchestrator.nodes.common.extract_used_skills"
+            if False
+            else "ascend_op_agent.orchestrator.cannbot_loader.CANNBOT_ROOT"
+        ),
         root,
     ):
         update = node.func(_base_state("t-rec"))

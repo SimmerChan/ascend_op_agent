@@ -80,9 +80,7 @@ class SkillIndex:
         self._embedding_model_name = embedding_model_name or cfg.embedding.model
         self._embedding_dim = embedding_dimension
 
-        self.cache_dir = Path(
-            cache_dir or os.path.expanduser("~/.ascend_op_agent")
-        )
+        self.cache_dir = Path(cache_dir or os.path.expanduser("~/.ascend_op_agent"))
         self.db_path = db_path or str(self.cache_dir / "skills_index.db")
 
         # 确保缓存目录存在
@@ -103,6 +101,7 @@ class SkillIndex:
 
         # 初始化向量存储
         from ascend_op_agent.memory.vector_store import VectorStore
+
         self._vector_store = VectorStore(persist_dir=vector_store_dir)
 
         # 延迟初始化embedding模型（避免测试环境网络问题）
@@ -130,7 +129,8 @@ class SkillIndex:
         self._maybe_restore_from_disk_backup(conn)
 
         # 创建FTS5虚拟表(PR-B 加 task_type + topic 两列)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE VIRTUAL TABLE IF NOT EXISTS skills USING fts5(
                 name,
                 description,
@@ -140,15 +140,18 @@ class SkillIndex:
                 topic,
                 tokenize='porter unicode61'
             )
-        """)
+        """
+        )
 
         # PR-B: schema_meta 表存 schema_version(独立于 FTS5 virtual table)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS schema_meta (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
-        """)
+        """
+        )
         # 写入当前 schema_version(INSERT OR IGNORE 兼容既有)
         cursor.execute(
             "INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', '2')"
@@ -202,16 +205,20 @@ class SkillIndex:
                 pass
             return
         # Restore: 用 backup 中的 rows 重建 skills 表
-        logger.warning(
-            f"Detected interrupted migration, restoring from {backup}"
-        )
+        logger.warning(f"Detected interrupted migration, restoring from {backup}")
         cursor.execute("DELETE FROM skills")
         for r in data.get("rows", []):
             cursor.execute(
                 """INSERT INTO skills (name, description, tags, content, task_type, topic)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (r["name"], r["description"], r.get("tags", ""),
-                 r.get("content", ""), r.get("task_type", ""), r.get("topic", "")),
+                (
+                    r["name"],
+                    r["description"],
+                    r.get("tags", ""),
+                    r.get("content", ""),
+                    r.get("task_type", ""),
+                    r.get("topic", ""),
+                ),
             )
         cursor.execute(
             "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '2')"
@@ -269,9 +276,7 @@ class SkillIndex:
 
     def _do_migration_v1_to_v2(self, conn: sqlite3.Connection, cursor) -> None:
         # 2. backup all rows to disk
-        cursor.execute(
-            "SELECT name, description, tags, content FROM skills"
-        )
+        cursor.execute("SELECT name, description, tags, content FROM skills")
         rows = cursor.fetchall()
         backup = self._migration_backup_path()
         backup_data = {
@@ -279,9 +284,12 @@ class SkillIndex:
             "timestamp": time.time(),
             "rows": [
                 {
-                    "name": r[0], "description": r[1],
-                    "tags": r[2], "content": r[3],
-                    "task_type": "", "topic": "",
+                    "name": r[0],
+                    "description": r[1],
+                    "tags": r[2],
+                    "content": r[3],
+                    "task_type": "",
+                    "topic": "",
                 }
                 for r in rows
             ],
@@ -290,12 +298,14 @@ class SkillIndex:
             json.dump(backup_data, f, ensure_ascii=False)
         # 3. DROP + CREATE 含 6 列
         cursor.execute("DROP TABLE IF EXISTS skills")
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE VIRTUAL TABLE skills USING fts5(
                 name, description, tags, content, task_type, topic,
                 tokenize='porter unicode61'
             )
-        """)
+        """
+        )
         # 4. reinsert (task_type/topic 暂 NULL,迁移期 NULL → 走 name-only fallback)
         for r in rows:
             cursor.execute(
@@ -305,12 +315,14 @@ class SkillIndex:
             )
         # 5. 创建 schema_meta 表 + 写 schema_version + commit
         # (此函数在 _init_db 之前运行,schema_meta 还不存在,需在此创建)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS schema_meta (
                 key TEXT PRIMARY KEY,
                 value TEXT
             )
-        """)
+        """
+        )
         cursor.execute(
             "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '2')"
         )
@@ -553,7 +565,9 @@ class SkillIndex:
         conn.close()
         return [
             Skill(
-                name=r[0], description=r[1], content=r[3],
+                name=r[0],
+                description=r[1],
+                content=r[3],
                 tags=r[2].split(",") if r[2] else [],
             )
             for r in rows
@@ -762,8 +776,7 @@ class SkillIndex:
             rows = cursor.fetchall()
 
             skill_entries = [
-                {"name": row[0], "description": row[1], "tags": row[2]}
-                for row in rows
+                {"name": row[0], "description": row[1], "tags": row[2]} for row in rows
             ]
 
             conn.close()

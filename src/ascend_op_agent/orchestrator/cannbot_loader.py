@@ -24,9 +24,7 @@ from typing import Optional
 
 import yaml
 
-CANNBOT_ROOT = (
-    Path(__file__).parent.parent.parent.parent / "vendor" / "cannbot-skills"
-).resolve()
+CANNBOT_ROOT = (Path(__file__).parent.parent.parent.parent / "vendor" / "cannbot-skills").resolve()
 
 _REFERENCE_DIR_CANDIDATES = ("references", "reference")
 _FRONTMATTER_DELIMITER = "---"
@@ -49,13 +47,13 @@ def _parse_frontmatter(content: str) -> tuple[dict, str]:
     if not content.startswith(_FRONTMATTER_DELIMITER):
         return {}, content
 
-    rest = content[len(_FRONTMATTER_DELIMITER):]
+    rest = content[len(_FRONTMATTER_DELIMITER) :]
     end_match = re.search(r"^---\s*$", rest, re.MULTILINE)
     if not end_match:
         return {}, content
 
     fm_text = rest[: end_match.start()]
-    body = rest[end_match.end():].lstrip("\n")
+    body = rest[end_match.end() :].lstrip("\n")
     fm = yaml.safe_load(fm_text) or {}
     if not isinstance(fm, dict):
         return {}, content
@@ -196,13 +194,13 @@ SKILL_BUNDLES: dict[tuple[str, str], list[str]] = {
 # 沿用 PR-A U1 草案的 lossy 归类(design/review→kernel_pattern, codegen/compile_fix→build_env)
 # 完整覆盖现有 7 bucket 让 R5b 路由可直接查表;lossy 归类 + 可追溯性。
 CANBOT_BUNDLE_MAP: dict[tuple[str, str], tuple[str, str]] = {
-    ("migration", "cuda_frontend"):  ("migrate", "cuda_frontend"),
+    ("migration", "cuda_frontend"): ("migrate", "cuda_frontend"),
     ("migration", "triton_frontend"): ("migrate", "triton_frontend"),
-    ("new_dev", "design"):           ("develop", "kernel_pattern"),
-    ("new_dev", "codegen"):          ("develop", "build_env"),
-    ("new_dev", "review"):           ("develop", "kernel_pattern"),
-    ("any", "compile_fix"):          ("develop", "build_env"),
-    ("any", "precision_fix"):        ("develop", "precision"),
+    ("new_dev", "design"): ("develop", "kernel_pattern"),
+    ("new_dev", "codegen"): ("develop", "build_env"),
+    ("new_dev", "review"): ("develop", "kernel_pattern"),
+    ("any", "compile_fix"): ("develop", "build_env"),
+    ("any", "precision_fix"): ("develop", "precision"),
 }
 
 
@@ -378,9 +376,7 @@ class SkillUsageRegistry:
                     cls._instance = cls()
         return cls._instance
 
-    def record_load(
-        self, thread_id: str, phase: str, skill_names: list[str]
-    ) -> None:
+    def record_load(self, thread_id: str, phase: str, skill_names: list[str]) -> None:
         """记录某 phase 加载的 skill 名(显式,来自 SKILL_BUNDLES)。
 
         幂等:同 (thread_id, phase) 重复调用覆盖 skill_names,不重复 append。
@@ -402,9 +398,7 @@ class SkillUsageRegistry:
             else:
                 existing.skill_names = list(skill_names)
 
-    def record_use(
-        self, thread_id: str, phase: str, used_skills: list[str]
-    ) -> None:
+    def record_use(self, thread_id: str, phase: str, used_skills: list[str]) -> None:
         """记录 LLM 实际使用的 skill(signal-1: file_read 路径匹配)。
 
         若该 phase 未 record_load 过,自动建一个空 skill_names 的记录。

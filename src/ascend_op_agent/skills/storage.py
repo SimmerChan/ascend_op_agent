@@ -53,9 +53,7 @@ class SkillStorage:
         Args:
             skills_dir: skills根目录
         """
-        self.skills_dir = Path(
-            skills_dir or os.path.expanduser("~/.ascend_op_agent/skills")
-        )
+        self.skills_dir = Path(skills_dir or os.path.expanduser("~/.ascend_op_agent/skills"))
         self.skills_dir.mkdir(parents=True, exist_ok=True)
 
     def save_skill(self, skill: Skill, dimension: str = "template") -> str:
@@ -260,10 +258,9 @@ class SkillStorage:
 
     def skill_exists(self, name: str) -> bool:
         """检查skill是否存在（搜索 flat 与 self-built/）"""
-        return (
-            (self.skills_dir / name / "SKILL.md").exists()
-            or (self.skills_dir / SELF_BUILT_SUBDIR / name / "SKILL.md").exists()
-        )
+        return (self.skills_dir / name / "SKILL.md").exists() or (
+            self.skills_dir / SELF_BUILT_SUBDIR / name / "SKILL.md"
+        ).exists()
 
     def copy_skill(self, src_name: str, dest_name: str) -> Optional[str]:
         """复制skill

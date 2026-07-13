@@ -103,9 +103,13 @@ class PromptBuilder:
         # Layer 6: Skills Index(支持编排器 scope 注入 cannbot skill 包)
         # U3 R5b/R7: 把 recent_loads 一起传给 _build_skills_layer 做分组渲染
         # 和路由命中。
-        layers.append(self._build_skills_layer(
-            skills_layer_override, task_type, recent_loads,
-        ))
+        layers.append(
+            self._build_skills_layer(
+                skills_layer_override,
+                task_type,
+                recent_loads,
+            )
+        )
 
         # Layer 7: Context Files + Timestamp + Env
         layers.append(self._build_context_layer(workspace_path))
@@ -217,12 +221,16 @@ class PromptBuilder:
 
         # ---- R5b 路由命中: 选 self-built 候选 ----
         candidates = self._select_skills_r5b(
-            self_built_skills, task_type=task_type, recent_loads=recent_loads,
+            self_built_skills,
+            task_type=task_type,
+            recent_loads=recent_loads,
         )
 
         # ---- R5b cap: self-built 端到 HERMES_LAYER_LIMIT=10 ----
         if len(candidates) > HERMES_LAYER_LIMIT:
-            candidates = candidates[:HERMES_LAYER_LIMIT]  # 截断(task_type 命中优先 + recent_loads 已 dedupe)
+            candidates = candidates[
+                :HERMES_LAYER_LIMIT
+            ]  # 截断(task_type 命中优先 + recent_loads 已 dedupe)
 
         # ---- R7 分组渲染: cannbot 前 + self-built 后 ----
         if override and candidates:
@@ -310,7 +318,9 @@ class PromptBuilder:
         # (render_skill_bundle_text 在 phase=None 时正好输出 "## Available Skills"
         # 不带 phase 名)
         return text.replace(
-            "## Available Skills", "## Available Skills (self-built)", 1,
+            "## Available Skills",
+            "## Available Skills (self-built)",
+            1,
         )
 
     @staticmethod

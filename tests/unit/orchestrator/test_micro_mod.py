@@ -25,8 +25,11 @@ class _FakeMem:
     def __init__(self):
         self._p = {}
 
-    def add(self, p, c): self._p.setdefault(p, []).append(c)
-    def get(self, p): return list(self._p.get(p, []))
+    def add(self, p, c):
+        self._p.setdefault(p, []).append(c)
+
+    def get(self, p):
+        return list(self._p.get(p, []))
 
 
 class _FakeAgent:
@@ -70,9 +73,7 @@ def test_target_files_absolute_pass_through():
         agent_factory=_factory(agent),
     )
     # 看 prompt 包含绝对路径
-    state = _state_with_scaffold([
-        {"path": "/abs/path/kernel.cpp", "content": "// kernel"}
-    ])
+    state = _state_with_scaffold([{"path": "/abs/path/kernel.cpp", "content": "// kernel"}])
     agent._tool_calls_log = [
         {"name": "file_write", "args": {"path": "/abs/path/kernel.cpp", "content": "// mod"}}
     ]
@@ -83,9 +84,11 @@ def test_target_files_absolute_pass_through():
 
 def test_target_files_relative_resolved_via_operator_dir():
     """相对路径加 operator_dir 前缀;LLM 写回相对路径 → 不在 target_set → unexpected。"""
-    agent = _FakeAgent(tool_calls=[
-        {"name": "file_write", "args": {"path": "/tmp/op/kernel.cpp", "content": "// mod"}}
-    ])
+    agent = _FakeAgent(
+        tool_calls=[
+            {"name": "file_write", "args": {"path": "/tmp/op/kernel.cpp", "content": "// mod"}}
+        ]
+    )
     node = make_micro_mod_node(
         phase="micro_mod",
         target_files=["op_kernel/add_example_arch22.cpp"],  # 相对
@@ -93,12 +96,14 @@ def test_target_files_relative_resolved_via_operator_dir():
         agent_factory=_factory(agent),
         operator_dir="/tmp/op",
     )
-    state = _state_with_scaffold([
-        {"path": "/tmp/op/op_kernel/add_example_arch22.cpp", "content": "// orig"}
-    ])
+    state = _state_with_scaffold(
+        [{"path": "/tmp/op/op_kernel/add_example_arch22.cpp", "content": "// orig"}]
+    )
     update = node.func(state)
     # 相对路径已解析为 /tmp/op/op_kernel/add_example_arch22.cpp
-    assert update["micro_mod_result"]["target_files"] == ["/tmp/op/op_kernel/add_example_arch22.cpp"]
+    assert update["micro_mod_result"]["target_files"] == [
+        "/tmp/op/op_kernel/add_example_arch22.cpp"
+    ]
     # LLM 写的是 /tmp/op/kernel.cpp(不是 target),算 unexpected
     assert "/tmp/op/kernel.cpp" in update["micro_mod_result"]["files_added_unexpected"]
 
@@ -107,20 +112,20 @@ def test_target_files_relative_resolved_via_operator_dir():
 
 
 def test_file_write_in_target_replaces_existing_file():
-    agent = _FakeAgent(tool_calls=[
-        {"name": "file_write", "args": {
-            "path": "/tmp/op/kernel.cpp", "content": "// new"
-        }}
-    ])
+    agent = _FakeAgent(
+        tool_calls=[
+            {"name": "file_write", "args": {"path": "/tmp/op/kernel.cpp", "content": "// new"}}
+        ]
+    )
     node = make_micro_mod_node(
         phase="micro_mod",
         target_files=["/tmp/op/kernel.cpp"],
         instruction="x",
         agent_factory=_factory(agent),
     )
-    state = _state_with_scaffold([
-        {"path": "/tmp/op/kernel.cpp", "content": "// old", "tool": "scaffold_loaded"}
-    ])
+    state = _state_with_scaffold(
+        [{"path": "/tmp/op/kernel.cpp", "content": "// old", "tool": "scaffold_loaded"}]
+    )
     update = node.func(state)
     files = update["code_result"]["files"]
     assert len(files) == 1
@@ -132,18 +137,16 @@ def test_file_write_in_target_replaces_existing_file():
 
 
 def test_file_write_outside_target_marks_unexpected():
-    agent = _FakeAgent(tool_calls=[
-        {"name": "file_write", "args": {"path": "/tmp/op/random.txt", "content": "x"}}
-    ])
+    agent = _FakeAgent(
+        tool_calls=[{"name": "file_write", "args": {"path": "/tmp/op/random.txt", "content": "x"}}]
+    )
     node = make_micro_mod_node(
         phase="micro_mod",
         target_files=["/tmp/op/kernel.cpp"],
         instruction="x",
         agent_factory=_factory(agent),
     )
-    state = _state_with_scaffold([
-        {"path": "/tmp/op/kernel.cpp", "content": "// orig"}
-    ])
+    state = _state_with_scaffold([{"path": "/tmp/op/kernel.cpp", "content": "// orig"}])
     update = node.func(state)
     # 失败:没改 target
     assert update["micro_mod_result"]["success"] is False
@@ -160,9 +163,7 @@ def test_no_file_write_calls_returns_success_false():
         instruction="x",
         agent_factory=_factory(agent),
     )
-    state = _state_with_scaffold([
-        {"path": "/tmp/op/kernel.cpp", "content": "// orig"}
-    ])
+    state = _state_with_scaffold([{"path": "/tmp/op/kernel.cpp", "content": "// orig"}])
     update = node.func(state)
     assert update["micro_mod_result"]["success"] is False
     assert update["micro_mod_result"]["files_changed"] == []
@@ -173,20 +174,24 @@ def test_no_file_write_calls_returns_success_false():
 
 
 def test_multi_file_target_writes_replaces_each():
-    agent = _FakeAgent(tool_calls=[
-        {"name": "file_write", "args": {"path": "/tmp/op/kernel.cpp", "content": "// k"}},
-        {"name": "file_write", "args": {"path": "/tmp/op/host.cpp", "content": "// h"}},
-    ])
+    agent = _FakeAgent(
+        tool_calls=[
+            {"name": "file_write", "args": {"path": "/tmp/op/kernel.cpp", "content": "// k"}},
+            {"name": "file_write", "args": {"path": "/tmp/op/host.cpp", "content": "// h"}},
+        ]
+    )
     node = make_micro_mod_node(
         phase="micro_mod",
         target_files=["/tmp/op/kernel.cpp", "/tmp/op/host.cpp"],
         instruction="add broadcasting",
         agent_factory=_factory(agent),
     )
-    state = _state_with_scaffold([
-        {"path": "/tmp/op/kernel.cpp", "content": "// orig-k"},
-        {"path": "/tmp/op/host.cpp", "content": "// orig-h"},
-    ])
+    state = _state_with_scaffold(
+        [
+            {"path": "/tmp/op/kernel.cpp", "content": "// orig-k"},
+            {"path": "/tmp/op/host.cpp", "content": "// orig-h"},
+        ]
+    )
     update = node.func(state)
     assert update["micro_mod_result"]["success"] is True
     assert len(update["micro_mod_result"]["files_changed"]) == 2

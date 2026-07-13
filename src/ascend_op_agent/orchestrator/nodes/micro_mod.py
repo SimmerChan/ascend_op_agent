@@ -80,7 +80,9 @@ def make_micro_mod_node(
                     target_contents.append(f"### {target}\n```cpp\n{content}\n```\n")
                     break
 
-        targets_block = "\n".join(target_contents) if target_contents else "(未找到 target_files 内容)"
+        targets_block = (
+            "\n".join(target_contents) if target_contents else "(未找到 target_files 内容)"
+        )
         targets_list = "\n".join(f"- {t}" for t in abs_targets)
         return (
             f"你是 Ascend C 算子 developer。基于已加载的 scaffold 做精准小改:\n\n"
@@ -129,8 +131,7 @@ def make_micro_mod_node(
                 "tool": entry["name"],
             }
             for entry in tool_calls
-            if entry.get("name") == "file_write"
-            and entry.get("args", {}).get("path")
+            if entry.get("name") == "file_write" and entry.get("args", {}).get("path")
         ]
 
         # 区分 target_files 命中 vs 其它路径
@@ -139,7 +140,7 @@ def make_micro_mod_node(
         existing_paths = {f.get("path") for f in existing_files if isinstance(f, dict)}
 
         new_target_entries = []  # 替换 target_files 中已有项
-        new_other_entries = []   # 追加到 files(target 之外)
+        new_other_entries = []  # 追加到 files(target 之外)
         for nw in new_writes:
             p = nw["path"]
             if p in abs_set:

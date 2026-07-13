@@ -39,6 +39,7 @@ ASCEND_COMPUTE_UNIT must match arch22/arch35 generation.
 
 def _use_tmp_storage(tmp_path, monkeypatch):
     from ascend_op_agent.skills import storage as storage_mod
+
     _orig = storage_mod.SkillStorage.__init__
 
     def _init(self, skills_dir=None):
@@ -73,9 +74,7 @@ def test_end_to_end_learn_to_skill_to_layer6(tmp_path, monkeypatch):
         crystallized.update(result)
         return f"crystallized: {result.get('data', {}).get('name', '?')}"
 
-    outcome = _handle_learn_command(
-        "ops_pt build.sh 配置", run_callable=mock_run_conversation
-    )
+    outcome = _handle_learn_command("ops_pt build.sh 配置", run_callable=mock_run_conversation)
 
     # Step 2 assertions: skill_manage was called + succeeded.
     assert outcome["status"] == "crystallized"
@@ -89,6 +88,7 @@ def test_end_to_end_learn_to_skill_to_layer6(tmp_path, monkeypatch):
 
     # Step 4: Layer 6 (default path, task_type=None) shows the new skill.
     from ascend_op_agent.agent.memory import MemoryStore
+
     pb = PromptBuilder()
     prompt = pb.build_system_prompt(
         workspace_path=str(tmp_path),
@@ -107,15 +107,17 @@ def test_end_to_end_production_path_merges_cannbot_and_self_built(tmp_path, monk
 
     # Seed a self-built skill.
     skill_manage(
-        action="create", name="tiling-pitfalls",
+        action="create",
+        name="tiling-pitfalls",
         description="tiling debug skill",
-        task_type="develop", topic="tiling", body=VALID_BODY,
+        task_type="develop",
+        topic="tiling",
+        body=VALID_BODY,
     )
 
     pb = PromptBuilder()
     cannbot_override = (
-        "## Available Skills (phase=design)\n"
-        "- **cuda2ascend-simt**: cannbot migration skill\n"
+        "## Available Skills (phase=design)\n" "- **cuda2ascend-simt**: cannbot migration skill\n"
     )
     prompt = pb.build_system_prompt(
         workspace_path=str(tmp_path),
@@ -149,7 +151,8 @@ def _use_tmp_storage_and_skip_cannbot(tmp_path, monkeypatch):
     import ascend_op_agent.orchestrator.cannbot_loader as cl
 
     monkeypatch.setattr(
-        cl, "list_cannbot_skill_names",
+        cl,
+        "list_cannbot_skill_names",
         lambda root=None: {"cuda2ascend-simt", "triton-op-coding"},
     )
     # Also patch the CANNBOT_ROOT so the fail-closed branch sees a "configured" path.
@@ -164,9 +167,9 @@ def test_r2_recall_rejects_all_obvious_violations(obvious_violations, tmp_path, 
     for case in obvious_violations:
         inp = case["input"]
         result = skill_manage(**inp)
-        assert result["success"] is False, (
-            f"{case['id']} ({case['description']}) was accepted but should be rejected"
-        )
+        assert (
+            result["success"] is False
+        ), f"{case['id']} ({case['description']}) was accepted but should be rejected"
         if case.get("expected_field"):
             assert result.get("field") == case["expected_field"], (
                 f"{case['id']} rejected on field {result.get('field')!r}, "
@@ -189,7 +192,9 @@ def test_r2_recall_cannbot_collision_case_skipped_when_unavailable(
 
     real_names = cl.list_cannbot_skill_names()
     if not real_names:
-        pytest.skip("vendored cannbot-skills not initialized; OV3 fail-closed path tested elsewhere")
+        pytest.skip(
+            "vendored cannbot-skills not initialized; OV3 fail-closed path tested elsewhere"
+        )
     # If available, OV3 should reject via collision.
     ov3 = next(c for c in obvious_violations if c["id"] == "OV3")
     result = skill_manage(**ov3["input"])
@@ -210,13 +215,17 @@ def test_layer6_default_path_token_budget_bounded(tmp_path, monkeypatch):
     # Seed 8 self-built skills (PR-A target ceiling before degradation).
     for i in range(8):
         skill_manage(
-            action="create", name=f"skill-{i:02d}",
+            action="create",
+            name=f"skill-{i:02d}",
             description=f"short desc {i}",
-            task_type="develop", topic="tiling", body=VALID_BODY,
+            task_type="develop",
+            topic="tiling",
+            body=VALID_BODY,
         )
 
     pb = PromptBuilder()
     from ascend_op_agent.agent.memory import MemoryStore
+
     prompt = pb.build_system_prompt(
         workspace_path=str(tmp_path),
         memory_store=MemoryStore(),

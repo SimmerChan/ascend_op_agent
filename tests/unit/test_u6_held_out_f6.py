@@ -48,12 +48,14 @@ def test_f6_migration_with_unicode_content_in_v1(tmp_path):
     db_path = tmp_path / "skills_index.db"
     conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
-    cur.execute("""
+    cur.execute(
+        """
         CREATE VIRTUAL TABLE skills USING fts5(
             name, description, tags, content,
             tokenize='porter unicode61'
         )
-    """)
+    """
+    )
     rows = [
         ("ascii-skill", "desc ascii 中文 🚀", "tag1", "content-with-unicode"),
         ("long-desc", "x" * 5000, "t", "many words " * 200),
@@ -92,15 +94,19 @@ def test_f6_migration_idempotent_with_existing_task_type_topic(tmp_path):
     db_path = tmp_path / "skills_index.db"
     conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
-    cur.execute("""
+    cur.execute(
+        """
         CREATE VIRTUAL TABLE skills USING fts5(
             name, description, tags, content, task_type, topic,
             tokenize='porter unicode61'
         )
-    """)
-    cur.execute("""
+    """
+    )
+    cur.execute(
+        """
         CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT)
-    """)
+    """
+    )
     cur.executemany(
         "INSERT INTO skills (name, description, tags, content, task_type, topic) "
         "VALUES (?, ?, ?, ?, ?, ?)",
@@ -136,12 +142,14 @@ def test_f6_restore_with_corrupt_backup_does_not_crash(tmp_path):
 
     conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
-    cur.execute("""
+    cur.execute(
+        """
         CREATE VIRTUAL TABLE skills USING fts5(
             name, description, tags, content,
             tokenize='porter unicode61'
         )
-    """)
+    """
+    )
     cur.execute("INSERT INTO skills (name, description, tags, content) VALUES ('x', 'd', 't', 'c')")
     conn.commit()
     conn.close()
@@ -166,7 +174,9 @@ def test_f6_restore_with_corrupt_backup_does_not_crash(tmp_path):
 
 def _fake_skill(name: str, *, task_type: str = "") -> CannbotSkill:
     return CannbotSkill(
-        name=name, description=f"d-{name}", body="",
+        name=name,
+        description=f"d-{name}",
+        body="",
         base_dir=Path("/tmp/_fake"),
         frontmatter={"ascend_op_agent": {"task_type": task_type, "topic": ""}},
     )
@@ -175,9 +185,11 @@ def _fake_skill(name: str, *, task_type: str = "") -> CannbotSkill:
 def test_f6_layer6_boundary_exactly_10(monkeypatch):
     """self-built = exactly HERMES_LAYER_LIMIT(10) → 全保留(不截)。"""
     pb = PromptBuilder()
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        _fake_skill(f"skill-{i:02d}", task_type="develop") for i in range(10)
-    ])
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [_fake_skill(f"skill-{i:02d}", task_type="develop") for i in range(10)],
+    )
     out = pb._build_skills_layer(override=None, task_type="develop")
     assert out.count("- **skill-") == 10
     assert "skill-09" in out
@@ -186,9 +198,11 @@ def test_f6_layer6_boundary_exactly_10(monkeypatch):
 def test_f6_layer6_boundary_exactly_11(monkeypatch):
     """self-built = HERMES_LAYER_LIMIT+1(11) → 截到 10。"""
     pb = PromptBuilder()
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        _fake_skill(f"skill-{i:02d}", task_type="develop") for i in range(11)
-    ])
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [_fake_skill(f"skill-{i:02d}", task_type="develop") for i in range(11)],
+    )
     out = pb._build_skills_layer(override=None, task_type="develop")
     assert out.count("- **skill-") == 10
     assert "skill-10" not in out
@@ -197,11 +211,14 @@ def test_f6_layer6_boundary_exactly_11(monkeypatch):
 def test_f6_layer6_recent_loads_boundary_exactly_5(monkeypatch):
     """recent_loads = exactly RECENT_LOADS_MAX(5) → 全保."""
     pb = PromptBuilder()
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        _fake_skill(f"r{i}", task_type="") for i in range(5)
-    ])
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [_fake_skill(f"r{i}", task_type="") for i in range(5)],
+    )
     out = pb._build_skills_layer(
-        override=None, recent_loads=[f"r{i}" for i in range(5)],
+        override=None,
+        recent_loads=[f"r{i}" for i in range(5)],
     )
     for i in range(5):
         assert f"r{i}" in out
@@ -210,11 +227,14 @@ def test_f6_layer6_recent_loads_boundary_exactly_5(monkeypatch):
 def test_f6_layer6_recent_loads_boundary_exactly_6(monkeypatch):
     """recent_loads = RECENT_LOADS_MAX+1(6) → 只前 5 个(6 个 drop)。"""
     pb = PromptBuilder()
-    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [
-        _fake_skill(f"r{i}", task_type="") for i in range(6)
-    ])
+    monkeypatch.setattr(
+        pb,
+        "_load_self_built_skills",
+        lambda storage: [_fake_skill(f"r{i}", task_type="") for i in range(6)],
+    )
     out = pb._build_skills_layer(
-        override=None, recent_loads=[f"r{i}" for i in range(6)],
+        override=None,
+        recent_loads=[f"r{i}" for i in range(6)],
     )
     # 前 5 全在
     for i in range(5):
