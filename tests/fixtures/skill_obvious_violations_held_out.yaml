@@ -1,0 +1,72 @@
+# Held-out R2 static-validation recall fixtures (PR-A U6 / F-6).
+#
+# 5 obvious violations that R2 MUST reject (recall target = 100%).
+# Each case is a skill_manage(action="create") input that should fail validation.
+# These exercise mechanical护栏, not semantic reasoning (semantic violations
+# are in skill_false_negative_held_out.yaml, expected ≥60% false-negative).
+
+- id: OV1
+  description: name contains PR number
+  input:
+    action: create
+    name: "pr-123-fix-tiling"
+    description: "x"
+    task_type: develop
+    topic: tiling
+    body: "## Project Scope\n\nx\n"
+  expected: reject
+  expected_field: name
+  reason: name regex forbids PR-number tokens
+
+- id: OV2
+  description: missing task_type (empty string)
+  input:
+    action: create
+    name: "valid-tiling-skill"
+    description: "x"
+    task_type: ""
+    topic: tiling
+    body: "## Project Scope\n\nx\n"
+  expected: reject
+  expected_field: task_type
+  reason: task_type must be in TASK_TYPES
+
+- id: OV3
+  description: name collides with cannbot-owned skill
+  input:
+    action: create
+    name: "cuda2ascend-simt"
+    description: "dup of cannbot"
+    task_type: migrate
+    topic: cuda_frontend
+    body: "## Project Scope\n\nx\n"
+  expected: reject
+  expected_field: name
+  reason: R12 cannbot-name collision (fail-closed)
+  note: requires vendored cannbot-skills initialized; skip if unavailable
+
+- id: OV4
+  description: body missing Project Scope first section
+  input:
+    action: create
+    name: "no-scope-skill"
+    description: "x"
+    task_type: develop
+    topic: tiling
+    body: "## Overview\n\nNo project scope here.\n"
+  expected: reject
+  expected_field: body
+  reason: first body section must be ## Project Scope
+
+- id: OV5
+  description: empty body (missing required field)
+  input:
+    action: create
+    name: "empty-body-skill"
+    description: "x"
+    task_type: develop
+    topic: tiling
+    body: ""
+  expected: reject
+  expected_field: body
+  reason: body is required and must be non-empty
