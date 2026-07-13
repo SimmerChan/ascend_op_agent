@@ -87,7 +87,10 @@ class AIAgent:
         self._status_callback = status_callback
 
         self._llm_client = LLMClient(config.llm)
-        self._conversation_history: list[dict[str, str]] = []
+        # tool 相关条目含可选元数据字段(tool_use_id/tool_name/tool_input),
+        # 供 AnthropicAdapter 重建 native tool_use/tool_result block;content 保持
+        # str 兼容旧读取者 + OpState.messages 同形(tool 条目不传播到 OpState.messages)
+        self._conversation_history: list[dict[str, Any]] = []
         # 工具调用 side-channel:每次 LLM 触发工具执行时记录一行(供编排器
         # 提取结构化结果,如 file_write 实际写到的路径)。不进 _conversation_history
         # 以保持 P0-2 同形契约。
@@ -241,7 +244,11 @@ class AIAgent:
                     turn_id=self._current_iteration,
                     parent_id=llm_entry_parent_id,
                     input_messages=input_messages,
-                    output_content=response,
+                    output_content=(
+                        response
+                        if isinstance(response, str)
+                        else f"tool_call({response.tool_name})"
+                    ),
                     tool_calls=tool_calls,
                 )
             )
@@ -250,16 +257,23 @@ class AIAgent:
             if isinstance(response, ToolCallResult):
                 # Native Function Calling 模式：直接使用结构化数据
                 tool_result = self._execute_tool_call_from_result(response, llm_entry_id)
+                # 存 tool_use 元数据(content 保持 str 兼容旧读取者;
+                # tool_use_id/tool_name/tool_input 供 AnthropicAdapter 重建
+                # native tool_use/tool_result block,修复多轮 tool_use 断裂)
                 self._conversation_history.append(
                     {
                         "role": "assistant",
                         "content": f"tool_call({response.tool_name})",
+                        "tool_use_id": response.tool_call_id,
+                        "tool_name": response.tool_name,
+                        "tool_input": response.arguments,
                     }
                 )
                 self._conversation_history.append(
                     {
                         "role": "tool",
                         "content": tool_result,
+                        "tool_use_id": response.tool_call_id,
                     }
                 )
                 # 继续迭代

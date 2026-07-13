@@ -29,11 +29,13 @@ except ImportError:
 
 class RateLimitError(Exception):
     """Rate limit exceeded"""
+
     pass
 
 
 class AuthenticationError(Exception):
     """Authentication failed"""
+
     pass
 
 
@@ -42,14 +44,16 @@ class AnthropicAdapter(BaseLLMAdapter):
 
     def __init__(self, config: Any):
         super().__init__(config)
-        self.api_key = getattr(config, 'api_key', '')
-        self.api_base = getattr(config, 'api_base', None)
-        self.model = getattr(config, 'model', 'claude-sonnet-4-6-20250514')
-        self.max_retries = getattr(config, 'max_retries', 3)
-        self.timeout = getattr(config, 'timeout', 120)
+        self.api_key = getattr(config, "api_key", "")
+        self.api_base = getattr(config, "api_base", None)
+        self.model = getattr(config, "model", "claude-sonnet-4-6-20250514")
+        self.max_retries = getattr(config, "max_retries", 3)
+        self.timeout = getattr(config, "timeout", 120)
 
         if anthropic is None:
-            raise ImportError("anthropic is required for Anthropic adapter. Install with: pip install anthropic")
+            raise ImportError(
+                "anthropic is required for Anthropic adapter. Install with: pip install anthropic"
+            )
 
         self._client = None
 
@@ -78,11 +82,13 @@ class AnthropicAdapter(BaseLLMAdapter):
         for tool in tools:
             if tool.get("type") == "function" and "function" in tool:
                 func = tool["function"]
-                anthropic_tools.append({
-                    "name": func.get("name", ""),
-                    "description": func.get("description", ""),
-                    "input_schema": func.get("parameters", {}),
-                })
+                anthropic_tools.append(
+                    {
+                        "name": func.get("name", ""),
+                        "description": func.get("description", ""),
+                        "input_schema": func.get("parameters", {}),
+                    }
+                )
             elif "name" in tool:
                 # Already in Anthropic format or named tool
                 anthropic_tools.append(tool)
@@ -111,8 +117,42 @@ class AnthropicAdapter(BaseLLMAdapter):
         # System prompt goes in top_level_system_prompt parameter
         messages = []
         for msg in conversation_history:
-            role = msg["role"] if msg["role"] in ("user", "assistant") else "user"
-            messages.append({"role": role, "content": msg["content"]})
+            role = msg["role"]
+            content = msg["content"]
+            if role == "assistant" and "tool_use_id" in msg:
+                # Native tool_use: 重建 assistant content 为 tool_use block list
+                # (core.py ToolCallResult 分支存的元数据,修复多轮 tool_use 断裂)
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": msg["tool_use_id"],
+                                "name": msg["tool_name"],
+                                "input": msg["tool_input"],
+                            }
+                        ],
+                    }
+                )
+            elif role == "tool" and "tool_use_id" in msg:
+                # native tool_result block (匹配上方 tool_use.id)
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": msg["tool_use_id"],
+                                "content": content,
+                            }
+                        ],
+                    }
+                )
+            else:
+                # 旧格式 role=tool(无 tool_use_id,XML 分支)或未知 role → 降级 user + str
+                role = role if role in ("user", "assistant") else "user"
+                messages.append({"role": role, "content": content})
 
         client = self._get_client()
 
@@ -137,7 +177,7 @@ class AnthropicAdapter(BaseLLMAdapter):
                             tool_call_id=block.id,
                             tool_name=block.name,
                             arguments=block.input,
-                            raw_response=response
+                            raw_response=response,
                         )
 
                 # Return text content
@@ -151,9 +191,7 @@ class AnthropicAdapter(BaseLLMAdapter):
                 # 检查是 transient rate limit 还是 quota exhausted
                 err_str = str(e)
                 if "用量上限" in err_str or "余额不足" in err_str or "quota" in err_str.lower():
-                    raise Exception(
-                        f"Anthropic API quota exhausted (no retry): {err_str}"
-                    ) from e
+                    raise Exception(f"Anthropic API quota exhausted (no retry): {err_str}") from e
                 wait_time = (attempt + 1) * 2
                 logger.warning(f"Anthropic rate limit, waiting {wait_time}s before retry")
                 time.sleep(wait_time)
@@ -172,6 +210,4 @@ class AnthropicAdapter(BaseLLMAdapter):
                     time.sleep(1)
                 continue
 
-        raise Exception(
-            f"Anthropic request failed after {self.max_retries} attempts: {last_error}"
-        )
+        raise Exception(f"Anthropic request failed after {self.max_retries} attempts: {last_error}")
