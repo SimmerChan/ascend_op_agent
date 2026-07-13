@@ -26,9 +26,15 @@
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from ascend_op_agent.agent.memory import MemoryStore
+
+
+# PR-A KTD-2 + A1 fix: self-built degradation threshold (实测预算驱动).
+# cannbot phase subset (production max ~266 tok for triton_frontend) +
+# 12 self-built × ~40 tok ≈ 480 tok ≈ total 746 tok < 800 ship gate.
+SELF_BUILT_DEGRADE_THRESHOLD = 12
 
 
 class PromptBuilder:
@@ -158,32 +164,99 @@ class PromptBuilder:
         override: Optional[str] = None,
         task_type: Optional[str] = None,
     ) -> str:
-        """Layer 6: Skills Index
+        """Layer 6: Skills Index (U2 — A1 fix + KTD-2 降级)
+
+        Two paths:
+          - Production path (override non-None, PhaseRunner node): ``override``
+            (cannbot phase subset) + self-built section merged.
+          - Default path (``/learn`` chat, override None): **self-built section only** —
+            NO cannbot. Default-path full-cannbot rendering was the A1 token-budget
+            bug (894 tok for all 16 cannbot in default path).
+
+        Degradation (KTD-2 / F-4): self-built count > ``SELF_BUILT_DEGRADE_THRESHOLD``
+        → filter by ``task_type`` subset; ``task_type`` missing → fall back to full
+        (avoid empty). Threshold 12 ≈ triton phase (266 tok) + 12 self-built (480 tok)
+        + 50 header/footer ≈ 796 tok ≤ 800.
 
         Args:
-            override: 可选,编排器注入的 cannbot phase subset(生产路径)。
-                非 None 时直接作为 Layer 6 内容(向后兼容现有 hybrid 行为,
-                U1/U2 衔接期)。U2 接入 Layer 6 重写后,override 改为
-                "cannbot phase subset + self-built 段" 合并渲染。
-            task_type: 可选,任务类型。U2 实现按此分流——目前(U1)仅 plumbing,
-                不影响现有行为。PhaseRunner path: ``"develop"`` 等;非 PhaseRunner
-                path: ``None``(默认路径 = ``/learn`` 聊天)。
+            override: cannbot phase-subset text from PhaseRunner node, or None
+                (default path: ``/learn`` CLI sync to ``agent.run_conversation``).
+            task_type: ``"develop"`` for PhaseRunner path; ``None`` for default path.
 
         Returns:
-            Layer 6 文本
+            Layer 6 text
         """
+        from ascend_op_agent.orchestrator.cannbot_loader import render_skill_bundle_text
+        from ascend_op_agent.skills.storage import SkillStorage
+
+        # Load self-built skills via existing SkillStorage (already self-built-aware).
+        storage = SkillStorage()
+        self_built_skills = self._load_self_built_skills(storage)
+
+        # Degradation (F-4 / KTD-2): filter by task_type if over threshold.
+        if len(self_built_skills) > SELF_BUILT_DEGRADE_THRESHOLD and task_type:
+            self_built_skills = [
+                s for s in self_built_skills
+                if self._self_built_task_type(s) == task_type
+            ]
+        # else: keep all (threshold not exceeded OR task_type missing → avoid empty)
+
+        # Render self-built section via reused cannbot_loader function (A6 fix).
+        # Override phase=None so render_skill_bundle_text emits "## Available Skills".
+        self_built_section = (
+            render_skill_bundle_text(self_built_skills) if self_built_skills else ""
+        )
+
         if override is not None:
+            # Production path: cannbot phase subset + self-built merge.
+            if self_built_section:
+                return override + "\n\n" + self_built_section
             return override
-        return """## Available Skills
 
-Skills存储在 ~/.ascend_op_agent/skills/ 目录
-每个Skill包含:
-- SKILL.md: Skill定义和描述
-- templates/: 代码模板
-- references/: 参考资料
+        # Default path (/learn chat, no phase context): self-built only.
+        if not self_built_section:
+            return (
+                "## Available Skills\n\n"
+                "(暂无自研 skill 沉淀 — use `/learn <topic>` to crystallize knowledge "
+                "from GPU-Ascend operator development.)\n"
+            )
+        return self_built_section
 
-使用skill_ops工具搜索和加载相关Skill。
-"""
+    @staticmethod
+    def _self_built_task_type(skill) -> Optional[str]:
+        """Extract task_type from a skill. ``CannbotSkill`` stores its frontmatter
+        dict under ``.frontmatter`` (not ``.metadata``); we set it from
+        ``Skill.metadata`` in the thin adapter so the original nesting
+        ``{"ascend_op_agent": {"task_type": ...}}`` survives.
+        """
+        fm = getattr(skill, "frontmatter", None) or {}
+        aa = fm.get("ascend_op_agent", {}) if isinstance(fm, dict) else {}
+        return aa.get("task_type")
+
+    @staticmethod
+    def _load_self_built_skills(storage) -> list:
+        """Wrap SkillStorage-loaded self-built skills into CannbotSkill-compatible
+        instances so ``render_skill_bundle_text`` (cannbot_loader) can render them.
+        """
+        from ascend_op_agent.orchestrator.cannbot_loader import CannbotSkill
+
+        names = storage.list_skills()
+        skills = []
+        for name in names:
+            loaded = storage.load_skill(name)
+            if loaded is None:
+                continue
+            base_dir = Path(loaded.local_path) if loaded.local_path else Path("/tmp")
+            skills.append(
+                CannbotSkill(
+                    name=loaded.name,
+                    description=loaded.description,
+                    body=loaded.content,
+                    base_dir=base_dir,
+                    frontmatter=loaded.metadata or {},
+                )
+            )
+        return skills
 
     def _build_context_layer(self, workspace_path: str) -> str:
         """Layer 7: Context Files + Timestamp + Env"""
