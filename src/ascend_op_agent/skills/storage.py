@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 # 混合维度后缀
 SUFFIX_BUGFIX = "_bugfix"
 SUFFIX_PERFORMANCE = "_performance"
+# U4 R13: reference attaches write under {name}_reference/ flat dir.
+SUFFIX_REFERENCE = "_reference"
+# U4 F4: self-built skills live under self-built/{name}/SKILL.md.
+SELF_BUILT_SUBDIR = "self-built"
 
 
 class SkillStorage:
@@ -69,6 +73,13 @@ class SkillStorage:
             dir_name = f"{skill.name}{SUFFIX_BUGFIX}"
         elif dimension == "performance":
             dir_name = f"{skill.name}{SUFFIX_PERFORMANCE}"
+        elif dimension == "self_built":
+            # U4 F4: write under self-built/{name}/ so agent can scan it
+            # without colliding with vendored bugfix/performance templates.
+            dir_name = f"{SELF_BUILT_SUBDIR}/{skill.name}"
+        elif dimension == "reference":
+            # U4 R13: attach reference under flat {name}_reference/ dir.
+            dir_name = f"{skill.name}{SUFFIX_REFERENCE}"
         else:
             dir_name = skill.name
 
@@ -140,26 +151,33 @@ class SkillStorage:
         """从本地加载Skill
 
         Args:
-            name: skill名称（支持带后缀的完整目录名）
+            name: skill basename（不带维度前缀/后缀，自动搜索 flat 与 self-built/）
 
         Returns:
             Skill对象或None
         """
-        skill_dir = self.skills_dir / name
-        skill_file = skill_dir / "SKILL.md"
-
-        if not skill_file.exists():
+        if not self.skills_dir.exists():
             return None
-
-        try:
-            with open(skill_file, "r", encoding="utf-8") as f:
-                content = f.read()
-
-            return self._parse_skill_content(name, content, str(skill_dir))
-
-        except Exception as e:
-            logger.warning(f"Failed to load skill {name}: {e}")
-            return None
+        # Bare name lookup: try flat (template / bugfix / performance / reference)
+        # then fall back to self-built/{name}/. The first hit wins; the frontmatter
+        # `name` field is authoritative regardless of which directory it lives under.
+        candidates = [
+            self.skills_dir / name,
+            self.skills_dir / SELF_BUILT_SUBDIR / name,
+        ]
+        for skill_dir in candidates:
+            skill_file = skill_dir / "SKILL.md"
+            if not skill_file.is_file():
+                continue
+            try:
+                content = skill_file.read_text(encoding="utf-8")
+                result = self._parse_skill_content(name, content, str(skill_dir))
+                if result is not None:
+                    return result
+            except Exception as e:
+                logger.warning(f"Failed to load skill {name}: {e}")
+                continue
+        return None
 
     def _parse_skill_content(
         self,
@@ -202,53 +220,50 @@ class SkillStorage:
             return None
 
     def delete_skill(self, name: str) -> bool:
-        """删除Skill
+        """删除Skill（搜索 flat 与 self-built/）
 
         Args:
-            name: skill名称
+            name: skill basename
 
         Returns:
-            是否成功删除
+            是否删除成功
         """
-        skill_dir = self.skills_dir / name
-
-        if not skill_dir.exists():
-            return False
-
-        try:
-            shutil.rmtree(skill_dir)
-            logger.info(f"Deleted skill {name}")
-            return True
-        except Exception as e:
-            logger.warning(f"Failed to delete skill {name}: {e}")
-            return False
+        for skill_dir in (self.skills_dir / name, self.skills_dir / SELF_BUILT_SUBDIR / name):
+            if not skill_dir.exists():
+                continue
+            try:
+                shutil.rmtree(skill_dir)
+                logger.info(f"Deleted skill at {skill_dir}")
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to delete skill {name} at {skill_dir}: {e}")
+                continue
+        return False
 
     def list_skills(self) -> list[str]:
-        """列出所有已安装的skill名称
-
-        Returns:
-            skill名称列表
-        """
+        """列出所有已安装的skill名称（flat + self-built/）"""
         skills = []
         if not self.skills_dir.exists():
             return skills
 
         for item in self.skills_dir.iterdir():
-            if item.is_dir() and (item / "SKILL.md").exists():
+            if not item.is_dir():
+                continue
+            if (item / "SKILL.md").exists():
                 skills.append(item.name)
+            elif item.name == SELF_BUILT_SUBDIR:
+                for sub in item.iterdir():
+                    if sub.is_dir() and (sub / "SKILL.md").exists():
+                        skills.append(sub.name)  # bare basename
 
-        return sorted(skills)
+        return sorted(set(skills))
 
     def skill_exists(self, name: str) -> bool:
-        """检查skill是否存在
-
-        Args:
-            name: skill名称
-
-        Returns:
-            是否存在
-        """
-        return (self.skills_dir / name / "SKILL.md").exists()
+        """检查skill是否存在（搜索 flat 与 self-built/）"""
+        return (
+            (self.skills_dir / name / "SKILL.md").exists()
+            or (self.skills_dir / SELF_BUILT_SUBDIR / name / "SKILL.md").exists()
+        )
 
     def copy_skill(self, src_name: str, dest_name: str) -> Optional[str]:
         """复制skill
