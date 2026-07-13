@@ -36,6 +36,13 @@ from ascend_op_agent.agent.memory import MemoryStore
 # 12 self-built × ~40 tok ≈ 480 tok ≈ total 746 tok < 800 ship gate.
 SELF_BUILT_DEGRADE_THRESHOLD = 12
 
+# PR-B U3 R5b: Hermes-style Layer 6 cap (R5b 路由命中 = 当前 task.type 命中
+# + 同 task_type + 最近 5 轮 load,上限 10 — KTD-3 + Q2 决议沿用 hermes 默认).
+# 超 cap 时按 (cannbot + self-built) 总数截断,优先保 cannbot phase subset
+# (cannbot 是权威源,self-built 是 LLM 缓存加速).
+HERMES_LAYER_LIMIT = 10
+RECENT_LOADS_MAX = 5
+
 
 class PromptBuilder:
     """7层Prompt组装器"""
@@ -56,6 +63,7 @@ class PromptBuilder:
         memory_store: MemoryStore,
         skills_layer_override: Optional[str] = None,
         task_type: Optional[str] = None,
+        recent_loads: Optional[List[str]] = None,
     ) -> str:
         """构建完整的系统Prompt（7层组装）
 
@@ -68,6 +76,9 @@ class PromptBuilder:
                 用于 Layer 6 降级决策(U2 实现)。PR-A 阶段(U1)仅 plumbing:U2
                 重写 ``_build_skills_layer`` 时按此值分流,默认 None 走"只 self-built"
                 路径。
+            recent_loads: PR-B U3 R5b 路由命中 inputs —— 最近 N 轮
+                ``skill_manage(action="load", ...)`` 加载过的 skill 名(去重保序,
+                上限 RECENT_LOADS_MAX=5)。None 时只走 task_type 命中。
 
         Returns:
             组装后的完整系统Prompt
@@ -90,10 +101,11 @@ class PromptBuilder:
         layers.append(self._build_memory_layer(memory_store))
 
         # Layer 6: Skills Index(支持编排器 scope 注入 cannbot skill 包)
-        # U1:把 override 和 task_type 一并传给 _build_skills_layer,
-        # 留给 U2 按 task_type 决定降级策略。当前(U1)该函数暂未实现
-        # task_type 分流,签名先就位。
-        layers.append(self._build_skills_layer(skills_layer_override, task_type))
+        # U3 R5b/R7: 把 recent_loads 一起传给 _build_skills_layer 做分组渲染
+        # 和路由命中。
+        layers.append(self._build_skills_layer(
+            skills_layer_override, task_type, recent_loads,
+        ))
 
         # Layer 7: Context Files + Timestamp + Env
         layers.append(self._build_context_layer(workspace_path))
@@ -163,25 +175,36 @@ class PromptBuilder:
         self,
         override: Optional[str] = None,
         task_type: Optional[str] = None,
+        recent_loads: Optional[List[str]] = None,
     ) -> str:
-        """Layer 6: Skills Index (U2 — A1 fix + KTD-2 降级)
+        """Layer 6: Skills Index (PR-B U3 — R5b 路由命中 + R7 分组渲染)
 
-        Two paths:
-          - Production path (override non-None, PhaseRunner node): ``override``
-            (cannbot phase subset) + self-built section merged.
-          - Default path (``/learn`` chat, override None): **self-built section only** —
-            NO cannbot. Default-path full-cannbot rendering was the A1 token-budget
-            bug (894 tok for all 16 cannbot in default path).
+        R5b 路由命中逻辑:
+          1. cannbot phase subset (override, PhaseRunner 注入) ← 权威源
+          2. self-built 同 task_type 命中(若 task_type 指定)
+          3. + 最近 ``RECENT_LOADS_MAX`` 轮 ``skill_manage(action="load")``
+             加载过的 self-built skill(去重保序) ← LLM 缓存加速
+          4. cap 到 ``HERMES_LAYER_LIMIT`` (10, KTD-3 + Q2 决议;超过按
+             (cannbot + self-built) 总数截断,优先保 cannbot phase subset,
+             然后保最近 recent_loads,再按 task_type 命中剩余)
 
-        Degradation (KTD-2 / F-4): self-built count > ``SELF_BUILT_DEGRADE_THRESHOLD``
-        → filter by ``task_type`` subset; ``task_type`` missing → fall back to full
-        (avoid empty). Threshold 12 ≈ triton phase (266 tok) + 12 self-built (480 tok)
-        + 50 header/footer ≈ 796 tok ≤ 800.
+        R7 分组渲染:
+          - cannbot 在前(标题 = "## Available Skills (phase=...)" 或
+            "## Available Skills (cannbot reference)" 当 caller 没传 phase)
+          - self-built 在后(标题 = "## Available Skills (self-built)")
+
+        Both paths:
+          - Production (override non-None, PhaseRunner node): cannbot +
+            self-built merged.
+          - Default (``/learn`` chat, override None, task_type None): self-built only
+            (A1 fix — default path 不渲染 cannbot 全量).
 
         Args:
             override: cannbot phase-subset text from PhaseRunner node, or None
                 (default path: ``/learn`` CLI sync to ``agent.run_conversation``).
             task_type: ``"develop"`` for PhaseRunner path; ``None`` for default path.
+            recent_loads: 最近 N 轮 ``skill_manage(action="load", ...)`` 加载过的
+                skill 名(去重保序,上限 RECENT_LOADS_MAX=5)。PR-B U3 R5b。
 
         Returns:
             Layer 6 text
@@ -189,37 +212,106 @@ class PromptBuilder:
         from ascend_op_agent.orchestrator.cannbot_loader import render_skill_bundle_text
         from ascend_op_agent.skills.storage import SkillStorage
 
-        # Load self-built skills via existing SkillStorage (already self-built-aware).
         storage = SkillStorage()
         self_built_skills = self._load_self_built_skills(storage)
 
-        # Degradation (F-4 / KTD-2): filter by task_type if over threshold.
-        if len(self_built_skills) > SELF_BUILT_DEGRADE_THRESHOLD and task_type:
-            self_built_skills = [
-                s for s in self_built_skills if self._self_built_task_type(s) == task_type
-            ]
-        # else: keep all (threshold not exceeded OR task_type missing → avoid empty)
-
-        # Render self-built section via reused cannbot_loader function (A6 fix).
-        # Override phase=None so render_skill_bundle_text emits "## Available Skills".
-        self_built_section = (
-            render_skill_bundle_text(self_built_skills) if self_built_skills else ""
+        # ---- R5b 路由命中: 选 self-built 候选 ----
+        candidates = self._select_skills_r5b(
+            self_built_skills, task_type=task_type, recent_loads=recent_loads,
         )
 
-        if override is not None:
-            # Production path: cannbot phase subset + self-built merge.
-            if self_built_section:
-                return override + "\n\n" + self_built_section
-            return override
+        # ---- R5b cap: self-built 端到 HERMES_LAYER_LIMIT=10 ----
+        if len(candidates) > HERMES_LAYER_LIMIT:
+            candidates = candidates[:HERMES_LAYER_LIMIT]  # 截断(task_type 命中优先 + recent_loads 已 dedupe)
 
-        # Default path (/learn chat, no phase context): self-built only.
-        if not self_built_section:
-            return (
-                "## Available Skills\n\n"
-                "(暂无自研 skill 沉淀 — use `/learn <topic>` to crystallize knowledge "
-                "from GPU-Ascend operator development.)\n"
-            )
-        return self_built_section
+        # ---- R7 分组渲染: cannbot 前 + self-built 后 ----
+        if override and candidates:
+            # Production: 两段都存在,cannbot 在前 / self-built 在后
+            self_built_section = self._render_self_built_section(candidates)
+            return override + "\n\n" + self_built_section
+        if override:
+            # Production: 只有 cannbot phase subset
+            return override
+        if candidates:
+            # Default path: 只有 self-built
+            return self._render_self_built_section(candidates)
+        # 两段都空 → fallback 提示(/learn 引导)
+        return (
+            "## Available Skills\n\n"
+            "(暂无自研 skill 沉淀 — use `/learn <topic>` to crystallize knowledge "
+            "from GPU-Ascend operator development.)\n"
+        )
+
+    def _select_skills_r5b(
+        self,
+        self_built_skills: list,
+        task_type: Optional[str],
+        recent_loads: Optional[List[str]],
+    ) -> list:
+        """PR-B U3 R5b: 选 self-built 候选(同 task_type + 最近 5 轮 load)。
+
+        优先级: task_type 命中优先 → 加 recent_loads 补充(去重) → 后跟 R5b 旁路
+        (无 task_type 时的全部; PR-A 兼容 — 旧 `task_type=None` 路径)。
+
+        Returns:
+            候选 self-built skill list(尚未 cap, cap 在上层 _build_skills_layer 做)
+        """
+        if not self_built_skills:
+            return []
+
+        seen: set[str] = set()
+        candidates: list = []
+
+        def _push(s) -> None:
+            if s.name not in seen:
+                seen.add(s.name)
+                candidates.append(s)
+
+        # 1. task_type 命中(若指定)
+        if task_type:
+            for s in self_built_skills:
+                if self._self_built_task_type(s) == task_type:
+                    _push(s)
+
+        # 2. 最近 N 轮 load 补充(recent_loads 上限 RECENT_LOADS_MAX 保 caller 契约)
+        if recent_loads:
+            # Slicing to RECENT_LOADS_MAX 是 caller 责任;我们按 list 顺序遍历
+            # 并去重已加入的。
+            for name in (recent_loads or [])[:RECENT_LOADS_MAX]:
+                if name in seen:
+                    continue
+                # 找 self-built 中名字匹配的(若有同名)
+                for s in self_built_skills:
+                    if s.name == name:
+                        _push(s)
+                        break
+
+        if candidates:
+            # 已经按 task_type + recent_loads 过滤了,直接返回
+            return candidates
+
+        # 3. 兜底: task_type=None + recent_loads=[] 时,无条件全保留(PR-A 行为)
+        # 但仍走 HERMES_LAYER_LIMIT 在上层做(避免self_built > 12 时炸预算)。
+        if not task_type and not recent_loads:
+            return list(self_built_skills)
+
+        # task_type/recent_loads 指定了但没匹配到任何 → 兜底返回全 self_built
+        # (PR-A KTD-2: 避免 empty 反而让 LLM 无可用 skill)
+        return list(self_built_skills)
+
+    def _render_self_built_section(self, candidates: list) -> str:
+        """PR-B U3 R7: self-built 段渲染 — 标题改为 "(self-built)" 区分 cannbot."""
+        from ascend_op_agent.orchestrator.cannbot_loader import render_skill_bundle_text
+
+        text = render_skill_bundle_text(candidates, phase=None)
+        if not text:
+            return ""
+        # 替换第一处 "## Available Skills" 为带 self-built 后缀的标题。
+        # (render_skill_bundle_text 在 phase=None 时正好输出 "## Available Skills"
+        # 不带 phase 名)
+        return text.replace(
+            "## Available Skills", "## Available Skills (self-built)", 1,
+        )
 
     @staticmethod
     def _self_built_task_type(skill) -> Optional[str]:
