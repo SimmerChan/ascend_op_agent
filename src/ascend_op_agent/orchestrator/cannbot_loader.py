@@ -191,6 +191,21 @@ SKILL_BUNDLES: dict[tuple[str, str], list[str]] = {
 }
 
 
+# PR-B U1: SKILL_BUNDLES (graph, phase) → (task_type, topic) 1:1 mapping.
+# R5b 路由前置(R5b 用此查表把 PhaseRunner 的 phase 映射到 task_type/topic 过滤 self-built skill)。
+# 沿用 PR-A U1 草案的 lossy 归类(design/review→kernel_pattern, codegen/compile_fix→build_env)
+# 完整覆盖现有 7 bucket 让 R5b 路由可直接查表;lossy 归类 + 可追溯性。
+CANBOT_BUNDLE_MAP: dict[tuple[str, str], tuple[str, str]] = {
+    ("migration", "cuda_frontend"):  ("migrate", "cuda_frontend"),
+    ("migration", "triton_frontend"): ("migrate", "triton_frontend"),
+    ("new_dev", "design"):           ("develop", "kernel_pattern"),
+    ("new_dev", "codegen"):          ("develop", "build_env"),
+    ("new_dev", "review"):           ("develop", "kernel_pattern"),
+    ("any", "compile_fix"):          ("develop", "build_env"),
+    ("any", "precision_fix"):        ("develop", "precision"),
+}
+
+
 def build_skill_bundle(
     phase: str,
     graph: str = "any",
