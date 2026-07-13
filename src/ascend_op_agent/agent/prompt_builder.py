@@ -103,7 +103,7 @@ class PromptBuilder:
     def _build_identity_layer(self) -> str:
         """Layer 1: Agent Identity"""
         if self._soul_path.exists():
-            with open(self._soul_path, 'r', encoding='utf-8') as f:
+            with open(self._soul_path, "r", encoding="utf-8") as f:
                 return f.read()
         return ""
 
@@ -196,8 +196,7 @@ class PromptBuilder:
         # Degradation (F-4 / KTD-2): filter by task_type if over threshold.
         if len(self_built_skills) > SELF_BUILT_DEGRADE_THRESHOLD and task_type:
             self_built_skills = [
-                s for s in self_built_skills
-                if self._self_built_task_type(s) == task_type
+                s for s in self_built_skills if self._self_built_task_type(s) == task_type
             ]
         # else: keep all (threshold not exceeded OR task_type missing → avoid empty)
 
@@ -246,7 +245,7 @@ class PromptBuilder:
             loaded = storage.load_skill(name)
             if loaded is None:
                 continue
-            base_dir = Path(loaded.local_path) if loaded.local_path else Path("/tmp")
+            base_dir = Path(loaded.local_path) if loaded.local_path else Path(storage.skills_dir)
             skills.append(
                 CannbotSkill(
                     name=loaded.name,
@@ -263,11 +262,11 @@ class PromptBuilder:
         parts = []
 
         # Context文件（优先级互斥模式）
-        priority_files = ['.hermes.md', 'AGENTS.md', 'CLAUDE.md', '.cursorrules']
+        priority_files = [".hermes.md", "AGENTS.md", "CLAUDE.md", ".cursorrules"]
         for filename in priority_files:
             filepath = os.path.join(workspace_path, filename)
             if os.path.exists(filepath):
-                with open(filepath, 'r', encoding='utf-8') as f:
+                with open(filepath, "r", encoding="utf-8") as f:
                     content = f.read()
                 # 安全扫描
                 content = self._sanitize(content)
@@ -276,6 +275,7 @@ class PromptBuilder:
 
         # Timestamp
         from datetime import datetime
+
         parts.append(f"### Current Time\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
         # Environment
@@ -289,9 +289,12 @@ class PromptBuilder:
 
         # 不可见字符
         invisible_patterns = [
-            r'\x00', r'\u200b', r'\u202b', r'\ufeff',
+            r"\x00",
+            r"\u200b",
+            r"\u202b",
+            r"\ufeff",
         ]
         for pattern in invisible_patterns:
-            content = re.sub(pattern, '', content)
+            content = re.sub(pattern, "", content)
 
         return content

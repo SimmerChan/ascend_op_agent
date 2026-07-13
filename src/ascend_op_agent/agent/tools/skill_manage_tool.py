@@ -45,7 +45,7 @@ ACTIONS = ("create", "patch", "add_reference", "archive", "load", "list_skills",
 # name regex: kebab-case, leading letter, trailing alphanumeric, lowercase only.
 # Forbidden tokens guard against accidental PR-numbers / dates / task-objects.
 _NAME_RE = re.compile(r"^[a-z][a-z0-9-]*[a-z0-9]$")
-_FORBIDDEN_NAME_TOKENS = ("pr-", "pr_", "_pr_", "-pr-", "test-pr-", "date-20", "20", "issue-")
+_FORBIDDEN_NAME_TOKENS = ("pr-", "pr_", "_pr_", "-pr-", "test-pr-", "date-20", "issue-")
 
 # Per KTD-2 alignment with rendering layer; authors should keep <=40 chars;
 # the tool warns but does not block above this threshold (description payload
@@ -200,7 +200,9 @@ def _validate_skill_static(args: CreateSkillArgs | PatchSkillArgs) -> list[str]:
     body = (args.body or "").strip()
     if not body:
         raise SkillManageError(
-            "validation_failed", "body", "body is empty",
+            "validation_failed",
+            "body",
+            "body is empty",
             "Provide the full SKILL.md body (must start with `## Project Scope`).",
         )
     first_line = body.split("\n", 1)[0].strip()
@@ -243,9 +245,7 @@ def _cannbot_name_check(name: str) -> list[str]:
         return warnings
 
     if CANNBOT_ROOT is None:
-        warnings.append(
-            "CANNBOT_ROOT not configured; skipping cannbot-name collision check."
-        )
+        warnings.append("CANNBOT_ROOT not configured; skipping cannbot-name collision check.")
         return warnings
 
     # Always re-scan with explicit root (bypasses ``_list_cannbot_skill_names_default``
@@ -272,8 +272,7 @@ def _cannbot_name_check(name: str) -> list[str]:
             "r12_collision",
             "name",
             f"Skill name {name!r} collides with a cannbot-owned skill name.",
-            f"Pick a different name. Cannbot-owned names include: "
-            f"{sorted(names)[:5]}…",
+            f"Pick a different name. Cannbot-owned names include: " f"{sorted(names)[:5]}…",
         )
     return warnings
 
@@ -295,44 +294,34 @@ def _provenance(write_origin: str = "manual") -> dict[str, Any]:
 # Action handlers ------------------------------------------------------------
 
 
-def _action_create(args: CreateSkillArgs) -> dict[str, Any]:
-    warnings = _validate_skill_static(args)
-    warnings += _cannbot_name_check(args.name)
+def _save_self_built(
+    args: "CreateSkillArgs | PatchSkillArgs",
+    is_update: bool,
+) -> dict[str, Any]:
+    """Shared create/patch path: R2 validation + R12 cannbot check + provenance + save.
 
-    metadata = _provenance()
-    metadata["task_type"] = args.task_type
-    metadata["topic"] = args.topic
-    skill = Skill(
-        name=args.name,
-        description=args.description,
-        content=args.body,
-        metadata=metadata,
-    )
-    storage = SkillStorage()
-    saved_path = storage.save_skill(skill, dimension="self_built")
-
-    out = {"success": True, "data": {"saved_to": saved_path, "name": args.name}}
-    if warnings:
-        out[SOFT_WARN] = warnings
-    return out
-
-
-def _action_patch(args: PatchSkillArgs) -> dict[str, Any]:
-    # full-replacement semantics: body is required, NO partial merge.
-    if not (args.body or "").strip():
+    - create (``is_update=False``): new skill; no existence requirement.
+    - patch  (``is_update=True``):  full-replacement; skill must already exist;
+      ``updated_at`` stamped. Patch's body-required check uses a patch-specific
+      message (more informative than the generic body-empty rule in
+      ``_validate_skill_static``), so it runs first.
+    """
+    if is_update and not (args.body or "").strip():
         raise SkillManageError(
             "validation_failed",
             "body",
             "patch requires full body (full-replacement semantics), not partial merge.",
             "Pass the complete body content; this action overwrites the previous version entirely.",
         )
+
     warnings = _validate_skill_static(args)
     warnings += _cannbot_name_check(args.name)
 
     storage = SkillStorage()
-    if not storage.skill_exists(args.name):
+    if is_update and not storage.skill_exists(args.name):
         raise SkillManageError(
-            "not_found", "name",
+            "not_found",
+            "name",
             f"Cannot patch: skill {args.name!r} does not exist (use create instead).",
             "Use action='create' to write a new skill, or action='load' to inspect existing state.",
         )
@@ -340,7 +329,9 @@ def _action_patch(args: PatchSkillArgs) -> dict[str, Any]:
     metadata = _provenance()
     metadata["task_type"] = args.task_type
     metadata["topic"] = args.topic
-    metadata["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    if is_update:
+        metadata["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
     skill = Skill(
         name=args.name,
         description=args.description,
@@ -349,10 +340,18 @@ def _action_patch(args: PatchSkillArgs) -> dict[str, Any]:
     )
     saved_path = storage.save_skill(skill, dimension="self_built")
 
-    out = {"success": True, "data": {"saved_to": saved_path, "name": args.name}}
+    out: dict[str, Any] = {"success": True, "data": {"saved_to": saved_path, "name": args.name}}
     if warnings:
         out[SOFT_WARN] = warnings
     return out
+
+
+def _action_create(args: CreateSkillArgs) -> dict[str, Any]:
+    return _save_self_built(args, is_update=False)
+
+
+def _action_patch(args: PatchSkillArgs) -> dict[str, Any]:
+    return _save_self_built(args, is_update=True)
 
 
 def _action_add_reference(args: AddReferenceArgs) -> dict[str, Any]:
@@ -360,14 +359,16 @@ def _action_add_reference(args: AddReferenceArgs) -> dict[str, Any]:
     storage = SkillStorage()
     if not storage.skill_exists(args.skill_name):
         raise SkillManageError(
-            "not_found", "skill_name",
+            "not_found",
+            "skill_name",
             f"Skill {args.skill_name!r} not found; create it before adding references.",
             "Create the parent skill first via action='create'.",
         )
     src = Path(args.reference_path)
     if not src.is_file():
         raise SkillManageError(
-            "validation_failed", "reference_path",
+            "validation_failed",
+            "reference_path",
             f"reference_path {src!r} is not an existing file.",
             "Provide an absolute or relative path to an existing file on disk.",
         )
@@ -403,18 +404,13 @@ def _action_add_reference(args: AddReferenceArgs) -> dict[str, Any]:
 
 def _action_archive(args: ArchiveSkillArgs) -> dict[str, Any]:
     storage = SkillStorage()
-    if not storage.skill_exists(args.skill_name):
-        raise SkillManageError(
-            "not_found", "skill_name",
-            f"Skill {args.skill_name!r} not found.",
-            "Cannot archive what does not exist.",
-        )
     loaded = storage.load_skill(args.skill_name)
     if loaded is None:
         raise SkillManageError(
-            "load_failed", "skill_name",
-            f"Skill {args.skill_name!r} found by existence check but load_skill returned None.",
-            "Re-try; if persists, investigate SkillStorage.",
+            "not_found",
+            "skill_name",
+            f"Skill {args.skill_name!r} not found.",
+            "Cannot archive what does not exist.",
         )
 
     skill_dir = Path(loaded.local_path)  # <skills_dir>/self-built/<name>
@@ -452,7 +448,8 @@ def _action_load(args: LoadSkillArgs) -> dict[str, Any]:
     loaded = storage.load_skill(args.skill_name)
     if loaded is None:
         raise SkillManageError(
-            "not_found", "skill_name",
+            "not_found",
+            "skill_name",
             f"Skill {args.skill_name!r} not found.",
             "Verify the name. Use action='list_skills' to enumerate available skills.",
         )
@@ -468,12 +465,14 @@ def _action_list_skills(_: ListSkillsArgs) -> dict[str, Any]:
         if loaded is None:
             continue
         meta = (loaded.metadata or {}).get("ascend_op_agent", {})
-        out.append({
-            "name": name,
-            "description": loaded.description,
-            "task_type": meta.get("task_type"),
-            "topic": meta.get("topic"),
-        })
+        out.append(
+            {
+                "name": name,
+                "description": loaded.description,
+                "task_type": meta.get("task_type"),
+                "topic": meta.get("topic"),
+            }
+        )
     return {"success": True, "data": out}
 
 
@@ -491,12 +490,14 @@ def _action_search(args: SearchSkillsArgs) -> dict[str, Any]:
             continue
         if args.topic is not None and meta.get("topic") != args.topic:
             continue
-        results.append({
-            "name": loaded.name,
-            "description": loaded.description,
-            "task_type": meta.get("task_type"),
-            "topic": meta.get("topic"),
-        })
+        results.append(
+            {
+                "name": loaded.name,
+                "description": loaded.description,
+                "task_type": meta.get("task_type"),
+                "topic": meta.get("topic"),
+            }
+        )
     return {"success": True, "data": results}
 
 
@@ -520,34 +521,51 @@ def skill_manage(
     """7-action skill manager. Always returns a dict with `success` (R16)."""
     try:
         if action == "create":
-            return _action_create(CreateSkillArgs(
-                name=name or "", description=description or "",
-                task_type=task_type or "", topic=topic or "", body=body or "",
-            ))
+            return _action_create(
+                CreateSkillArgs(
+                    name=name or "",
+                    description=description or "",
+                    task_type=task_type or "",
+                    topic=topic or "",
+                    body=body or "",
+                )
+            )
         if action == "patch":
-            return _action_patch(PatchSkillArgs(
-                name=name or "", description=description or "",
-                task_type=task_type or "", topic=topic or "", body=body or "",
-            ))
+            return _action_patch(
+                PatchSkillArgs(
+                    name=name or "",
+                    description=description or "",
+                    task_type=task_type or "",
+                    topic=topic or "",
+                    body=body or "",
+                )
+            )
         if action == "add_reference":
-            return _action_add_reference(AddReferenceArgs(
-                skill_name=skill_name or "",
-                reference_name=reference_name or "",
-                reference_path=reference_path or "",
-            ))
+            return _action_add_reference(
+                AddReferenceArgs(
+                    skill_name=skill_name or "",
+                    reference_name=reference_name or "",
+                    reference_path=reference_path or "",
+                )
+            )
         if action == "archive":
-            return _action_archive(ArchiveSkillArgs(
-                skill_name=skill_name or "",
-                archive_reason=archive_reason or "no reason provided",
-            ))
+            return _action_archive(
+                ArchiveSkillArgs(
+                    skill_name=skill_name or "",
+                    archive_reason=archive_reason or "no reason provided",
+                )
+            )
         if action == "load":
             return _action_load(LoadSkillArgs(skill_name=skill_name or ""))
         if action == "list_skills":
             return _action_list_skills(ListSkillsArgs())
         if action == "search":
-            return _action_search(SearchSkillsArgs(
-                task_type=search_task_type, topic=search_topic,
-            ))
+            return _action_search(
+                SearchSkillsArgs(
+                    task_type=search_task_type,
+                    topic=search_topic,
+                )
+            )
         raise SkillManageError(
             "unknown_action",
             "action",
@@ -591,16 +609,41 @@ def register(registry) -> None:
                     "enum": list(ACTIONS),
                     "description": "Which skill_manage action to perform.",
                 },
-                "name": {"type": "string", "description": "Skill name (create/patch). Must match ^[a-z][a-z0-9-]*[a-z0-9]$."},
-                "description": {"type": "string", "description": "Skill description (create/patch). Soft-warn above 40 chars."},
-                "task_type": {"type": "string", "enum": list(TASK_TYPES), "description": "migrate | analyze | optimize | develop."},
+                "name": {
+                    "type": "string",
+                    "description": "Skill name (create/patch). Must match ^[a-z][a-z0-9-]*[a-z0-9]$.",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Skill description (create/patch). Soft-warn above 40 chars.",
+                },
+                "task_type": {
+                    "type": "string",
+                    "enum": list(TASK_TYPES),
+                    "description": "migrate | analyze | optimize | develop.",
+                },
                 "topic": {"type": "string", "description": "Free-form topic label (PR-A)."},
-                "body": {"type": "string", "description": "Full SKILL.md body starting with `## Project Scope`."},
-                "skill_name": {"type": "string", "description": "Skill name (add_reference / archive / load)."},
+                "body": {
+                    "type": "string",
+                    "description": "Full SKILL.md body starting with `## Project Scope`.",
+                },
+                "skill_name": {
+                    "type": "string",
+                    "description": "Skill name (add_reference / archive / load).",
+                },
                 "archive_reason": {"type": "string", "description": "Reason string (archive)."},
-                "reference_path": {"type": "string", "description": "Path to a reference file (add_reference)."},
-                "reference_name": {"type": "string", "description": "Name for the reference (add_reference)."},
-                "search_task_type": {"type": "string", "description": "Filter search by task_type."},
+                "reference_path": {
+                    "type": "string",
+                    "description": "Path to a reference file (add_reference).",
+                },
+                "reference_name": {
+                    "type": "string",
+                    "description": "Name for the reference (add_reference).",
+                },
+                "search_task_type": {
+                    "type": "string",
+                    "description": "Filter search by task_type.",
+                },
                 "search_topic": {"type": "string", "description": "Filter search by topic."},
             },
             "required": ["action"],
