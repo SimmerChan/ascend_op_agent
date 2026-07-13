@@ -863,10 +863,16 @@ def build_learn_prompt(user_request: str) -> str:
     return (
         "# Skill Crystallization Request (/learn)\n\n"
         f"User request:\n{req}\n\n"
-        "Crystallize this into a reusable self-built skill. Collect source material "
-        "first (file_read / file_search / web_extract on the directories, URLs, or "
-        'notes the user referenced), then call `skill_manage(action="create")` with '
-        "the full skill body.\n\n" + _AUTHORING_STANDARDS
+        "Crystallize this into a reusable self-built skill.\n\n"
+        "IMPORTANT decision rule:\n"
+        "- If the user request already contains the complete experience / pitfall / "
+        'how-to description, call `skill_manage(action="create")` DIRECTLY with the '
+        "full skill body. Do NOT explore project files first.\n"
+        "- Only use file_read / file_search / web_extract when the user EXPLICITLY "
+        "referenced a directory, URL, or file path to read. Limit such collection to "
+        "1-2 calls.\n"
+        '- In all cases, you MUST end by calling `skill_manage(action="create")` to '
+        "write the skill.\n\n" + _AUTHORING_STANDARDS
     )
 
 

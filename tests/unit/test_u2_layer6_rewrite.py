@@ -88,8 +88,9 @@ def test_production_path_merges_override_with_self_built(tmp_path, monkeypatch):
     assert "tiling-pitfalls" in out  # self-built appears
 
 
-def test_production_path_with_no_self_built_keeps_override_only(tmp_path):
+def test_production_path_with_no_self_built_keeps_override_only(tmp_path, monkeypatch):
     """If override is non-None but no self-built skills exist, return override intact."""
+    _use_tmp_storage(tmp_path, monkeypatch)
     from ascend_op_agent.agent.prompt_builder import PromptBuilder
 
     pb = PromptBuilder()

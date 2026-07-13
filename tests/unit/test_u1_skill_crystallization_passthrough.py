@@ -460,14 +460,15 @@ class _FakeLLMClient:
 # ---- PromptBuilder._build_skills_layer override 短路(U1 向后兼容) ----
 
 
-def test_prompt_builder_skills_layer_override_short_circuits(tmp_path) -> None:
-    """override 非 None 时仍直接作为 Layer 6 内容(U2 衔接期不动)。
+def test_prompt_builder_skills_layer_override_short_circuits(tmp_path, monkeypatch) -> None:
+    """override 非 None 且无 self-built 时,Layer 6 只返 override(PR-B 后语义)。
 
-    U1 contract:override + task_type 都接受参数,但当前函数体仍以
-    ``if override is not None: return override`` 短路 —— 防止 U2 接入合并渲染前
-    就破坏现有 PhaseRunner hybrid 集成。
+    PR-B 重写 Layer 6 合并渲染: override + self-built 非空时合并; self-built 空
+    时只返 override。本测试 monkeypatch self-built 为空验证后者,必须隔离真实
+    self-built(避免 ~/.ascend_op_agent/skills/self-built/ 污染测试)。
     """
     pb = PromptBuilder()
+    monkeypatch.setattr(pb, "_load_self_built_skills", lambda storage: [])
     override_text = "## Skills\n- cuda2ascend-simt: foo"
     out = pb._build_skills_layer(override=override_text, task_type="develop")
     assert out == override_text

@@ -2,6 +2,7 @@
 
 Migration from Hermes Agent file_tools.py search_files
 """
+
 import os
 import re
 from pathlib import Path
@@ -18,7 +19,7 @@ def file_search(
     output_mode: str = "content",
     context: int = 0,
     limit: int = DEFAULT_LIMIT,
-    offset: int = 0
+    offset: int = 0,
 ) -> str:
     """Search for pattern in files.
 
@@ -35,6 +36,11 @@ def file_search(
     Returns:
         Search results as formatted string
     """
+    if not pattern:
+        return (
+            "错误: file_search 缺少必填参数 pattern (搜索模式正则表达式)。"
+            "请提供 pattern 参数后重试,例如 file_search(pattern='build.sh')。"
+        )
     abs_path = os.path.abspath(path)
 
     if not os.path.exists(abs_path):
@@ -54,12 +60,17 @@ def file_search(
 
         for root, dirs, files in os.walk(abs_path):
             # Skip hidden and common ignore directories
-            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in {'node_modules', '__pycache__', 'venv'}]
+            dirs[:] = [
+                d
+                for d in dirs
+                if not d.startswith(".") and d not in {"node_modules", "__pycache__", "venv"}
+            ]
 
             for filename in files:
                 # Glob filter
                 if file_glob:
                     import fnmatch
+
                     if not fnmatch.fnmatch(filename, file_glob):
                         continue
 
@@ -83,23 +94,28 @@ def file_search(
 
         for root, dirs, files in os.walk(abs_path):
             # Skip hidden and common ignore directories
-            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in {'node_modules', '__pycache__', 'venv'}]
+            dirs[:] = [
+                d
+                for d in dirs
+                if not d.startswith(".") and d not in {"node_modules", "__pycache__", "venv"}
+            ]
 
             for filename in files:
                 # Glob filter
                 if file_glob:
                     import fnmatch
+
                     if not fnmatch.fnmatch(filename, file_glob):
                         continue
 
                 # Skip binary files
-                if any(filename.endswith(ext) for ext in {'.pyc', '.pyo', '.bin', '.so', '.dylib'}):
+                if any(filename.endswith(ext) for ext in {".pyc", ".pyo", ".bin", ".so", ".dylib"}):
                     continue
 
                 full_path = os.path.join(root, filename)
 
                 try:
-                    with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    with open(full_path, "r", encoding="utf-8", errors="ignore") as f:
                         lines = f.readlines()
                 except Exception:
                     continue
@@ -127,7 +143,7 @@ def file_search(
 
     # Apply offset and limit
     total = len(results)
-    results = results[offset:offset + limit]
+    results = results[offset : offset + limit]
 
     # Format output
     if output_mode == "count":
@@ -149,44 +165,26 @@ SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "pattern": {
-                "type": "string",
-                "description": "搜索模式（正则表达式）"
-            },
-            "path": {
-                "type": "string",
-                "description": "搜索目录",
-                "default": "."
-            },
+            "pattern": {"type": "string", "description": "搜索模式（正则表达式）"},
+            "path": {"type": "string", "description": "搜索目录", "default": "."},
             "target": {
                 "type": "string",
                 "enum": ["content", "files"],
                 "description": "搜索内容还是文件名",
-                "default": "content"
+                "default": "content",
             },
-            "file_glob": {
-                "type": "string",
-                "description": "文件过滤 glob 模式 (e.g., *.py)"
-            },
+            "file_glob": {"type": "string", "description": "文件过滤 glob 模式 (e.g., *.py)"},
             "output_mode": {
                 "type": "string",
                 "enum": ["content", "files_only", "count"],
                 "description": "输出格式",
-                "default": "content"
+                "default": "content",
             },
-            "context": {
-                "type": "integer",
-                "description": "上下文行数",
-                "default": 0
-            },
-            "limit": {
-                "type": "integer",
-                "description": "最大结果数",
-                "default": 50
-            }
+            "context": {"type": "integer", "description": "上下文行数", "default": 0},
+            "limit": {"type": "integer", "description": "最大结果数", "default": 50},
         },
-        "required": ["pattern"]
-    }
+        "required": ["pattern"],
+    },
 }
 
 
@@ -203,10 +201,10 @@ def register(registry):
             output_mode=kw.get("output_mode", "content"),
             context=kw.get("context", 0),
             limit=kw.get("limit", DEFAULT_LIMIT),
-            offset=kw.get("offset", 0)
+            offset=kw.get("offset", 0),
         ),
         parameters=SCHEMA,
         toolset="file",
         emoji="🔍",
-        max_result_size_chars=100_000
+        max_result_size_chars=100_000,
     )
