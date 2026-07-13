@@ -337,7 +337,7 @@ LLM 配额/服务频繁踩坑，已配三个 provider 互备。调试时任一 p
 | Provider | Model | api_base | Protocol | Key env | 适用 / 备注 |
 |---------|-------|----------|----------|---------|------|
 | **Minimax MiniMax-M3**（默认主力）| `MiniMax-M3` | `https://api.minimaxi.com/anthropic` | anthropic | `MINIMAX_API_KEY` | e2e_real_op / ship_ready 验证;N=20 stress 100% PASS |
-| **智谱 GLM-5.2**（备 1）| `glm-5.2` | `https://open.bigmodel.cn/api/coding/paas/v4` | anthropic | `GLM_API_KEY` | Minimax 配额耗尽时切;coding/paas/v4 为 Claude Code 设计;不适合 stress(连续调用 timeout) |
+| **智谱 GLM-5.2**（备 1）| `glm-5.2` | `https://open.bigmodel.cn/api/anthropic` | anthropic | `GLM_API_KEY` | Minimax 配额耗尽时切;/api/anthropic 是 Anthropic 兼容端点(coding/paas/v4 实测 404,2026-07-14 纠正);不适合 stress(连续调用 timeout) |
 | **火山 Ark GLM-5.2**（备 2）| `glm-5.2` | `https://ark.cn-beijing.volces.com/api/plan` | anthropic | `ARK_API_KEY` | Minimax+GLM 都不可用时切;同模型 glm-5.2 走火山引擎;Anthropic 兼容(SDK 拼 `/v1/messages`) |
 
 **切换方法**（改 `~/.ascend_op_agent/config.yaml` 的 `llm` 段；三 provider 的 key 已在 `~/.ascend_op_agent/.env` 配齐：`MINIMAX_API_KEY` / `GLM_API_KEY` / `ARK_API_KEY`）：
@@ -354,7 +354,7 @@ llm:
 # llm:
 #   provider: "anthropic"
 #   api_key: "${GLM_API_KEY}"
-#   api_base: "https://open.bigmodel.cn/api/coding/paas/v4"
+#   api_base: "https://open.bigmodel.cn/api/anthropic"
 #   model: "glm-5.2"
 
 # Ark GLM-5.2 (备 2, Anthropic 兼容)  — 取消注释切换
