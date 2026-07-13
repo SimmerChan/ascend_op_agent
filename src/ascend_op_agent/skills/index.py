@@ -88,6 +88,9 @@ class SkillIndex:
         # 确保缓存目录存在
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
+        # PR-B: v1→v2 migration(在 _init_db 之前)—— 4 列→6 列 + crash-safe
+        self._maybe_migrate_to_v2()
+
         # 初始化数据库
         self._init_db()
 
@@ -118,29 +121,223 @@ class SkillIndex:
         return self._embedding_model
 
     def _init_db(self) -> None:
-        """初始化SQLite数据库"""
+        """初始化SQLite数据库(PR-B v2 schema: task_type + topic 列 + schema_meta 表)"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # 创建FTS5虚拟表
+        # PR-B: 检测 schema_version 并处理 crash restore
+        # 若 .skills_index.bak.json 存在且 schema_meta 不一致 → 启动时自动 restore
+        self._maybe_restore_from_disk_backup(conn)
+
+        # 创建FTS5虚拟表(PR-B 加 task_type + topic 两列)
         cursor.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS skills USING fts5(
                 name,
                 description,
                 tags,
                 content,
+                task_type,
+                topic,
                 tokenize='porter unicode61'
             )
         """)
 
+        # PR-B: schema_meta 表存 schema_version(独立于 FTS5 virtual table)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS schema_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        # 写入当前 schema_version(INSERT OR IGNORE 兼容既有)
+        cursor.execute(
+            "INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('schema_version', '2')"
+        )
+
         conn.commit()
         conn.close()
 
-    def add_skill(self, skill: Skill) -> None:
-        """添加Skill到索引
+    def _get_schema_version(self) -> Optional[str]:
+        """读 schema_meta.schema_version; 不存在则返回 None(legacy v1 DB)."""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'")
+            row = cursor.fetchone()
+            conn.close()
+            return row[0] if row else None
+        except sqlite3.OperationalError:
+            return None
+
+    def _migration_backup_path(self) -> Path:
+        """disk 备份文件路径(PR-B: persist backup to disk before DROP)"""
+        return self.cache_dir / ".skills_index.bak.json"
+
+    def _maybe_restore_from_disk_backup(self, conn: sqlite3.Connection) -> None:
+        """启动时检测: 若 .skills_index.bak.json 存在但 schema_version 未升,
+        说明上次 migration 在 DROP 后 reinsert 前 crash → restore from disk.
+        """
+        backup = self._migration_backup_path()
+        if not backup.exists():
+            return
+        # 读 backup metadata
+        try:
+            with open(backup, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to read migration backup {backup}: {e}")
+            return
+        # 检测: backup.migrating=True 但 schema_version 未升 = 崩溃中
+        if not data.get("migrating"):
+            return
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'")
+        row = cursor.fetchone()
+        current = row[0] if row else None
+        if current == "2":
+            # 已升级,清理 backup
+            try:
+                backup.unlink()
+            except OSError:
+                pass
+            return
+        # Restore: 用 backup 中的 rows 重建 skills 表
+        logger.warning(
+            f"Detected interrupted migration, restoring from {backup}"
+        )
+        cursor.execute("DELETE FROM skills")
+        for r in data.get("rows", []):
+            cursor.execute(
+                """INSERT INTO skills (name, description, tags, content, task_type, topic)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (r["name"], r["description"], r.get("tags", ""),
+                 r.get("content", ""), r.get("task_type", ""), r.get("topic", "")),
+            )
+        cursor.execute(
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '2')"
+        )
+        conn.commit()
+        try:
+            backup.unlink()
+            logger.info("Migration restore complete, backup removed")
+        except OSError:
+            pass
+
+    def _maybe_migrate_to_v2(self) -> None:
+        """PR-B v1→v2 migration. Idempotent: skip on v2 / fresh DB; run on v1.
+
+        顺序: 此函数在 _init_db 之前运行 → skills / schema_meta 表可能不存在。
+        需容错处理 fresh DB(无表)、v1 DB(4 列 + 无 schema_meta)、v2 DB(6 列 + schema_version='2')。
+        """
+        if not Path(self.db_path).exists():
+            return  # 完全 fresh DB → _init_db 会创建 v2
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            # 优先检测 crash-state: 若 disk backup 存在且标记 migrating,
+            # 说明上次 migration 在 DROP 后 reinsert 前 crash → 先 restore
+            self._maybe_restore_from_disk_backup(conn)
+            # 1. schema_meta 存在? 决定 v1 vs v2
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_meta'"
+            )
+            has_meta = cursor.fetchone() is not None
+            if has_meta:
+                cursor.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'")
+                row = cursor.fetchone()
+                if row and row[0] == "2":
+                    return  # v2 已 ship
+            # 2. skills 表存在 + 列数 = 4 → v1, 走 migration
+            # 3. skills 表不存在 → fresh DB, _init_db 接下来会创建 v2
+            # 4. skills 表存在 + 列数 = 6(防御:已有 v2 列但缺 schema_meta)→ 写 schema_meta
+            cursor.execute("PRAGMA table_info(skills)")
+            cols = [r[1] for r in cursor.fetchall()]
+            if not cols:
+                return  # fresh DB
+            if "task_type" in cols and "topic" in cols:
+                # 防御: v2 列存在但 schema_meta 缺 → 补 schema_meta
+                cursor.execute(
+                    "INSERT OR IGNORE INTO schema_meta (key, value) "
+                    "VALUES ('schema_version', '2')"
+                )
+                conn.commit()
+                return
+            # v1 schema → migration
+            self._do_migration_v1_to_v2(conn, cursor)
+        finally:
+            conn.close()
+
+    def _do_migration_v1_to_v2(self, conn: sqlite3.Connection, cursor) -> None:
+        # 2. backup all rows to disk
+        cursor.execute(
+            "SELECT name, description, tags, content FROM skills"
+        )
+        rows = cursor.fetchall()
+        backup = self._migration_backup_path()
+        backup_data = {
+            "migrating": True,
+            "timestamp": time.time(),
+            "rows": [
+                {
+                    "name": r[0], "description": r[1],
+                    "tags": r[2], "content": r[3],
+                    "task_type": "", "topic": "",
+                }
+                for r in rows
+            ],
+        }
+        with open(backup, "w", encoding="utf-8") as f:
+            json.dump(backup_data, f, ensure_ascii=False)
+        # 3. DROP + CREATE 含 6 列
+        cursor.execute("DROP TABLE IF EXISTS skills")
+        cursor.execute("""
+            CREATE VIRTUAL TABLE skills USING fts5(
+                name, description, tags, content, task_type, topic,
+                tokenize='porter unicode61'
+            )
+        """)
+        # 4. reinsert (task_type/topic 暂 NULL,迁移期 NULL → 走 name-only fallback)
+        for r in rows:
+            cursor.execute(
+                """INSERT INTO skills (name, description, tags, content, task_type, topic)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (r[0], r[1], r[2], r[3], "", ""),
+            )
+        # 5. 创建 schema_meta 表 + 写 schema_version + commit
+        # (此函数在 _init_db 之前运行,schema_meta 还不存在,需在此创建)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS schema_meta (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        cursor.execute(
+            "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', '2')"
+        )
+        conn.commit()
+        conn.close()
+        # 6. 成功后清理 backup
+        try:
+            backup.unlink()
+            logger.info(f"SkillsIndex v1→v2 migration complete: {len(rows)} rows")
+        except OSError:
+            pass
+
+    def add_skill(
+        self,
+        skill: Skill,
+        task_type: str = "",
+        topic: str = "",
+    ) -> None:
+        """添加Skill到索引(PR-B: 新增 task_type/topic keyword-only 参数)
+
+        task_type/topic 默认 ""(走 name-only filter); PR-A 旧代码 add_skill(skill) 仍兼容
+        (task_type="" topic="" 时 FTS5 WHERE clause 不过滤)。
 
         Args:
             skill: Skill对象
+            task_type: 任务类型(migrate/analyze/optimize/develop,空字符串=不索引)
+            topic: free-form topic 标签(空字符串=不索引)
         """
         # 先写入SQLite FTS5（这是主要索引）
         conn = sqlite3.connect(self.db_path)
@@ -149,17 +346,19 @@ class SkillIndex:
         # 删除已存在的同名skill
         cursor.execute("DELETE FROM skills WHERE name = ?", (skill.name,))
 
-        # 插入新skill
+        # 插入新skill(PR-B 6 列)
         cursor.execute(
             """
-            INSERT INTO skills (name, description, tags, content)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO skills (name, description, tags, content, task_type, topic)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 skill.name,
                 skill.description,
                 ",".join(skill.tags),
                 skill.content,
+                task_type,
+                topic,
             ),
         )
 
@@ -246,7 +445,13 @@ class SkillIndex:
 
         return results
 
-    def _do_search(self, query: str, k: int = 5) -> list[Skill]:
+    def _do_search(
+        self,
+        query: str,
+        k: int = 5,
+        task_type: Optional[str] = None,
+        topic: Optional[str] = None,
+    ) -> list[Skill]:
         """实际执行搜索
 
         Args:
@@ -260,18 +465,25 @@ class SkillIndex:
         cursor = conn.cursor()
 
         try:
-            # 使用FTS5的bm25排序
-            cursor.execute(
-                """
-                SELECT name, description, tags, content,
+            # PR-B: FTS5 查询 + task_type/topic 过滤(过滤参数为空则不加 WHERE 条件)
+            where_clauses = ["skills MATCH ?"]
+            params: list[Any] = [query]
+            if task_type:
+                where_clauses.append("task_type = ?")
+                params.append(task_type)
+            if topic:
+                where_clauses.append("topic = ?")
+                params.append(topic)
+            params.append(k)
+            sql = f"""
+                SELECT name, description, tags, content, task_type, topic,
                        bm25(skills) as score
                 FROM skills
-                WHERE skills MATCH ?
+                WHERE {' AND '.join(where_clauses)}
                 ORDER BY score
                 LIMIT ?
-                """,
-                (query, k),
-            )
+            """
+            cursor.execute(sql, params)
 
             rows = cursor.fetchall()
 
@@ -291,14 +503,23 @@ class SkillIndex:
         except Exception as e:
             logger.warning(f"FTS search failed, falling back to LIKE: {e}")
             # FTS失败时回退到LIKE搜索
+            like_clauses = ["(name LIKE ? OR description LIKE ? OR tags LIKE ?)"]
+            like_params: list[Any] = [f"%{query}%", f"%{query}%", f"%{query}%"]
+            if task_type:
+                like_clauses.append("task_type = ?")
+                like_params.append(task_type)
+            if topic:
+                like_clauses.append("topic = ?")
+                like_params.append(topic)
+            like_params.append(k)
             cursor.execute(
-                """
-                SELECT name, description, tags, content
+                f"""
+                SELECT name, description, tags, content, task_type, topic
                 FROM skills
-                WHERE name LIKE ? OR description LIKE ? OR tags LIKE ?
+                WHERE {' AND '.join(like_clauses)}
                 LIMIT ?
                 """,
-                (f"%{query}%", f"%{query}%", f"%{query}%", k),
+                like_params,
             )
 
             rows = cursor.fetchall()
@@ -318,6 +539,25 @@ class SkillIndex:
 
         finally:
             conn.close()
+
+    def search_by_task_type(self, task_type: str) -> list[Skill]:
+        """PR-B U2/R5b helper: 按 task_type 过滤的便捷方法(读 FTS5 全部匹配按名字序)."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT name, description, tags, content, task_type, topic "
+            "FROM skills WHERE task_type = ? ORDER BY name",
+            (task_type,),
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [
+            Skill(
+                name=r[0], description=r[1], content=r[3],
+                tags=r[2].split(",") if r[2] else [],
+            )
+            for r in rows
+        ]
 
     def search_by_vector(
         self,
@@ -378,19 +618,23 @@ class SkillIndex:
         query: str,
         k: int = 5,
         alpha: float = 0.4,
+        task_type: Optional[str] = None,
+        topic: Optional[str] = None,
     ) -> list[Skill]:
-        """混合检索：FTS5 + 向量
+        """混合检索：FTS5 + 向量(PR-B: 加 task_type/topic 过滤)
 
         Args:
             query: 搜索query
             k: 返回数量
             alpha: FTS5权重 (0-1)，向量权重为 (1-alpha)
+            task_type: 可选 task_type 过滤(PR-B)
+            topic: 可选 topic 过滤(PR-B)
 
         Returns:
             混合排序后的Skill列表
         """
-        # FTS5搜索
-        fts_results = self._do_search(query, k * 2)
+        # FTS5搜索(PR-B: 透传 task_type/topic)
+        fts_results = self._do_search(query, k * 2, task_type=task_type, topic=topic)
 
         # 如果embedding模型不可用，回退到纯FTS5
         if self.embedding_model is None:

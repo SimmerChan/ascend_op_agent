@@ -8,6 +8,7 @@
 
 from ascend_op_agent.orchestrator.cannbot_loader import (
     CANNBOT_ROOT,
+    CANBOT_BUNDLE_MAP,
     CannbotSkill,
     SKILL_BUNDLES,
     build_skill_bundle,
@@ -77,6 +78,7 @@ from ascend_op_agent.orchestrator.nodes.validation import (
 __all__ = [
     # cannbot
     "CANNBOT_ROOT",
+    "CANBOT_BUNDLE_MAP",
     "CannbotSkill",
     "SKILL_BUNDLES",
     "build_skill_bundle",

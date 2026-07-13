@@ -144,6 +144,7 @@ class ListSkillsArgs:
 
 @dataclass
 class SearchSkillsArgs:
+    query: Optional[str] = None
     task_type: Optional[str] = None
     topic: Optional[str] = None
 
@@ -476,8 +477,88 @@ def _action_list_skills(_: ListSkillsArgs) -> dict[str, Any]:
     return {"success": True, "data": out}
 
 
+def _make_skill_index() -> Any:
+    """PR-B U2 helper: lazy SkillIndex factory (allows tests to monkeypatch).
+
+    Kept module-level so tests can patch ``skill_manage_tool._make_skill_index``
+    to inject a tmp-index without going through sentence-transformers loads.
+    """
+    from ascend_op_agent.skills.index import SkillIndex
+    return SkillIndex()
+
+
 def _action_search(args: SearchSkillsArgs) -> dict[str, Any]:
-    """Frontmatter scan (U3 FTS5 deferred to PR-B). Adequate for 5-10 skill target."""
+    """PR-B U2/R6: FTS5+ChromaDB hybrid search (复用 SkillsIndex.hybrid_search),
+    支持 task_type/topic 过滤。Fallback: SkillsIndex 不可用 / 结果为空 → frontmatter scan(PR-A 行为)。
+
+    Routing:
+      - query 非空  → SkillsIndex.hybrid_search(query, k, task_type, topic)
+      - query 空 + task_type → SkillsIndex.search_by_task_type() + 内存 topic 过滤
+      - query 空 + 仅 topic (或全空) → frontmatter fallback(直接读 metadata)
+      - SkillsIndex unavailable or empty result → frontmatter fallback (PR-A compat)
+    """
+    # Build a SkillIndex (lazy). 若 instantiation 失败(LLM/embedding 依赖)→ fall back.
+    try:
+        index = _make_skill_index()
+    except Exception as e:  # noqa: BLE001 - 防御
+        logger.warning("SkillsIndex unavailable, falling back to frontmatter scan: %r", e)
+        return _action_search_frontmatter_fallback(args)
+
+    query = (args.query or "").strip()
+
+    if query:
+        # 文本搜索:走 hybrid_search(FTS5 BM25 + Chroma 向量融合,alpha=0.4)
+        try:
+            skills = index.hybrid_search(
+                query=query,
+                k=10,
+                task_type=args.task_type,
+                topic=args.topic,
+            )
+        except TypeError:
+            # 兼容旧 SkillIndex 签名(无 task_type/topic 参数)
+            skills = index.hybrid_search(query=query, k=10)
+        # SkillsIndex 结果为空 → frontmatter 兜底(保留 PR-A frontmatter-scan 兼容性)
+        if not skills and (args.task_type or args.topic):
+            return _action_search_frontmatter_fallback(args)
+    elif args.task_type:
+        # 空 query + task_type 过滤(R5b 路由命中后的列表渲染)
+        skills = index.search_by_task_type(args.task_type)
+        # search_by_task_type 不带 topic 字段 → frontmatter 二次过滤
+        if args.topic:
+            storage = SkillStorage()
+            filtered: list[Any] = []
+            for s in skills:
+                loaded = storage.load_skill(s.name)
+                meta = (loaded.metadata or {}).get("ascend_op_agent", {}) if loaded else {}
+                if meta.get("topic") == args.topic:
+                    filtered.append(s)
+            skills = filtered
+        # SkillsIndex 结果为空 → frontmatter 兜底(PR-A 兼容:
+        # 旧 self-built skills 没注册进 SkillsIndex 也能 search 找得到)
+        if not skills:
+            return _action_search_frontmatter_fallback(args)
+    else:
+        # 空 query 无 task_type:topic-only / 全空查询 → frontmatter fallback
+        return _action_search_frontmatter_fallback(args)
+
+    # 渲染响应(从 frontmatter metadata 取 task_type/topic,与 list_skills 对齐)
+    results: list[dict] = []
+    for s in skills:
+        storage = SkillStorage()
+        loaded = storage.load_skill(s.name)
+        meta = (loaded.metadata or {}).get("ascend_op_agent", {}) if loaded else {}
+        results.append({
+            "name": s.name,
+            "description": s.description,
+            "task_type": meta.get("task_type"),
+            "topic": meta.get("topic"),
+        })
+    return {"success": True, "data": results}
+
+
+def _action_search_frontmatter_fallback(args: SearchSkillsArgs) -> dict[str, Any]:
+    """PR-A frontmatter scan fallback (SkillsIndex 不可用 或 topic-only 查询时使用)."""
     storage = SkillStorage()
     names = storage.list_skills()
     results: list[dict] = []
@@ -490,6 +571,18 @@ def _action_search(args: SearchSkillsArgs) -> dict[str, Any]:
             continue
         if args.topic is not None and meta.get("topic") != args.topic:
             continue
+        # 文本 query 在 frontmatter 路径下做"name/description LIKE"过滤(仅退化路径)
+        q = (args.query or "").strip().lower()
+        if q:
+            haystack = " ".join(
+                [
+                    name.lower(),
+                    (loaded.description or "").lower(),
+                    " ".join(loaded.tags or []).lower(),
+                ]
+            )
+            if q not in haystack:
+                continue
         results.append(
             {
                 "name": loaded.name,
@@ -515,10 +608,17 @@ def skill_manage(
     archive_reason: Optional[str] = None,
     reference_path: Optional[str] = None,
     reference_name: Optional[str] = None,
+    search_query: Optional[str] = None,
     search_task_type: Optional[str] = None,
     search_topic: Optional[str] = None,
 ) -> dict[str, Any]:
-    """7-action skill manager. Always returns a dict with `success` (R16)."""
+    """7-action skill manager. Always returns a dict with `success` (R16).
+
+    PR-B U2: ``search`` accepts ``search_query`` (text) in addition to the
+    task_type/topic filters, routing through SkillsIndex.hybrid_search (FTS5
+    BM25 + ChromaDB vector fusion; alpha=0.4). If SkillsIndex fails to
+    instantiate (e.g. missing embedding deps), falls back to frontmatter scan.
+    """
     try:
         if action == "create":
             return _action_create(
@@ -562,6 +662,7 @@ def skill_manage(
         if action == "search":
             return _action_search(
                 SearchSkillsArgs(
+                    query=search_query,
                     task_type=search_task_type,
                     topic=search_topic,
                 )
@@ -597,8 +698,9 @@ def register(registry) -> None:
             "Manage self-built skills living under "
             "~/.ascend_op_agent/skills/self-built/{name}/SKILL.md. "
             "7 actions: create | patch (full-replacement) | add_reference | "
-            "archive | load | list_skills | search (frontmatter-scan, U3 FTS5 "
-            "deferred to PR-B)."
+            "archive | load | list_skills | search (PR-B U2 hybrid: FTS5 "
+            "BM25 + ChromaDB fusion via SkillsIndex). Falls back to "
+            "frontmatter scan if SkillsIndex is unavailable."
         ),
         func=skill_manage,
         parameters={
@@ -639,6 +741,13 @@ def register(registry) -> None:
                 "reference_name": {
                     "type": "string",
                     "description": "Name for the reference (add_reference).",
+                },
+                "search_query": {
+                    "type": "string",
+                    "description": (
+                        "Free-text query for hybrid search (FTS5 BM25 + "
+                        "ChromaDB fusion). Empty + task_type → list by type."
+                    ),
                 },
                 "search_task_type": {
                     "type": "string",
