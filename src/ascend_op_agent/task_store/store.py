@@ -63,6 +63,17 @@ CREATE TABLE IF NOT EXISTS tasks_meta (
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_threads_task ON task_threads(task_id);
+
+CREATE TABLE IF NOT EXISTS task_metrics (
+    id          TEXT PRIMARY KEY,
+    metric_name TEXT NOT NULL,
+    from_task   TEXT,
+    to_task     TEXT,
+    detail      TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_metrics_name_time ON task_metrics(metric_name, created_at);
 """
 
 META_ACTIVE_TASK = "active_task_id"
@@ -229,3 +240,70 @@ class TaskStore:
             except Exception:
                 c.rollback()
                 raise
+
+    def record_metric(
+        self,
+        metric_name: str,
+        from_task: Optional[str] = None,
+        to_task: Optional[str] = None,
+        detail: Optional[dict] = None,
+    ) -> str:
+        """记一条 dogfood metric 事件(R16 gate 自动采集)。append-only,返 metric id。
+
+        metric_name 如 "spontaneous_task_switch" / "context_juggling_complaint"。
+        from_task/to_task 用于 switch 事件溯源;detail 存自由 JSON(如抱怨描述)。
+        不与 task CRUD 耦合(set_active 行为不变),纯追加供 falsifier 汇总。
+        """
+        mid = uuid.uuid4().hex
+        now = _now_iso()
+        detail_json = json.dumps(detail or {}, ensure_ascii=False)
+        with self._conn() as c:
+            try:
+                c.execute("BEGIN IMMEDIATE")
+                c.execute(
+                    "INSERT INTO task_metrics (id, metric_name, from_task, to_task, detail, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (mid, metric_name, from_task, to_task, detail_json, now),
+                )
+                c.commit()
+            except Exception:
+                c.rollback()
+                raise
+        return mid
+
+    def list_metrics(
+        self,
+        metric_name: Optional[str] = None,
+        since: Optional[str] = None,
+    ) -> List[dict]:
+        """查 metric 事件(falsifier 汇总用)。
+
+        metric_name=None 全部;since(ISO) 过滤 created_at >= since。返回按 created_at 升序。
+        """
+        query = (
+            "SELECT id, metric_name, from_task, to_task, detail, created_at" " FROM task_metrics"
+        )
+        clauses: List[str] = []
+        params: List[str] = []
+        if metric_name is not None:
+            clauses.append("metric_name = ?")
+            params.append(metric_name)
+        if since is not None:
+            clauses.append("created_at >= ?")
+            params.append(since)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at"
+        with self._conn() as c:
+            rows = c.execute(query, params).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "metric_name": r["metric_name"],
+                "from_task": r["from_task"],
+                "to_task": r["to_task"],
+                "detail": json.loads(r["detail"] or "{}"),
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]

@@ -59,11 +59,29 @@ class TaskCommands:
         return tid
 
     def select(self, task_id: str) -> str:
-        """显式选/切 active task(R5 一期-a explicit)。"""
+        """显式选/切 active task(R5 一期-a explicit)。
+
+        R16 dogfood 埋点:若从另一个已有 active task 切到本 task(prev 非空且不同),
+        记一条 spontaneous_task_switch 事件。首次选(prev=None)/重选当前(prev==to)不计
+        —— 忠于"多任务并行切换"语义(DOGFOOD_GUIDE 场景 A);new() 不经此路径故不计。
+        """
         if self.store.get_task(task_id) is None:
             raise KeyError(f"unknown task: {task_id}")
+        prev = self.store.get_active()
         self.store.set_active(task_id)
+        if prev is not None and prev != task_id:
+            self.store.record_metric("spontaneous_task_switch", from_task=prev, to_task=task_id)
         return task_id
+
+    def flag_complaint(self, detail: str = "") -> str:
+        """一键标记 context-juggling 抱怨(R16 dogfood 主观 metric)。
+
+        用户感到"上下文混乱/进展不可查"时手动触发(CLI `task complain`)。
+        纯主观,无客观代理;记一条 context_juggling_complaint 事件供 falsifier 汇总。
+        """
+        return self.store.record_metric(
+            "context_juggling_complaint", detail={"note": detail} if detail else None
+        )
 
     def list(self) -> List[Dict[str, Any]]:
         """列任务 + state(rollup)+ thread 数(R8)。需 checkpoint_store。"""

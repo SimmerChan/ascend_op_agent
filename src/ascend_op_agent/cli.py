@@ -825,6 +825,23 @@ def task_progress(ctx: click.Context, task_id: Optional[str]) -> None:
         console.print(f"  thread {th['thread_id']}: {th['status']} @ {th['phase']}")
 
 
+@task.command("complain")
+@click.argument("detail", required=False, default="")
+@click.pass_context
+def task_complain(ctx: click.Context, detail: str) -> None:
+    """标记一次 context-juggling 抱怨(R16 dogfood 主观 metric)。
+
+    感到"上下文混乱/忘了在哪个任务/进展不可查"时调用。一键记录,供 falsifier 汇总。
+    """
+    cmds = _task_commands(ctx)
+    try:
+        mid = cmds.flag_complaint(detail)
+    except Exception as e:  # noqa: BLE001 - CLI 出口聚合
+        console.print(f"[red]{e}[/red]")
+        raise SystemExit(1)
+    console.print(f"[green]✓[/green] recorded complaint [dim]{mid}[/dim]")
+
+
 # ---- U5: /learn command (skill crystallization, sync injection — A2 fix) ----
 
 _AUTHORING_STANDARDS = """## Skill Authoring Standards (PR-A)
