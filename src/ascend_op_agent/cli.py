@@ -804,6 +804,20 @@ def task_select(ctx: click.Context, task_id: str) -> None:
         console.print(f"[red]{e}[/red]")
         raise SystemExit(1)
     console.print(f"[green]✓[/green] active task = [cyan]{task_id}[/cyan]")
+    # C: 自动检测"混乱模式"(窗口内频繁切换)+ 主动询问是否标记 complaint(complaints 半自动采集)。
+    # isatty 分流:真人终端才 click.confirm;非 tty(测试/脚本/管道)打印提示不阻塞。
+    # 检测/询问失败不影响 select 已成功(dogfood 埋点是辅助,不阻塞主操作)。
+    try:
+        if cmds.detect_churn():
+            if sys.stdin.isatty():
+                if click.confirm("  检测到最近频繁切换,上下文混乱吗?", default=False):
+                    cmds.flag_complaint("churn-detect: 频繁切换")
+                    console.print("[green]✓[/green] recorded complaint")
+            else:
+                console.print("[dim]  (检测到频繁切换;如感混乱可 `task complain`)[/dim]")
+            cmds.mark_complaint_prompted()
+    except Exception as e:  # noqa: BLE001 - churn 检测失败不阻塞 select
+        console.print(f"[dim]  (churn 检测跳过: {e})[/dim]")
 
 
 @task.command("progress")

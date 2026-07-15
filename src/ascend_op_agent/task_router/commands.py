@@ -21,10 +21,21 @@ chat(/task /progress)共用的纯逻辑层。一期-a 无 LLM 路由分类器(R5
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from ascend_op_agent.task_store import TASK_TYPES, TaskStore
 from ascend_op_agent.task_store.progress import get_task_progress, list_progress
+
+# C 方案(自动检测 + 主动询问)参数:窗口内频繁切换 → 视为"混乱模式",触发 CLI 询问。
+CHURN_WINDOW_MINUTES = 10  # 看最近这么多分钟内的 spontaneous_task_switch
+CHURN_THRESHOLD = 3  # 窗口内 switch >= 此值 → 触发
+COMPLAINT_COOLDOWN_MINUTES = 30  # 问过一次后这么多分钟内不再问(防打扰)
+META_LAST_COMPLAINT_PROMPT = "last_complaint_prompt_at"
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class NoActiveTaskError(Exception):
@@ -82,6 +93,37 @@ class TaskCommands:
         return self.store.record_metric(
             "context_juggling_complaint", detail={"note": detail} if detail else None
         )
+
+    def detect_churn(
+        self,
+        window_minutes: int = CHURN_WINDOW_MINUTES,
+        threshold: int = CHURN_THRESHOLD,
+    ) -> bool:
+        """检测"混乱模式"(C 方案:自动检测 + 主动询问)。
+
+        最近 window_minutes 内 spontaneous_task_switch >= threshold 且不在询问冷却期
+        → 返回 True(供 CLI 主动问用户"是否标记 complaint")。这是 complaints 的行为代理
+        信号,**仅用于提醒询问**,不直接进 gate —— complaint 是否记仍由用户回答决定,
+        保留主观判定准确性(避免"从容多任务"被误判)。
+        """
+        now = datetime.now(timezone.utc)
+        since = (now - timedelta(minutes=window_minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        recent = self.store.list_metrics("spontaneous_task_switch", since=since)
+        if len(recent) < threshold:
+            return False
+        last = self.store.get_meta(META_LAST_COMPLAINT_PROMPT)
+        if last:
+            try:
+                last_dt = datetime.strptime(last, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+                if (now - last_dt) < timedelta(minutes=COMPLAINT_COOLDOWN_MINUTES):
+                    return False
+            except ValueError:
+                pass  # 坏时间戳忽略,不阻塞检测
+        return True
+
+    def mark_complaint_prompted(self) -> None:
+        """记录"刚询问过" → 进入冷却期(避免短期内重复打扰)。询问后无论 y/n 都调。"""
+        self.store.set_meta(META_LAST_COMPLAINT_PROMPT, _utcnow_iso())
 
     def list(self) -> List[Dict[str, Any]]:
         """列任务 + state(rollup)+ thread 数(R8)。需 checkpoint_store。"""

@@ -241,6 +241,27 @@ class TaskStore:
                 c.rollback()
                 raise
 
+    def get_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """读 tasks_meta 任意 key(通用原语;active 用专用 get_active)。"""
+        with self._conn() as c:
+            row = c.execute("SELECT value FROM tasks_meta WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row is not None else default
+
+    def set_meta(self, key: str, value: str) -> None:
+        """写 tasks_meta 任意 key(upsert;active 用专用 set_active,后者带 task 存在性校验)。"""
+        with self._conn() as c:
+            try:
+                c.execute("BEGIN IMMEDIATE")
+                c.execute(
+                    "INSERT INTO tasks_meta (key, value) VALUES (?, ?)"
+                    " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (key, value),
+                )
+                c.commit()
+            except Exception:
+                c.rollback()
+                raise
+
     def record_metric(
         self,
         metric_name: str,
