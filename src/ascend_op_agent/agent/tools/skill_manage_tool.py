@@ -33,6 +33,7 @@ from typing import Any, Optional
 
 from ascend_op_agent.skills.models import Skill
 from ascend_op_agent.skills.storage import SkillStorage
+from ascend_op_agent.skills.usage_tracker import UsageTracker
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +293,21 @@ def _provenance(write_origin: str = "manual") -> dict[str, Any]:
     }
 
 
+def _record_usage(name: str, event: str) -> None:
+    """Skill Curator Lite Tier 0 活跃度埋点(R1/R2) — best-effort,绝不阻塞主操作(R6)。
+
+    调用方语义:load 成功 → record(name, "load");patch 成功(is_update=True)→
+    record(name, "patch")。tracking 失败(汇总表损坏时 UsageTracker 自身已降级重建,
+    这里只兜真正的 IO 异常)仅 warn,skill_manage 主结果照常返回。cannbot vendor skill
+    不经 skill_manage(R4 由架构保证:cannbot 走独立 CANNBOT_ROOT,load_skill 只搜 flat
+    + self-built,接触不到),故不会出现在此埋点路径。
+    """
+    try:
+        UsageTracker().record(name, event)
+    except Exception as e:  # noqa: BLE001 — best-effort,埋点失败不影响 skill_manage
+        logger.warning("usage tracking (%s/%s) failed: %s; ignored", name, event, e)
+
+
 # Action handlers ------------------------------------------------------------
 
 
@@ -340,6 +356,10 @@ def _save_self_built(
         metadata=metadata,
     )
     saved_path = storage.save_skill(skill, dimension="self_built")
+    if is_update:
+        # R2 活跃度埋点:仅 patch(is_update=True)记 patch_count;create 共用此路径,
+        # 不 gate 会让 create() 误增 patch_count(FE1)。best-effort,不阻塞保存。
+        _record_usage(args.name, "patch")
 
     out: dict[str, Any] = {"success": True, "data": {"saved_to": saved_path, "name": args.name}}
     if warnings:
@@ -454,6 +474,8 @@ def _action_load(args: LoadSkillArgs) -> dict[str, Any]:
             f"Skill {args.skill_name!r} not found.",
             "Verify the name. Use action='list_skills' to enumerate available skills.",
         )
+    # R1 活跃度埋点:确认 skill 存在并准备返回前记 use_count。best-effort,不阻塞 load。
+    _record_usage(args.skill_name, "load")
     return {"success": True, "data": loaded.to_dict()}
 
 

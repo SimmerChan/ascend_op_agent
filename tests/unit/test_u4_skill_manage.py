@@ -25,20 +25,30 @@ Use when the user wants to debug CPU-Ascend divergence in tiling.
 
 
 def _use_tmp_storage(tmp_path, monkeypatch):
-    """Route every ``SkillStorage()`` call inside the tool to ``tmp_path``.
+    """Route every ``SkillStorage()`` / ``UsageTracker()`` call to ``tmp_path``.
 
-    Tools construct ``SkillStorage()`` (no args) internally per action handler;
-    we monkeypatch ``__init__`` so the real class binds ``skills_dir`` to our
-    sandbox instead of ``~/.ascend_op_agent/skills``.
+    Tools construct ``SkillStorage()`` and (since Skill Curator Lite Tier 0)
+    ``UsageTracker()`` (no args) internally per action handler; we monkeypatch
+    both ``__init__`` so the real classes bind ``skills_dir`` to our sandbox
+    instead of ``~/.ascend_op_agent/skills`` — keeping load/patch 埋点 hermetic
+    and out of the real home directory.
     """
     from ascend_op_agent.skills import storage as storage_mod
+    from ascend_op_agent.skills import usage_tracker as usage_mod
 
-    _orig_init = storage_mod.SkillStorage.__init__
+    _orig_storage_init = storage_mod.SkillStorage.__init__
 
-    def _init(self, skills_dir=None):
-        _orig_init(self, skills_dir=str(tmp_path))
+    def _storage_init(self, skills_dir=None):
+        _orig_storage_init(self, skills_dir=str(tmp_path))
 
-    monkeypatch.setattr(storage_mod.SkillStorage, "__init__", _init)
+    monkeypatch.setattr(storage_mod.SkillStorage, "__init__", _storage_init)
+
+    _orig_usage_init = usage_mod.UsageTracker.__init__
+
+    def _usage_init(self, skills_dir=None):
+        _orig_usage_init(self, skills_dir=str(tmp_path))
+
+    monkeypatch.setattr(usage_mod.UsageTracker, "__init__", _usage_init)
 
 
 def test_create_happy_path_writes_to_self_built(tmp_path, monkeypatch):

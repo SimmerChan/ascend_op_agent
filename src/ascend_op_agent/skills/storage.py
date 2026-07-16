@@ -256,6 +256,20 @@ class SkillStorage:
 
         return sorted(set(skills))
 
+    def list_self_built(self) -> list[str]:
+        """仅列出 self-built/{name}/SKILL.md 的活跃 skill 名（Tier 0 curator 用，R5）。
+
+        与 ``list_skills()`` 的区别:后者会混入 flat 平铺目录({name}_reference /
+        {name}_bugfix / {name}_performance / 模板 {name}),违反 R5「curator 只看 self-built」。
+        archived skill 的 SKILL.md 已被 skill_manage archive 移入 self-built/{name}/.archived/,
+        故其原位不再有 SKILL.md → 自然排除(只看活跃 skill)。
+        """
+        sb = self.skills_dir / SELF_BUILT_SUBDIR
+        if not sb.is_dir():
+            return []
+        names = [sub.name for sub in sb.iterdir() if sub.is_dir() and (sub / "SKILL.md").is_file()]
+        return sorted(names)
+
     def skill_exists(self, name: str) -> bool:
         """检查skill是否存在（搜索 flat 与 self-built/）"""
         return (self.skills_dir / name / "SKILL.md").exists() or (

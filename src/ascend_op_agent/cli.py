@@ -856,6 +856,73 @@ def task_complain(ctx: click.Context, detail: str) -> None:
     console.print(f"[green]✓[/green] recorded complaint [dim]{mid}[/dim]")
 
 
+# ---- Skill Curator Lite: curator 子命令组(Tier 0 只读 status) ----
+
+
+@main.group()
+@click.option(
+    "--skills-dir",
+    default=None,
+    help="skills 根目录(默认 ~/.ascend_op_agent/skills;测试注入用)",
+)
+@click.pass_context
+def curator(ctx: click.Context, skills_dir: Optional[str]) -> None:
+    """Skill Curator Lite — self-built skill 活跃度观测与(未来)维护。
+
+    Tier 0(当前):``curator status`` 只读汇总各 self-built skill 的 use_count /
+    patch_count / 最近活动,作 STRATEGY.md「Skill reuse rate」metric 的可观测出口。
+    Tier 1(确定性状态机 active→stale→archived)与 Tier 2(LLM 合并伞形)在 skill 规模
+    到达门槛前不启用 —— 本身作 falsifier:self-built 停在个位数则永不启用 = 自动判定
+    技能库不需要自动维护。
+    """
+    ctx.ensure_object(dict)
+    ctx.obj["curator_skills_dir"] = skills_dir
+
+
+@curator.command("status")
+@click.pass_context
+def curator_status(ctx: click.Context) -> None:
+    """只读汇总各 self-built skill 活跃度(按最近活动排序;不做状态推导,Tier 1 范围)。"""
+    from ascend_op_agent.skills.storage import SkillStorage
+    from ascend_op_agent.skills.usage_tracker import UsageTracker
+
+    skills_dir = ctx.obj.get("curator_skills_dir")
+    storage = SkillStorage(skills_dir=skills_dir)
+    tracker = UsageTracker(skills_dir=skills_dir)
+
+    names = storage.list_self_built()  # self-built-only,排除 archived / reference / flat
+    if not names:
+        console.print("[yellow]无 self-built skill[/yellow]")
+        return
+
+    usage = tracker.load()  # R6:缺失/损坏自动降级返空
+    rows = []
+    for name in names:
+        entry = usage.get(name, {})
+        last_used = entry.get("last_used_at") or ""
+        last_activity = entry.get("last_activity_at") or ""
+        # 最近活动 = load/patch 两者中更晚的(ISO 字典序 = 时间序);都无则为空串。
+        recent = max(last_used, last_activity)
+        rows.append(
+            {
+                "name": name,
+                "use_count": entry.get("use_count", 0),
+                "patch_count": entry.get("patch_count", 0),
+                "recent": recent,
+            }
+        )
+    # 最近活动在前;无活动(空串)排最后。
+    rows.sort(key=lambda r: r["recent"], reverse=True)
+    for r in rows:
+        when = r["recent"] or "[dim]未使用[/dim]"
+        console.print(
+            f"[cyan]{r['name']}[/cyan] "
+            f"use=[bold]{r['use_count']}[/bold] "
+            f"patch=[bold]{r['patch_count']}[/bold] "
+            f"最近活动={when}"
+        )
+
+
 # ---- U5: /learn command (skill crystallization, sync injection — A2 fix) ----
 
 _AUTHORING_STANDARDS = """## Skill Authoring Standards (PR-A)
