@@ -431,6 +431,7 @@ class _FakeAgent:
         skills_layer_override=None,
         *,
         task_type=None,
+        no_tools=False,
     ):
         self.captured_input = user_input
         self._h.append({"role": "user", "content": user_input})

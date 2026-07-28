@@ -30,12 +30,25 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 class LLMConfig(BaseModel):
     """LLM 配置"""
+
     provider: str = "openai"
     api_base: str = "https://api.openai.com/v1"
     api_key: str = Field(default="", description="API密钥（敏感）")
+    auth_token: str = Field(
+        default="",
+        description="Bearer auth token for Ark-like providers; takes precedence over api_key when non-empty",
+    )
     model: str = "gpt-4o"
     max_retries: int = 3
     timeout: int = 120
+    disable_thinking: bool = Field(
+        default=False,
+        description="禁用推理模型 extended thinking。glm-5.2/Ark 等推理模型在 SOUL 等"
+        "长 system_prompt 下 thinking 会膨胀吃光 max_tokens(实测 12k-15k 字符 vs "
+        "max_tokens=4096),导致 visible text block 输出为空。设 True 传 "
+        "thinking={type:disabled}。非推理模型(MiniMax-M3)保持 False(其兼容端点"
+        "可能不认 thinking 参数)。",
+    )
 
     @field_validator("provider")
     @classmethod
@@ -48,6 +61,7 @@ class LLMConfig(BaseModel):
 
 class MCPServerConfig(BaseModel):
     """MCP 服务器配置"""
+
     name: str
     type: str = "stdio"  # stdio / http / streamable-http
     command: Optional[str] = None
@@ -60,17 +74,20 @@ class MCPServerConfig(BaseModel):
 
 class MCPConfig(BaseModel):
     """MCP 配置"""
+
     servers: list[MCPServerConfig] = Field(default_factory=list)
 
 
 class SkillRepositoryConfig(BaseModel):
     """Skill 仓库配置"""
+
     name: str
     url: str
 
 
 class RemoteConfig(BaseModel):
     """远程开发环境配置"""
+
     host: str
     user: str
     port: int = 22
@@ -95,22 +112,26 @@ class RemoteConfig(BaseModel):
 
 class LocalConfig(BaseModel):
     """本地模式配置"""
+
     workspace: str = "./workspace"
     skills_path: str = "~/.ascend_op_agent/skills"
 
 
 class EmbeddingConfig(BaseModel):
     """Embedding 模型配置"""
+
     model: str = "sentence-transformers/all-MiniLM-L6-v3"
 
 
 class VectorStoreConfig(BaseModel):
     """向量存储配置"""
+
     persist_dir: str = "~/.ascend_op_agent/vector_db"
 
 
 class SessionConfig(BaseModel):
     """会话记录配置"""
+
     persist_dir: str = "~/.ascend_op_agent/sessions"
     max_history: Optional[int] = None
     flush_interval_ms: int = 100
@@ -122,12 +143,14 @@ class CheckpointConfig(BaseModel):
     支撑崩溃恢复(R4):节点每步落 checkpoint,backend 启动时按 auto_resume
     检测 pending thread 并续跑。
     """
+
     db_path: str = "~/.ascend_op_agent/checkpoints.db"
     auto_resume: bool = True
 
 
 class LoggingConfig(BaseModel):
     """日志配置"""
+
     level: str = "INFO"
     format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     file: Optional[str] = None
@@ -144,6 +167,7 @@ class LoggingConfig(BaseModel):
 
 class Config(BaseModel):
     """主配置类"""
+
     llm: LLMConfig = Field(default_factory=LLMConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     skill_repositories: list[SkillRepositoryConfig] = Field(default_factory=list)

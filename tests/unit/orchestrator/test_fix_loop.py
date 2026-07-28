@@ -67,6 +67,7 @@ def test_run_fix_loop_converges_in_three_rounds() -> None:
 
 def test_run_fix_loop_max_rounds_terminates_failed() -> None:
     """总是有问题 → max_rounds 终止 status=failed。"""
+
     def review(_state):
         return ReviewResult(clean=False, issues=["persistent bug"])
 
@@ -82,6 +83,7 @@ def test_run_fix_loop_max_rounds_terminates_failed() -> None:
 
 def test_run_fix_loop_fatal_signal_terminates_failed() -> None:
     """review.fatal=True → 立即 status=failed reason=fatal。"""
+
     def review(_state):
         return ReviewResult(clean=False, fatal=True, issues=["unsupported dtype fp128"])
 
@@ -96,6 +98,7 @@ def test_run_fix_loop_fatal_signal_terminates_failed() -> None:
 
 def test_run_fix_loop_fatal_keyword_upgrades_to_fatal() -> None:
     """review.raw_response 含 fatal keyword → 升级为 fatal。"""
+
     def review(_state):
         # clean=False, fatal=False,但响应里含 "unsupported dtype"
         return ReviewResult(
@@ -123,6 +126,7 @@ def test_run_fix_loop_fatal_keyword_upgrades_to_fatal() -> None:
 
 def test_run_fix_loop_custom_fatal_keywords_override_defaults() -> None:
     """自定义 fatal_keywords 替换默认列表(不命中默认 'unsupported dtype' 时)。"""
+
     def review(_state):
         return ReviewResult(
             clean=False,
@@ -170,7 +174,9 @@ def test_run_fix_loop_fix_update_applied_to_state() -> None:
 def test_run_fix_loop_rejects_invalid_max_rounds() -> None:
     """max_rounds < 1 抛 ValueError。"""
     with pytest.raises(ValueError, match="max_rounds"):
-        run_fix_loop({}, "compile", lambda s: ReviewResult(clean=True), lambda s, i: {}, max_rounds=0)
+        run_fix_loop(
+            {}, "compile", lambda s: ReviewResult(clean=True), lambda s, i: {}, max_rounds=0
+        )
 
 
 # ---- make_fix_loop_node ----
@@ -342,6 +348,7 @@ def test_run_fix_loop_messages_preserved_across_rounds() -> None:
 
 def test_run_fix_loop_messages_accumulate_not_overwrite() -> None:
     """U3: 3 轮 fix 各加 1 条 message → state.messages 含 3 条(非最后 1 条)。"""
+
     def review(state):
         return ReviewResult(clean=len(state.get("messages", [])) >= 3, raw_response="r")
 
@@ -364,6 +371,7 @@ def test_run_fix_loop_memory_pools_dict_level_merge() -> None:
     跨轮跨不同 key 的 merge 才会"看起来像累积"(e.g., fix 第 1 轮加 'memory', 第 2 轮加 'user',
     最终两个 key 都在)。这是 PhaseRunner 的既有语义,U3 只修复 messages 等 APPEND 字段的覆盖 bug。
     """
+
     def review(state):
         pools = state.get("memory_pools", {})
         return ReviewResult(clean="user" in pools and "memory" in pools, raw_response="r")
@@ -386,6 +394,7 @@ def test_run_fix_loop_memory_pools_dict_level_merge() -> None:
 def test_apply_update_module_level_messages_extend() -> None:
     """apply_update module-level 函数对 messages 走 extend(直接单测 reducer)。"""
     from ascend_op_agent.orchestrator.state_machine import apply_update
+
     state = {"messages": [{"role": "user", "content": "orig"}]}
     apply_update(state, {"messages": [{"role": "assistant", "content": "new"}]})
     assert len(state["messages"]) == 2

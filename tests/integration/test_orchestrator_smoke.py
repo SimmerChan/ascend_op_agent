@@ -72,6 +72,7 @@ class FakeAgent:
         skills_layer_override: Any = None,
         *,
         task_type: Optional[str] = None,
+        no_tools: bool = False,
     ) -> str:
         self.last_prompt = user_input
         self.last_skills_override = skills_layer_override
@@ -150,6 +151,7 @@ def test_llm_node_rehydrates_conversation_history(tmp_path) -> None:
             skills_layer_override=None,
             *,
             task_type=None,
+            no_tools=False,
         ):
             seen_histories.append(list(a._conversation_history))
             return orig_run(
@@ -212,6 +214,7 @@ def test_skill_bundle_text_injected_to_prompt_builder(tmp_path) -> None:
             skills_layer_override=None,
             *,
             task_type=None,
+            no_tools=False,
         ):
             captured["override"] = skills_layer_override
             return orig_run(
@@ -263,6 +266,7 @@ def test_memory_pools_persist_across_nodes(tmp_path) -> None:
             skills_layer_override=None,
             *,
             task_type=None,
+            no_tools=False,
         ):
             # 验证 memory 已被 rehydrate 到 agent
             items = a.memory.get("memory")

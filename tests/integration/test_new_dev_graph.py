@@ -54,6 +54,7 @@ class FakeAgent:
         skills_layer_override: Any = None,
         *,
         task_type: Any = None,
+        no_tools=False,
     ) -> str:
         self.last_skills_override = skills_layer_override
         self._conversation_history.append({"role": "user", "content": user_input})
@@ -69,43 +70,11 @@ def _factory() -> FakeAgent:
 # ---- 全阶段跑通 ----
 
 
-def test_scaffold_codegen_single_node_path(tmp_path) -> None:
-    """参考工程迁移路径:use_scaffold_codegen=True 时,codegen 是 1 个节点,
-    从 scaffold 读关键文件填 code_result(不调 LLM,见 e2e 2026-06-25 LLM 行为
-    不可靠 55% 失败率的兜底)。"""
-    store = CheckpointStore(tmp_path / "ck.db")
-    runner = build_new_dev_graph(
-        store=store,
-        agent_factory=_factory,
-        use_scaffold_codegen=True,
-    )
-    # 准备 scaffold 目录让节点能读到
-    import os
-
-    scaffold_op = Path("/tmp/e2e_ops_local/op_add")
-    if not scaffold_op.exists():
-        # 跑这个单测时没有 scaffold,只验证 phase_history 顺序对就行
-        pass
-
-    runner.invoke("design a trivial add op", thread_id="t1")
-    runner.resume("t1", payload={"approved": True})
-    state = runner.resume("t1", payload={"mode": "sample"})
-
-    # scaffold 路径只 1 个 codegen 节点
-    expected = [
-        "entry",
-        "analyze",
-        "design",
-        "codegen",
-        "review_fix",
-        "compile",
-        "precision",
-        "delivery_mode",
-        "framework_adapt",
-        "done",
-    ]
-    assert state["phase_history"] == expected
-    assert state["current_phase"] == "done"
+def test_scaffold_codegen_single_node_path_REMOVED(tmp_path) -> None:
+    """U4 重构删除了 use_scaffold_codegen 单节点路径(统一为 scaffold 注入 + LLM 语义
+    多节点)。原测试期望单 codegen 节点,U4 后多节点由 test_new_dev_runs_all_phases
+    覆盖。占位避免 import os 未用,真实断言移至 test_new_dev_runs_all_phases。"""
+    assert True
 
 
 def test_new_dev_runs_all_phases_after_design_approval(tmp_path) -> None:
@@ -126,11 +95,10 @@ def test_new_dev_runs_all_phases_after_design_approval(tmp_path) -> None:
         "entry",
         "analyze",
         "design",
-        "codegen_kernel_cpp",
-        "codegen_host_cpp",
-        "codegen_cmakelists",
-        "codegen_build_sh",
-        "codegen_kernel_ini",
+        "codegen_scaffold",
+        "codegen_kernel",
+        "codegen_host",
+        "codegen_proto",
         "review_fix",
         "compile",
         "precision",
@@ -195,11 +163,10 @@ def test_resume_after_design_approval_completes_all_phases(tmp_path) -> None:
         "entry",
         "analyze",
         "design",
-        "codegen_kernel_cpp",
-        "codegen_host_cpp",
-        "codegen_cmakelists",
-        "codegen_build_sh",
-        "codegen_kernel_ini",
+        "codegen_scaffold",
+        "codegen_kernel",
+        "codegen_host",
+        "codegen_proto",
         "review_fix",
         "compile",
         "precision",
@@ -242,6 +209,7 @@ def test_skill_bundles_passed_to_each_phase(tmp_path) -> None:
             skills_layer_override=None,
             *,
             task_type=None,
+            no_tools=False,
         ):
             seen_overrides.append(skills_layer_override)
             return orig_run(
@@ -382,6 +350,7 @@ def test_crash_in_codegen_resumes_correctly(tmp_path) -> None:
             skills_layer_override=None,
             *,
             task_type=None,
+            no_tools=False,
         ):
             # 仅 codegen 节点的 task_prompt 含 "developer"
             if "developer" in user_input:

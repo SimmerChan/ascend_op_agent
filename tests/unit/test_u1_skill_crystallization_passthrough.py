@@ -110,7 +110,7 @@ def test_phase_runner_invoke_writes_task_type_to_state(tmp_path) -> None:
 def test_phase_runner_invoke_default_task_type_is_none(tmp_path) -> None:
     """invoke(...) 不传 task_type → state 不含 task_type 键(state.get 返回 None)。
 
-    关键(U2 默认路径前置):非 PhaseRunner 路径(如纯 /learn 聊天)默认 task_type=None,
+    关键(U2 默认路径前置):非 PhaseRunner 路径(如纯 /learn 聊天)默认 task_type=None, no_tools=False,
     Layer 6 走"只 self-built, 不渲染 cannbot 全量"。
     """
     store = CheckpointStore(tmp_path / "ck.db")
@@ -121,7 +121,7 @@ def test_phase_runner_invoke_default_task_type_is_none(tmp_path) -> None:
 
     # U1 契约:state.get('task_type') == None(未设置,不返回空串)
     assert state.get("task_type") is None
-    # initial_state 也显式写 task_type=None
+    # initial_state 也显式写 task_type=None, no_tools=False
     blank = initial_state("blank")
     assert blank.get("task_type") is None
 
@@ -146,7 +146,7 @@ class _CapturingOrchestrator:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def invoke(self, user_input, thread_id, task_type=None):
+    def invoke(self, user_input, thread_id, task_type=None, op_info=None):
         self.calls.append(
             {
                 "user_input": user_input,
@@ -215,6 +215,7 @@ class _TaskTypeRecorderAgent:
         skills_layer_override=None,
         *,
         task_type=None,
+        no_tools=False,
     ):
         self.run_calls.append(
             {
@@ -268,7 +269,7 @@ def test_llm_node_passes_task_type_to_run_conversation(tmp_path) -> None:
 
 
 def test_llm_node_passes_task_type_none_when_state_missing(tmp_path) -> None:
-    """state 没有 task_type 时,run_conversation 收 task_type=None(默认路径)。"""
+    """state 没有 task_type 时,run_conversation 收 task_type=None, no_tools=False(默认路径)。"""
     from ascend_op_agent.orchestrator.nodes.common import make_llm_node
 
     captured: list[dict[str, Any]] = []
@@ -335,6 +336,7 @@ class _RecorderPromptBuilder:
         memory_store,
         skills_layer_override=None,
         task_type=None,
+        no_tools=False,
     ):
         self.calls.append(
             {

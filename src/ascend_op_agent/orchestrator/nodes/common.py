@@ -34,6 +34,14 @@ from ascend_op_agent.orchestrator.state_machine import Node
 AgentFactory = Callable[[], Any]
 
 
+def to_pascal(snake: str) -> str:
+    """snake_case -> PascalCase('vector_add' -> 'VectorAdd','add' -> 'Add')。
+
+    U3 方向 B:op 名参数化 scaffold 时,从 snake_case op 名转 PascalCase 类名。
+    """
+    return "".join(part.capitalize() for part in snake.split("_") if part)
+
+
 def make_llm_node(
     phase: str,
     task_prompt_template: str,
@@ -41,6 +49,7 @@ def make_llm_node(
     agent_factory: Optional[AgentFactory] = None,
     template_vars: Optional[dict] = None,
     skill_names: Optional[list[str]] = None,
+    no_tools: bool = False,
 ) -> Node:
     """构造 LLM 节点。
 
@@ -122,6 +131,7 @@ def make_llm_node(
             task_prompt,
             skills_layer_override=skill_bundle_text,
             task_type=state.get("task_type"),
+            no_tools=no_tools,
         )
 
         # 7. 抓取 memory 快照(merge 现有)
@@ -136,17 +146,21 @@ def make_llm_node(
         # 编排器拿不到 file_write 实际路径(commit 1783f9b 记录)。
         code_result = dict(state.get("code_result") or {})
         existing_files = list(code_result.get("files") or [])
-        existing_paths = {f.get("path") for f in existing_files if isinstance(f, dict)}
+        # U1(强化 fix_loop):existing_paths 不预填 existing 已有 path —— 允许同 path
+        # 覆盖(第 2 轮 fix 修同一文件必须生效)。仅用于 markdown 分支防同响应内重复。
+        existing_paths = set()
+        # U1:file_write 同 path 取后者(dict 保插入序),原列表推导 `not in existing_paths`
+        # 会让第 2 轮新 content 进不了 code_result.files。
+        _fw_by_path: dict[str, str] = {}
+        for entry in getattr(agent, "_tool_calls_log", []):
+            if entry.get("name") != "file_write":
+                continue
+            _fw_path = entry.get("args", {}).get("path")
+            if not _fw_path:
+                continue
+            _fw_by_path[_fw_path] = entry["args"].get("content", "")
         new_files = [
-            {
-                "path": entry["args"].get("path", ""),
-                "content": entry["args"].get("content", ""),
-                "tool": entry["name"],
-            }
-            for entry in getattr(agent, "_tool_calls_log", [])
-            if entry.get("name") == "file_write"
-            and entry.get("args", {}).get("path")
-            and entry["args"]["path"] not in existing_paths
+            {"path": p, "content": c, "tool": "file_write"} for p, c in _fw_by_path.items()
         ]
 
         # 8b. Markdown fallback:某些 LLM(尤其 OpenAI 协议下的 GLM-5.2)在 codegen
@@ -193,14 +207,23 @@ def make_llm_node(
                         from pathlib import Path as _P
 
                         _p = _P(path)
-                        if _p.is_absolute() and not _p.exists():
+                        # U1:去掉 not exists,允许覆盖第 2 轮同 path 修复(原条件让旧文件残留)。
+                        if _p.is_absolute():
                             _p.parent.mkdir(parents=True, exist_ok=True)
                             _p.write_text(content, encoding="utf-8")
                     except OSError:
                         pass
 
         if new_files:
-            code_result["files"] = existing_files + new_files
+            # U1:existing 中与新 file 同 path 的旧条目被覆盖(剔除),让 fix_loop 第 2 轮
+            # 修复替换 code_result.files 里的旧 content(原 existing + new 会留两条同 path)。
+            new_paths = {f["path"] for f in new_files}
+            surviving_existing = [
+                f
+                for f in existing_files
+                if not (isinstance(f, dict) and f.get("path") in new_paths)
+            ]
+            code_result["files"] = surviving_existing + new_files
 
         update = {
             "messages": [{"role": "assistant", "content": response}],

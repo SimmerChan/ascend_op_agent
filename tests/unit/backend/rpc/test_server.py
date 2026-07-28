@@ -85,11 +85,7 @@ class TestJSONRPCProtocol:
 
     def test_build_error(self):
         """测试构建错误响应"""
-        response = JSONRPCProtocol.build_error(
-            id=1,
-            code=-32601,
-            message="Method not found"
-        )
+        response = JSONRPCProtocol.build_error(id=1, code=-32601, message="Method not found")
         data = json.loads(response)
 
         assert data["jsonrpc"] == "2.0"
@@ -100,8 +96,7 @@ class TestJSONRPCProtocol:
     def test_build_notification(self):
         """测试构建通知"""
         notification = JSONRPCProtocol.build_notification(
-            method="agent.progress",
-            params={"percent": 50}
+            method="agent.progress", params={"percent": 50}
         )
         data = json.loads(notification)
 
@@ -120,6 +115,7 @@ class TestJSONRPCServer:
 
     def test_register_method(self, server):
         """测试注册方法"""
+
         def handler(**params):
             return {"status": "ok"}
 
@@ -155,6 +151,7 @@ class TestJSONRPCServer:
     @pytest.mark.asyncio
     async def test_sync_handler(self, server, capsys):
         """测试同步处理函数"""
+
         def sync_handler(**params):
             return {"result": params.get("input")}
 
@@ -174,6 +171,7 @@ class TestJSONRPCServer:
     @pytest.mark.asyncio
     async def test_async_handler(self, server, capsys):
         """测试异步处理函数"""
+
         async def async_handler(**params):
             await asyncio.sleep(0.01)
             return {"result": params.get("input")}
@@ -194,6 +192,7 @@ class TestJSONRPCServer:
     @pytest.mark.asyncio
     async def test_handler_exception(self, server, capsys):
         """测试处理函数异常时返回错误响应"""
+
         def failing_handler(**params):
             raise ValueError("Test error")
 

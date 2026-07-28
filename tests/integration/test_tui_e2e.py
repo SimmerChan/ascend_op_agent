@@ -56,6 +56,7 @@ class TestTUIE2E:
     def test_backend_module_importable(self):
         """测试后端模块可以正常导入"""
         import sys
+
         project_root = Path(__file__).parent.parent.parent
         src_path = project_root / "src"
 
@@ -85,19 +86,13 @@ class TestTUIE2E:
         from ascend_op_agent.backend import AgentResponse
 
         # 测试 TypedDict 约束
-        valid_response = AgentResponse(
-            status="completed",
-            response="test response",
-            data=None
-        )
+        valid_response = AgentResponse(status="completed", response="test response", data=None)
         assert valid_response["status"] == "completed"
         assert valid_response["response"] == "test response"
 
         # 测试可选字段
         error_response = AgentResponse(
-            status="error",
-            response=None,
-            data={"message": "error occurred"}
+            status="error", response=None, data={"message": "error occurred"}
         )
         assert error_response["status"] == "error"
         assert error_response["data"]["message"] == "error occurred"
@@ -156,6 +151,7 @@ class TestProtocolIntegration:
 
         # JSON 序列化测试
         from ascend_op_agent.backend.rpc.protocol import RPCNotification
+
         notif = RPCNotification(jsonrpc="2.0", method="test", params={"a": 1})
         json_str = JSONRPCProtocol.build_notification("test", {"a": 1})
         assert '"jsonrpc": "2.0"' in json_str

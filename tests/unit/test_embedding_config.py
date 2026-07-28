@@ -123,9 +123,7 @@ class TestEmbeddingConfigEnvVar:
             del os.environ["EMBEDDING_MODEL"]
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            yaml.dump({
-                "embedding": {"model": "${EMBEDDING_MODEL}"}
-            }, f)
+            yaml.dump({"embedding": {"model": "${EMBEDDING_MODEL}"}}, f)
             config_path = f.name
 
         try:

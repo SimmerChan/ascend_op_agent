@@ -190,8 +190,14 @@ def _extract_files_from_messages(messages: list[dict]) -> list[dict]:
     return extracted
 
 
-def make_operator_path_resolver(remote_workdir: str):
-    """返回 (state) -> str(远程 operator_path,供 build.sh 跑)。"""
+def make_operator_path_resolver(
+    remote_workdir: str, operator_dir: str = "/tmp/e2e_ops_local/op_add"
+):
+    """返回 (state) -> str(远程 operator_path,供 build.sh 跑)。
+
+    operator_dir: 本地算子工程根(codegen 落盘根,与 codegen template_vars 一致)。
+    U1 方向 B:落盘保留子目录(op_kernel/arch22/ 等),tar 整个 operator_dir 到远程。
+    """
 
     def _resolve(state: dict) -> str:
         code_result = state.get("code_result") or {}
@@ -244,12 +250,22 @@ def make_operator_path_resolver(remote_workdir: str):
                     txt = txt.replace("AddExample", "OpKernel")
                     cmake_file.write_text(txt, encoding="utf-8")
 
-        # 第一个文件所在目录
-        first = files[0]["path"]
-        local_dir = str(Path(first).parent)
-        # rsync 到 910B 容器
-        remote_dir = f"{remote_workdir}/{Path(local_dir).name}"
-        _rsync_to_npu(local_dir, remote_dir)
+        # U1 方向 B:落盘 files 到 operator_dir(保留子目录 op_kernel/arch22/ 等),
+        # tar 整个 operator_dir 到远程。原 Path(first).parent + Path.name 扁平化
+        # 丢弃子目录(op_kernel/arch22/x.cpp -> op_add/x.cpp),破坏 CMakeLists 子目录引用。
+        Path(operator_dir).mkdir(parents=True, exist_ok=True)
+        for f in files:
+            p = Path(f["path"])
+            try:
+                rel = p.relative_to(operator_dir)
+                dst = Path(operator_dir) / rel
+            except ValueError:
+                # f.path 不在 operator_dir 下(兼容旧扁平路径),用 basename 落到根
+                dst = Path(operator_dir) / p.name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(f["content"], encoding="utf-8")
+        remote_dir = f"{remote_workdir}/{Path(operator_dir).name}"
+        _rsync_to_npu(operator_dir, remote_dir)
         return remote_dir
 
     return _resolve

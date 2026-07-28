@@ -278,7 +278,9 @@ class TestJSONRPCProtocol:
         """测试通知构建"""
         from ascend_op_agent.backend.rpc.protocol import JSONRPCProtocol
 
-        notification = JSONRPCProtocol.build_notification("agent.thinking", {"message": "thinking..."})
+        notification = JSONRPCProtocol.build_notification(
+            "agent.thinking", {"message": "thinking..."}
+        )
         parsed = json.loads(notification)
 
         assert parsed["jsonrpc"] == "2.0"

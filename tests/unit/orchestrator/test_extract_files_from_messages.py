@@ -40,14 +40,17 @@ def test_extracts_cpp_block_with_double_slash_path() -> None:
 
 def test_extracts_bash_block_with_hash_file_path() -> None:
     messages = [
-        {"role": "assistant", "content": (
-            "```bash\n"
-            "# File: /tmp/op/build.sh\n"
-            "#!/bin/bash\n"
-            "set -e\n"
-            "cmake -B build\n"
-            "```\n"
-        )},
+        {
+            "role": "assistant",
+            "content": (
+                "```bash\n"
+                "# File: /tmp/op/build.sh\n"
+                "#!/bin/bash\n"
+                "set -e\n"
+                "cmake -B build\n"
+                "```\n"
+            ),
+        },
     ]
     result = _extract_files_from_messages(messages)
     assert len(result) == 1
@@ -57,18 +60,21 @@ def test_extracts_bash_block_with_hash_file_path() -> None:
 
 def test_extracts_multiple_files_in_one_response() -> None:
     messages = [
-        {"role": "assistant", "content": (
-            "Two files:\n"
-            "```cpp\n"
-            "// /tmp/op/a.cpp\n"
-            "int a() { return 1; }\n"
-            "```\n"
-            "and\n"
-            "```cpp\n"
-            "// /tmp/op/b.h\n"
-            "int b();\n"
-            "```\n"
-        )},
+        {
+            "role": "assistant",
+            "content": (
+                "Two files:\n"
+                "```cpp\n"
+                "// /tmp/op/a.cpp\n"
+                "int a() { return 1; }\n"
+                "```\n"
+                "and\n"
+                "```cpp\n"
+                "// /tmp/op/b.h\n"
+                "int b();\n"
+                "```\n"
+            ),
+        },
     ]
     result = _extract_files_from_messages(messages)
     paths = [f["path"] for f in result]
@@ -78,11 +84,14 @@ def test_extracts_multiple_files_in_one_response() -> None:
 
 def test_skips_blocks_without_path() -> None:
     messages = [
-        {"role": "assistant", "content": (
-            "```cpp\n"
-            "int no_path() { return 0; }\n"  # 没路径注释
-            "```\n"
-        )},
+        {
+            "role": "assistant",
+            "content": (
+                "```cpp\n"
+                "int no_path() { return 0; }\n"  # 没路径注释
+                "```\n"
+            ),
+        },
     ]
     result = _extract_files_from_messages(messages)
     assert result == []
@@ -90,10 +99,13 @@ def test_skips_blocks_without_path() -> None:
 
 def test_dedup_same_path() -> None:
     messages = [
-        {"role": "assistant", "content": (
-            "```cpp\n// /tmp/op/a.cpp\nint a() { return 1; }\n```\n"
-            "```cpp\n// /tmp/op/a.cpp\nint a() { return 2; }\n```\n"
-        )},
+        {
+            "role": "assistant",
+            "content": (
+                "```cpp\n// /tmp/op/a.cpp\nint a() { return 1; }\n```\n"
+                "```cpp\n// /tmp/op/a.cpp\nint a() { return 2; }\n```\n"
+            ),
+        },
     ]
     result = _extract_files_from_messages(messages)
     assert len(result) == 1
@@ -103,8 +115,14 @@ def test_dedup_same_path() -> None:
 def test_takes_last_assistant_message() -> None:
     """多个 assistant 消息时,取最新的(倒序遍历)。"""
     messages = [
-        {"role": "assistant", "content": "```cpp\n// /tmp/op/old.cpp\nint old() { return 0; }\n```"},
-        {"role": "assistant", "content": "```cpp\n// /tmp/op/new.cpp\nint new() { return 1; }\n```"},
+        {
+            "role": "assistant",
+            "content": "```cpp\n// /tmp/op/old.cpp\nint old() { return 0; }\n```",
+        },
+        {
+            "role": "assistant",
+            "content": "```cpp\n// /tmp/op/new.cpp\nint new() { return 1; }\n```",
+        },
     ]
     result = _extract_files_from_messages(messages)
     paths = [f["path"] for f in result]

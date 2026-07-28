@@ -134,6 +134,7 @@ class PhaseRunner:
         user_input: str,
         thread_id: str,
         task_type: Optional[str] = None,
+        op_info: Optional[dict] = None,
     ) -> OpState:
         """启动新 thread。
 
@@ -152,6 +153,8 @@ class PhaseRunner:
         state["messages"] = [{"role": "user", "content": user_input}]
         if task_type is not None:
             state["task_type"] = task_type
+        if op_info is not None:
+            state["op_info"] = op_info
         self.store.save(thread_id, state, current_phase="", status=STATUS_RUNNING)
         logger.info(f"PhaseRunner.invoke thread={thread_id} task_type={task_type}")
         return self._run_from(state, start_index=0)

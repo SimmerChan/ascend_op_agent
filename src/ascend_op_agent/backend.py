@@ -104,15 +104,18 @@ async def _handle_run_conversation(user_input: str) -> AgentResponse:
     """
     if _agent_wrapper is None:
         return AgentResponse(
-            status="error",
-            response=None,
-            data={"message": "Agent not initialized"}
+            status="error", response=None, data={"message": "Agent not initialized"}
         )
 
     # U6: op: 前缀路由 → Orchestrator (D2 lazy-init)
-    orchestrator = _get_orchestrator() if isinstance(user_input, str) and user_input.startswith("op:") else None
+    orchestrator = (
+        _get_orchestrator()
+        if isinstance(user_input, str) and user_input.startswith("op:")
+        else None
+    )
     if orchestrator is not None:
         import uuid as _uuid
+
         thread_id = _uuid.uuid4().hex[:12]
         try:
             state = orchestrator.invoke(user_input, thread_id=thread_id)
@@ -151,6 +154,7 @@ def _push_skill_usage_to_frontend(thread_id: str) -> None:
     """
     try:
         from ascend_op_agent.orchestrator.cannbot_loader import SkillUsageRegistry
+
         loads = SkillUsageRegistry.instance().get_loads(thread_id)
         for sl in loads:
             # P1 U4 fix: sync 版本(send_notification_sync)避免 async coroutine never awaited
@@ -370,6 +374,7 @@ def _setup_agent(config_path: str | None = None) -> None:
     # U7: 初始化 CheckpointStore(崩溃恢复 + HITL 持久化底层)
     global _checkpoint_store
     from ascend_op_agent.orchestrator import CheckpointStore
+
     _checkpoint_store = CheckpointStore.from_config(config.checkpoint)
     logging.info(
         f"CheckpointStore initialized at {_checkpoint_store.db_path} "
@@ -413,9 +418,11 @@ def _build_orchestrator(
             build_new_dev_graph,
         )
         from ascend_op_agent.orchestrator.nodes.validation import (
+            make_real_compile_fix_loop_node,
             make_real_compile_node,
             make_real_precision_node,
         )
+        from ascend_op_agent.orchestrator.cannbot_loader import _render_build_template_section
         from ascend_op_agent.ssh.manager import SSHEnvironment
     except Exception as e:
         logging.warning(f"_build_orchestrator: import failed ({e}), op: 路由不可用")
@@ -430,7 +437,9 @@ def _build_orchestrator(
         if r.host and r.user:
             try:
                 ssh_env = SSHEnvironment(
-                    host=r.host, user=r.user, port=int(getattr(r, "port", 22) or 22),
+                    host=r.host,
+                    user=r.user,
+                    port=int(getattr(r, "port", 22) or 22),
                     timeout=60,
                 )
             except Exception as e:
@@ -440,6 +449,7 @@ def _build_orchestrator(
             container_name = getattr(r, "container_name", "") or ""
 
     from pathlib import Path
+
     npu = NpuExecutor(
         ssh_env=ssh_env,
         remote_env_setup=remote_env_setup,
@@ -450,6 +460,7 @@ def _build_orchestrator(
     def _orchestrator_agent_factory():
         """Orchestrator 用的 fresh AIAgent —— session_manager=None(编排器 owns 持久化)。"""
         from ascend_op_agent.agent.core import AIAgent
+
         return AIAgent(
             config=config,
             tool_registry=tool_registry,
@@ -494,6 +505,17 @@ def _build_orchestrator(
             compile_node_factory=lambda: make_real_compile_node(
                 executor=npu,
                 operator_path_resolver=_operator_path_resolver,
+            ),
+            # U6 P1:compile_fix_loop_node_factory 优先消费(build_new_dev_graph:275)。
+            # 注入 build_template_text(add_example 原文,U3 显式定位) +
+            # max_rounds=5(U6 A4)。sync_fn + add_example_raw 留 TODO:生产接入
+            # _rsync_to_npu + CANNBOT_ROOT add_example 原文(KTD6 follow-up)。
+            compile_fix_loop_node_factory=lambda: make_real_compile_fix_loop_node(
+                executor=npu,
+                operator_path_resolver=_operator_path_resolver,
+                agent_factory=_orchestrator_agent_factory,
+                max_rounds=5,
+                build_template_text=_render_build_template_section([]),
             ),
             precision_node_factory=lambda: make_real_precision_node(
                 executor=npu,

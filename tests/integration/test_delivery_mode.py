@@ -60,6 +60,7 @@ class _FakeAgent:
         skills_layer_override: Any = None,
         *,
         task_type: Any = None,
+        no_tools=False,
     ) -> str:
         self.captured_inputs.append(user_input)
         self.captured_overrides.append(skills_layer_override)
@@ -226,6 +227,7 @@ def test_framework_adapt_runs_llm_when_torch_npu() -> None:
             skills_layer_override=None,
             *,
             task_type=None,
+            no_tools=False,
         ):
             seen_overrides.append(skills_layer_override)
             return orig_run(

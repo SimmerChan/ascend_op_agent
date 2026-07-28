@@ -104,7 +104,9 @@ class TestSemanticMemory:
 
             # 应该找到相关的
             assert len(results) >= 1, f"Found {len(results)} results"
-            assert any("matrix" in r.name.lower() or "matrix" in r.description.lower() for r in results)
+            assert any(
+                "matrix" in r.name.lower() or "matrix" in r.description.lower() for r in results
+            )
 
     def test_search_by_tags(self):
         """测试按标签搜索"""

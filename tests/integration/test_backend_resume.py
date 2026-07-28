@@ -29,12 +29,7 @@ import pytest
 
 def _load_backend_module():
     """加载 backend.py 顶层模块(避开 backend/ 包)。"""
-    backend_py = (
-        Path(__file__).parent.parent.parent
-        / "src"
-        / "ascend_op_agent"
-        / "backend.py"
-    )
+    backend_py = Path(__file__).parent.parent.parent / "src" / "ascend_op_agent" / "backend.py"
     spec = importlib.util.spec_from_file_location(
         "ascend_op_agent_backend_module_under_test", backend_py
     )
@@ -104,9 +99,7 @@ def test_list_pending_excludes_done(backend_module, tmp_path) -> None:
 def test_resume_returns_error_when_no_orchestrator(backend_module) -> None:
     """U7 fallback:orchestrator 未注入 → 友好 error。"""
     result = asyncio.run(
-        backend_module._handle_session_resume_with_input(
-            thread_id="t1", payload={"approved": True}
-        )
+        backend_module._handle_session_resume_with_input(thread_id="t1", payload={"approved": True})
     )
     assert result["status"] == "error"
     assert "not wired" in result["data"]["message"]
@@ -125,9 +118,7 @@ def test_resume_calls_orchestrator_resume_and_returns_state(backend_module) -> N
     backend_module._orchestrator = mock_orch
 
     result = asyncio.run(
-        backend_module._handle_session_resume_with_input(
-            thread_id="t1", payload={"approved": True}
-        )
+        backend_module._handle_session_resume_with_input(thread_id="t1", payload={"approved": True})
     )
 
     mock_orch.resume.assert_called_once_with("t1", payload={"approved": True})
@@ -148,9 +139,7 @@ def test_resume_returns_interrupted_when_pending_set(backend_module) -> None:
     mock_orch.resume.return_value = fake_state
     backend_module._orchestrator = mock_orch
 
-    result = asyncio.run(
-        backend_module._handle_session_resume_with_input(thread_id="t1")
-    )
+    result = asyncio.run(backend_module._handle_session_resume_with_input(thread_id="t1"))
     assert result["status"] == "interrupted"
     assert result["data"]["pending_confirmation"]["options"] == ["yes", "no"]
 
@@ -161,9 +150,7 @@ def test_resume_propagates_orchestrator_exception_as_error(backend_module) -> No
     mock_orch.resume.side_effect = ValueError("no checkpoint for thread ghost")
     backend_module._orchestrator = mock_orch
 
-    result = asyncio.run(
-        backend_module._handle_session_resume_with_input(thread_id="ghost")
-    )
+    result = asyncio.run(backend_module._handle_session_resume_with_input(thread_id="ghost"))
     assert result["status"] == "error"
     assert "no checkpoint" in result["data"]["message"]
     assert result["data"]["thread_id"] == "ghost"
@@ -240,9 +227,7 @@ def test_setup_agent_initializes_checkpoint_store(tmp_path, monkeypatch) -> None
     真实环境跑 py311 即可验证。
     """
     if sys.version_info < (3, 11):
-        pytest.skip(
-            "_setup_agent 触发 sentence_transformers 重依赖,仅 py311 环境验证"
-        )
+        pytest.skip("_setup_agent 触发 sentence_transformers 重依赖,仅 py311 环境验证")
 
     mod = _load_backend_module()
     fake_server = MagicMock()
@@ -260,7 +245,7 @@ def test_setup_agent_initializes_checkpoint_store(tmp_path, monkeypatch) -> None
 
 def test_op_prefix_routes_to_orchestrator_when_wired(backend_module) -> None:
     """U6: agent.run RPC 带 ``op:`` 前缀 → 调 orchestrator.invoke,不走 AIAgent fallback。"""
-        # use backend_module._handle_run_conversation(已注入 fixture)
+    # use backend_module._handle_run_conversation(已注入 fixture)
 
     saved = backend_module._orchestrator
     mock_orch = MagicMock()
@@ -286,7 +271,7 @@ def test_op_prefix_routes_to_orchestrator_when_wired(backend_module) -> None:
 
 def test_op_prefix_interrupted_when_pending_confirmation(backend_module) -> None:
     """U6: orchestrator 中断(HITL)→ status=interrupted + pending_confirmation 透传。"""
-        # use backend_module._handle_run_conversation(已注入 fixture)
+    # use backend_module._handle_run_conversation(已注入 fixture)
 
     saved = backend_module._orchestrator
     mock_orch = MagicMock()
@@ -309,13 +294,14 @@ def test_op_prefix_interrupted_when_pending_confirmation(backend_module) -> None
 
 def test_op_prefix_falls_back_when_orchestrator_none(backend_module) -> None:
     """U6: orchestrator 不可用(None)→ fallback 老 AIAgent path(不抛)。"""
-        # use backend_module._handle_run_conversation(已注入 fixture)
+    # use backend_module._handle_run_conversation(已注入 fixture)
 
     saved_orch = backend_module._orchestrator
     backend_module._orchestrator = None
     saved_wrapper = backend_module._agent_wrapper
     mock_wrapper = MagicMock()
     from unittest.mock import AsyncMock
+
     mock_wrapper.run_conversation_async = AsyncMock(
         return_value={"status": "completed", "response": "fallback path", "data": {}}
     )
@@ -331,7 +317,7 @@ def test_op_prefix_falls_back_when_orchestrator_none(backend_module) -> None:
 
 def test_non_op_prefix_skips_orchestrator(backend_module) -> None:
     """U6: 老 TUI 输入(无 op: 前缀)→ 走老 AIAgent path,orchestrator 不调。"""
-        # use backend_module._handle_run_conversation(已注入 fixture)
+    # use backend_module._handle_run_conversation(已注入 fixture)
 
     saved_orch = backend_module._orchestrator
     mock_orch = MagicMock()
@@ -339,6 +325,7 @@ def test_non_op_prefix_skips_orchestrator(backend_module) -> None:
     saved_wrapper = backend_module._agent_wrapper
     mock_wrapper = MagicMock()
     from unittest.mock import AsyncMock
+
     mock_wrapper.run_conversation_async = AsyncMock(
         return_value={"status": "completed", "response": "legacy", "data": {}}
     )
@@ -355,7 +342,7 @@ def test_non_op_prefix_skips_orchestrator(backend_module) -> None:
 
 def test_op_prefix_orchestrator_exception_returns_error(backend_module) -> None:
     """U6: orchestrator.invoke 抛异常 → status=error,不 crash。"""
-        # use backend_module._handle_run_conversation(已注入 fixture)
+    # use backend_module._handle_run_conversation(已注入 fixture)
 
     saved = backend_module._orchestrator
     mock_orch = MagicMock()
@@ -373,7 +360,7 @@ def test_op_prefix_orchestrator_exception_returns_error(backend_module) -> None:
 
 def test_session_resume_real_orchestrator_when_wired(backend_module) -> None:
     """U6: session.resume_with_input → 真调 orchestrator.resume(无 None 短路)。"""
-        # use backend_module._handle_session_resume_with_input(已注入 fixture)
+    # use backend_module._handle_session_resume_with_input(已注入 fixture)
 
     saved = backend_module._orchestrator
     mock_orch = MagicMock()
@@ -384,12 +371,12 @@ def test_session_resume_real_orchestrator_when_wired(backend_module) -> None:
     }
     backend_module._orchestrator = mock_orch
     try:
-        resp = asyncio.run(backend_module._handle_session_resume_with_input(
-            "thread-abc", payload={"approved": True}
-        ))
-        assert resp["status"] == "completed"
-        mock_orch.resume.assert_called_once_with(
-            "thread-abc", payload={"approved": True}
+        resp = asyncio.run(
+            backend_module._handle_session_resume_with_input(
+                "thread-abc", payload={"approved": True}
+            )
         )
+        assert resp["status"] == "completed"
+        mock_orch.resume.assert_called_once_with("thread-abc", payload={"approved": True})
     finally:
         backend_module._orchestrator = saved

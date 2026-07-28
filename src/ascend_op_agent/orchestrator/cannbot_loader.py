@@ -545,29 +545,149 @@ def _render_build_template_section(skills: list[CannbotSkill]) -> str:
     只内联构建文件(CMakeLists.txt + build.sh),不内联 kernel/host 代码(那些
     LLM 按算子语义自己写),控制 context 大小。
     """
+    # U3(强化 fix_loop):解耦查找 —— 不依赖入参 skills 的成员。codegen bundle 是
+    # ascendc-direct-invoke-template + simt-best-practices,没有 add_example;
+    # add_example 在 ascendc-registry-invoke-template/references/。原遍历逻辑
+    # 在 codegen 阶段永远找不到 → 返空串(死代码)。显式定位 add_example,add_example
+    # 是构建参考工程,与 codegen skill 简介是不同语义层,不污染 codegen SKILL_BUNDLES(省 token)。
+    add_example_dir = (
+        CANNBOT_ROOT / "ops" / "ascendc-registry-invoke-template" / "references" / "add_example"
+    )
+    if not add_example_dir.is_dir():
+        # 路径缺失降级:返空串,不阻塞 codegen(等价现状)
+        return ""
     _BUILD_FILES = ("CMakeLists.txt", "build.sh")
-    for s in skills:
-        add_example_dir = s.base_dir / "references" / "add_example"
-        if not add_example_dir.is_dir():
-            continue
-        parts: list[str] = [
-            "## 构建参考(add_example 可编译工程,U2 内联, 910B CANN 9.1.0 兼容)",
-            "",
-            "以下是 references/add_example 的构建文件(显式 ASCEND_COMPUTE_UNIT,",
-            "arch22/arch35 分代,910B 期望的 legacy_modules/host_config.cmake 期望)。",
-            "生成 build.sh / CMakeLists.txt 时**以此为准**。",
-            "",
-        ]
-        for fname in _BUILD_FILES:
-            fpath = add_example_dir / fname
-            if fpath.is_file():
-                content = fpath.read_text(encoding="utf-8")
-                lang = "cmake" if fname == "CMakeLists.txt" else "bash"
-                parts.append(f"### {fname}")
-                parts.append(f"```{lang}")
-                parts.append(content.rstrip())
-                parts.append("```")
-                parts.append("")
-        if len(parts) > 6:  # 至少内联了 1 个文件
-            return "\n".join(parts)
+    parts: list[str] = [
+        "## 构建参考(add_example 可编译工程,U3 显式定位, 910B CANN 9.1.0 兼容)",
+        "",
+        "以下是 references/add_example 的构建文件(显式 ASCEND_COMPUTE_UNIT,",
+        "arch22/arch35 分代,910B 期望的 legacy_modules/host_config.cmake 期望)。",
+        "生成 build.sh / CMakeLists.txt 时**以此为准**。",
+        "",
+    ]
+    for fname in _BUILD_FILES:
+        fpath = add_example_dir / fname
+        if fpath.is_file():
+            content = fpath.read_text(encoding="utf-8")
+            lang = "cmake" if fname == "CMakeLists.txt" else "bash"
+            parts.append(f"### {fname}")
+            parts.append(f"```{lang}")
+            parts.append(content.rstrip())
+            parts.append("```")
+            parts.append("")
+    if len(parts) > 6:  # 至少内联了 1 个文件
+        return "\n".join(parts)
     return ""
+
+
+def _strip_opapi_section(content: str) -> str:
+    """移除 op_host/CMakeLists.txt 的 op_api(aclnn) library 段 + package_add 引用。
+
+    方向 B 不注入 op_api/(aclnn 封装 plan deferred),但 add_example 原版 op_host/CMakeLists
+    引用 op_api/aclnn_*.cpp 构建 cust_opapi library,导致 CMake 'No SOURCES given to target
+    cust_opapi'。compile(msopgen compile)只编译 kernel+host,op_api 是上层 aclnn 封装,
+    删后不影响 kernel/host 编译。
+    """
+    # 删 set(op_api_dir...) 到 target_link_options(cust_opapi...) 整段
+    content = re.sub(
+        r"set\(op_api_dir[^\n]*\n.*?target_link_options\(cust_opapi[^\n]*\)\n",
+        "",
+        content,
+        flags=re.DOTALL,
+    )
+    # 删 npu_op_package_add LIBRARY 列表里的 cust_opapi 行
+    content = re.sub(r"\n\s*cust_opapi(?=\s*\n)", "", content)
+    return content
+
+
+def load_build_scaffold(op_snake: str, op_pascal: str) -> dict[str, str]:
+    """U2 方向 B:从 vendor add_example 读 5 个构建文件,参数化 op 名,返回 {relpath: content}。
+
+    构建文件(build scaffold,不经 LLM):根 CMakeLists.txt、build.sh、
+    op_host/CMakeLists.txt、op_kernel/CMakeLists.txt、op_graph/CMakeLists.txt。
+    参数化替换(先长串再短串,避免误替):
+      add_example_custom -> {op_snake}_custom  (package_name)
+      add_example_op_prj -> {op_snake}_op_prj  (project)
+      AddExample         -> {op_pascal}        (类名/OP_TYPE)
+      add_example        -> {op_snake}         (函数名/文件名)
+    返回 {relpath: content},relpath 保留子目录(如 op_host/CMakeLists.txt)。
+    路径缺失 warn + 跳过该文件(降级,不抛,不阻塞 codegen)。
+    """
+    import logging
+
+    add_example_dir = (
+        CANNBOT_ROOT / "ops" / "ascendc-registry-invoke-template" / "references" / "add_example"
+    )
+    if not add_example_dir.is_dir():
+        logging.warning("load_build_scaffold: add_example dir missing: %s", add_example_dir)
+        return {}
+    _BUILD_FILES = (
+        "CMakeLists.txt",
+        "build.sh",
+        "op_host/CMakeLists.txt",
+        "op_kernel/CMakeLists.txt",
+        "op_graph/CMakeLists.txt",
+    )
+    out: dict[str, str] = {}
+    for rel in _BUILD_FILES:
+        fpath = add_example_dir / rel
+        if not fpath.is_file():
+            logging.warning("load_build_scaffold: missing %s", fpath)
+            continue
+        content = fpath.read_text(encoding="utf-8")
+        # 参数化替换(先长串再短串,避免 add_example 误替 add_example_custom 的前缀)
+        content = content.replace("add_example_custom", f"{op_snake}_custom")
+        content = content.replace("add_example_op_prj", f"{op_snake}_op_prj")
+        content = content.replace("AddExample", op_pascal)
+        content = content.replace("add_example", op_snake)
+        if rel == "op_host/CMakeLists.txt":
+            # 方向 B 不注入 op_api/(aclnn),移除 cust_opapi library 段避免 No SOURCES
+            content = _strip_opapi_section(content)
+        out[rel] = content
+    return out
+
+
+def load_semantic_examples() -> dict[str, list[tuple[str, str]]]:
+    """加载 add_example 的 8 个语义文件(arch22 一套),按 codegen phase 分组。
+
+    供 codegen 语义节点 prompt 内联范本**原文**:LLM 照抄 include 清单 + 宏结构 + API,
+    把 add_example/AddExample 替换为 state.op_info.name/class_name,避免幻觉(实测 LLM
+    误加 vector_add_tiling.h include —— add_example 范本不 include 它,autogen 也不生成)。
+    不参数化(返回原文),由 prompt 指示 LLM 替换;路径缺失 warn 返空列表(降级,不阻塞)。
+    """
+    import logging
+
+    add_example_dir = (
+        CANNBOT_ROOT / "ops" / "ascendc-registry-invoke-template" / "references" / "add_example"
+    )
+    if not add_example_dir.is_dir():
+        logging.warning("load_semantic_examples: add_example dir missing: %s", add_example_dir)
+        return {}
+    arch = "arch22"  # 910B-only
+    groups: dict[str, list[str]] = {
+        "codegen_kernel": [
+            f"op_kernel/add_example_{arch}.cpp",
+            f"op_kernel/{arch}/add_example.h",
+            f"op_kernel/{arch}/add_example_tiling_data.h",
+            f"op_kernel/{arch}/add_example_tiling_key.h",
+        ],
+        "codegen_host": [
+            "op_host/add_example_def.cpp",
+            "op_host/add_example_infershape.cpp",
+            f"op_host/{arch}/add_example_tiling.cpp",
+        ],
+        "codegen_proto": [
+            "op_graph/add_example_proto.h",
+        ],
+    }
+    result: dict[str, list[tuple[str, str]]] = {}
+    for phase, rels in groups.items():
+        files: list[tuple[str, str]] = []
+        for rel in rels:
+            fpath = add_example_dir / rel
+            if not fpath.is_file():
+                logging.warning("load_semantic_examples: missing %s", fpath)
+                continue
+            files.append((rel, fpath.read_text(encoding="utf-8")))
+        result[phase] = files
+    return result

@@ -122,6 +122,7 @@ class AIAgent:
         skills_layer_override: Optional[str] = None,
         *,
         task_type: Optional[str] = None,
+        no_tools: bool = False,
     ) -> str:
         """运行对话
 
@@ -196,7 +197,7 @@ class AIAgent:
             input_messages = [
                 {"role": "system", "content": system_prompt}
             ] + self._conversation_history
-            tools = self.tool_registry.to_openai_format()
+            tools = [] if no_tools else self.tool_registry.to_openai_format()
 
             llm_entry_id = str(uuid.uuid4())
             llm_entry_parent_id = user_entry_id  # LLMEntry.parent_id = UserEntry.id

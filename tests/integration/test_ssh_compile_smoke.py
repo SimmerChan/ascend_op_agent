@@ -62,9 +62,7 @@ def _ssh_env_or_skip():
             pass
 
     if not host or not user:
-        pytest.skip(
-            "NPU_HOST / NPU_USER 未设置且 config.yaml 未配 remote —— SSH 冒烟跳过"
-        )
+        pytest.skip("NPU_HOST / NPU_USER 未设置且 config.yaml 未配 remote —— SSH 冒烟跳过")
 
     # 延迟 import 避免无 paramiko 环境报错
     from ascend_op_agent.ssh.manager import SSHEnvironment
@@ -98,9 +96,10 @@ def test_ssh_connect_and_detect_cann() -> None:
         remote_env_setup=remote_setup,
         container_name=container or "",
     )
-    assert executor.is_remote_cann_available(), (
-        f"远程 ASCEND_OPP_PATH 探测失败 —— 检查 {cann_setup} 是否存在且可 source"
-        + (f"(容器 {container})" if container else "")
+    assert (
+        executor.is_remote_cann_available()
+    ), f"远程 ASCEND_OPP_PATH 探测失败 —— 检查 {cann_setup} 是否存在且可 source" + (
+        f"(容器 {container})" if container else ""
     )
 
 
@@ -117,9 +116,9 @@ def test_ssh_msopgen_available() -> None:
     )
     cmd = executor._wrap_remote_cmd("which msopgen")
     result = ssh_env.execute(cmd, timeout=15)
-    assert result.return_code == 0, (
-        f"msopgen 不在 PATH —— stdout={result.stdout} stderr={result.stderr}"
-    )
+    assert (
+        result.return_code == 0
+    ), f"msopgen 不在 PATH —— stdout={result.stdout} stderr={result.stderr}"
     assert result.stdout.strip(), "which msopgen 返回空"
 
 
@@ -161,6 +160,4 @@ def test_ssh_compile_real_operator() -> None:
     outcome = executor.compile(operator_path, soc_version="ascend910b")
 
     print(f"\n=== compile outcome ===\n{outcome}")
-    assert outcome.success, (
-        f"编译失败 return_code={outcome.return_code}: {outcome.stderr}"
-    )
+    assert outcome.success, f"编译失败 return_code={outcome.return_code}: {outcome.stderr}"

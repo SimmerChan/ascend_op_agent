@@ -28,6 +28,7 @@ def _make_wrapper(with_queue: bool = True) -> AgentAsyncWrapper:
         # 真的 send_notification_fn(返回 coroutine)才会创建 NotificationQueue
         async def fake_send(method, params):
             return None
+
         return AgentAsyncWrapper(mock_agent, send_notification_fn=fake_send)
     return AgentAsyncWrapper(mock_agent)
 

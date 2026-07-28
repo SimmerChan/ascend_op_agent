@@ -136,9 +136,7 @@ def test_load_skill_missing_skill_md_raises(tmp_path: Path) -> None:
 def test_load_skill_missing_name_raises(tmp_path: Path) -> None:
     d = tmp_path / "no_name"
     d.mkdir()
-    (d / "SKILL.md").write_text(
-        "---\ndescription: foo\n---\nbody", encoding="utf-8"
-    )
+    (d / "SKILL.md").write_text("---\ndescription: foo\n---\nbody", encoding="utf-8")
     with pytest.raises(ValueError, match="name"):
         load_skill(d)
 

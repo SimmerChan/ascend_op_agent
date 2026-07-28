@@ -27,10 +27,11 @@ from typing import Callable, Optional
 
 from ascend_op_agent.orchestrator.cannbot_loader import (
     build_skill_bundle,
+    load_semantic_examples,
     render_skill_bundle_text,
 )
 from ascend_op_agent.orchestrator.checkpoint import CheckpointStore
-from ascend_op_agent.orchestrator.nodes.common import AgentFactory, make_llm_node
+from ascend_op_agent.orchestrator.nodes.common import AgentFactory, make_llm_node, to_pascal
 from ascend_op_agent.orchestrator.nodes.delivery import (
     make_delivery_mode_node,
     make_framework_adapt_node,
@@ -149,6 +150,7 @@ def build_new_dev_graph(
         skill_bundle_text=bundles.get("analyze"),
         skill_names=bundle_names.get("analyze"),
         agent_factory=factory,
+        no_tools=True,  # analyze 期望文本 OpInfo 输出,不 tool calling(否则推理模型 MAX_ITER 不产出)
     )
 
     def _design_payload_builder(state: dict, update: dict) -> dict:
@@ -170,91 +172,109 @@ def build_new_dev_graph(
         skill_bundle_text=bundles.get("design"),
         skill_names=bundle_names.get("design"),
         agent_factory=factory,
+        no_tools=True,  # design 期望文本 DESIGN.md 输出,不 tool calling(否则 MAX_ITER 致 design_doc=None 拖累 codegen)
     )
 
     # ---- codegen 节点:LLM 多文件写(默认) 或 scaffold 迁移(opt-in) ----
-    if use_scaffold_codegen:
-        # 参考工程迁移路径:910B 已有 /tmp/op_test(add_example,已验证可编译),
-        # e2e_real_op.py 在 codegen 前 cp scaffold 到 working dir。
-        # 本节点不调 LLM,只读 scaffold 关键文件填 code_result。
-        def _scaffold_codegen_node(state: dict) -> dict:
-            op_dir = "/tmp/e2e_ops_local/op_add"
-            files: list[dict] = []
-            key_files = [
-                "CMakeLists.txt", "build.sh",
-                "op_kernel/add_example_arch22.cpp",
-                "op_kernel/arch22/add_example.h",
-                "op_host/add_example_def.cpp",
-                "op_host/add_example_infershape.cpp",
-            ]
-            for rel in key_files:
-                full = Path(op_dir) / rel
-                if full.exists():
-                    files.append({
-                        "path": str(full),
-                        "content": full.read_text(encoding="utf-8"),
-                        "tool": "scaffold_loaded",
-                    })
-            return {
-                "code_result": {"files": files, "strategy": "reference_migration"},
-                "last_phase_result": {
-                    "phase": "codegen",
-                    "strategy": "reference_migration",
-                    "scaffold_path": op_dir,
-                    "files_count": len(files),
-                    "note": "scaffold from /tmp/e2e_scaffold (910B /tmp/op_test) — already a working elementwise add op",
-                },
-            }
-        codegen_node = Node(name="codegen", func=_scaffold_codegen_node)
-    else:
-        # 默认:5 个独立 LLM 节点写 5 文件(成功率低,见 e2e 2026-06-25 记录)
-        _codegen_files = [
-            ("op_kernel.cpp", "AscendC kernel 实现(Init/Process 接口,必含 #include \"kernel_operator.h\")"),
-            ("op_host.cpp", "tiling 函数 + shape 推导 + op 算子注册"),
-            ("CMakeLists.txt", "含 ascendc target + include dirs + add_ops 子目录。**必须引用固定文件名 op_kernel.cpp + op_host.cpp,不要改名(如 add_custom.cpp)**。**ascendc.cmake 路径**:`${{ASCEND_TOOLKIT_HOME}}/aarch64-linux/tikcpp/ascendc_kernel_cmake/ascendc.cmake`"),
-            ("build.sh", "bash 入口(先 source ${{ASCEND_TOOLKIT_HOME}}/set_env.sh,再 cmake -B build -DPKG ascend910b && cmake --build build -j 8,chmod +x)"),
-            ("op_kernel.ini", "[opinfo] 段元信息(op_name / op_type 等)"),
-        ]
-        _phase_names = {
-            "op_kernel.cpp": "codegen_kernel_cpp",
-            "op_host.cpp": "codegen_host_cpp",
-            "CMakeLists.txt": "codegen_cmakelists",
-            "build.sh": "codegen_build_sh",
-            "op_kernel.ini": "codegen_kernel_ini",
+    # U4 方向 B:codegen = scaffold 注入构建文件(不经 LLM) + LLM 写语义(子目录)。
+    # 构建文件用 add_example 原版参数化注入(消除 ascendc_add_ops 幻觉 + 保证
+    # npu_op_package 子目录结构完整,binary target 不缺),LLM 只写 kernel/host 语义(arch22)。
+    _OPERATOR_DIR = "/tmp/e2e_ops_local/op_add"
+
+    def _scaffold_inject_node(state: dict) -> dict:
+        op_info = state.get("op_info") or {}
+        op_snake = op_info.get("name") or "op_add"
+        op_pascal = op_info.get("class_name") or to_pascal(op_snake)
+        from ascend_op_agent.orchestrator.cannbot_loader import load_build_scaffold
+
+        scaffold = load_build_scaffold(op_snake, op_pascal)
+        files: list[dict] = []
+        for rel, content in scaffold.items():
+            full = Path(_OPERATOR_DIR) / rel
+            files.append({"path": str(full), "content": content, "tool": "scaffold_loaded"})
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return {
+            "code_result": {"files": files, "strategy": "scaffold_injected"},
+            "last_phase_result": {
+                "phase": "codegen_scaffold",
+                "files_count": len(files),
+                "op_snake": op_snake,
+                "op_pascal": op_pascal,
+            },
         }
-        codegen_nodes = []
-        for fname, desc in _codegen_files:
-            all_files = ", ".join(f[0] for f in _codegen_files)
-            codegen_nodes.append(make_llm_node(
-                phase=_phase_names[fname],
-                template_vars={"operator_dir": "/tmp/e2e_ops_local/op_add"},
+
+    scaffold_node = Node(name="codegen_scaffold", func=_scaffold_inject_node)
+
+    # LLM 语义节点(3,子目录 arch22,每节点多 markdown 代码块)。
+    # op 名从 state.op_info 取(LLM 在 prompt 里看 state.op_info.name/class_name)。
+    # <op_snake> 是字面占位(非 format {} 占位,避免 make_llm_node KeyError fallback),
+    # LLM 按 state.op_info.name 替换;{state} 是 make_llm_node format 占位。
+    _semantic_specs = [
+        (
+            "codegen_kernel",
+            "kernel 实现(910B arch22):entry + kernel class + tiling data/key",
+            (
+                "op_kernel/<op_snake>_arch22.cpp",
+                "op_kernel/arch22/<op_snake>.h",
+                "op_kernel/arch22/<op_snake>_tiling_data.h",
+                "op_kernel/arch22/<op_snake>_tiling_key.h",
+            ),
+            "参考 add_example 的 op_kernel/add_example_arch22.cpp(entry __global__ void add_example) + arch22/add_example.h(class NsAddExample::AddExample,Init/Process/CopyIn/Compute/CopyOut) + tiling_data.h(struct) + tiling_key.h(ASCENDC_TPL_ARGS_DECL)。按算子语义改写。",
+        ),
+        (
+            "codegen_host",
+            "host 实现:def + infershape + tiling(arch22)",
+            (
+                "op_host/<op_snake>_def.cpp",
+                "op_host/<op_snake>_infershape.cpp",
+                "op_host/arch22/<op_snake>_tiling.cpp",
+            ),
+            "参考 add_example 的 op_host/add_example_def.cpp(class AddExample : public OpDef + OP_ADD) + infershape.cpp(IMPL_OP_INFERSHAPE) + arch22/add_example_tiling.cpp(IMPL_OP_OPTILING + TilingFunc)。按算子语义改写。",
+        ),
+        (
+            "codegen_proto",
+            "graph proto 注册",
+            ("op_graph/<op_snake>_proto.h",),
+            "参考 add_example/op_graph/add_example_proto.h(REG_OP(AddExample).INPUT.INPUT.OUTPUT)。按算子语义改写。",
+        ),
+    ]
+    _semantic_examples = load_semantic_examples()
+    codegen_nodes = [scaffold_node]
+    for _phase, _desc, _rels, _guide in _semantic_specs:
+        _rels_str = "\n".join(f"- {_OPERATOR_DIR}/{r}" for r in _rels)
+        _ex_files = _semantic_examples.get(_phase, [])
+        _ex_str = "\n\n".join(
+            f"```cpp\n// add_example 范本 {rel}\n{content}\n```" for rel, content in _ex_files
+        )
+        codegen_nodes.append(
+            make_llm_node(
+                phase=_phase,
                 task_prompt_template=(
-                    f"你是 Ascend C 算子 developer。基于已确认的 DESIGN.md 生成 1 个文件:\n\n"
-                    f"{{state}}\n\n"
-                    f"【当前文件】{fname} —— {desc}\n"
-                    f"【绝对路径】{{operator_dir}}/{fname}\n\n"
-                    f"【本工程所有文件名(固定)】{all_files}\n"
-                    f"严禁改名(不要 add_custom.cpp / my_kernel.cpp)。\n\n"
-                    f"【输出格式 — 必须用 markdown 代码块】\n"
-                    f"```cpp\n"
-                    f"// {{operator_dir}}/{fname}\n"
-                    f"<完整文件内容>\n"
-                    f"```\n\n"
-                    f"【为什么用 markdown】某些 LLM(尤其 GLM 系列)的 tool calling 在 codegen 阶段"
-                    f"会反复重试达 max_iterations 失败(改自 2026-07-09 U1 spike)。用 markdown "
-                    f"代码块是更可靠的输出方式(也方便调试)。\n\n"
-                    f"【禁止】调用 file_write / shell_exec / python_exec 等 tool(本节点已"
-                    f"加 markdown fallback 提取代码块进 code_result.files)。\n"
-                    f"只输出 1 个 markdown 代码块(不要解释/不要其他文本)。"
+                    f"你是 Ascend C 算子 developer。基于 DESIGN.md + state.op_info 生成 {_desc}。\n\n"
+                    "完整状态(含 op_info):\n{state}\n\n"
+                    "【算子名】从 state.op_info.name 取 snake_case(如 vector_add)命名文件/函数,"
+                    "state.op_info.class_name 取 PascalCase(如 VectorAdd)命名类。"
+                    "下方文件路径里的 <op_snake> 占位用 state.op_info.name 替换。\n\n"
+                    f"【要生成的文件(子目录绝对路径,每文件一个 markdown 代码块)】\n{_rels_str}\n\n"
+                    f"【范本原文(add_example 真实可编译工程,严格照此 include 清单 + 宏结构 + API;"
+                    f"把 add_example/AddExample 替换为 state.op_info.name/class_name,按算子语义改写)】\n{_ex_str}\n\n"
+                    "【禁令 —— 必须遵守】\n"
+                    "- 严格照范本 include 清单,#include 只能是范本中存在的 header 或工程内已生成的文件;"
+                    "禁止幻觉 autogen 生成的 header(实测 *_tiling.h 不存在 —— add_example 范本 def.cpp"
+                    " 只 #include register/op_def_registry.h,autogen 不生成 tiling.h)\n\n"
+                    "【输出格式】每个文件一个 markdown 代码块,首行路径注释 // 绝对路径:\n"
+                    "```cpp\n// /abs/path/file\n<内容>\n```\n"
+                    "【禁止】调用 file_write 等 tool(本节点加 markdown fallback 提取多代码块)。\n"
+                    "只输出 markdown 代码块(不要解释)。"
                 ),
                 skill_bundle_text=bundles.get("codegen"),
                 skill_names=bundle_names.get("codegen"),
                 agent_factory=factory,
-            ))
-        # 把 5 个节点 wrap 成一个 node(用 codegen_aggregate 节点)
-        # 简单做法:用第一个作为主 codegen,其他 4 个作为后续节点
-        # 这里直接把所有 5 个都加入 nodes 列表
-        codegen_node = codegen_nodes  # 实际上是 list
+                no_tools=True,  # U5:codegen 语义节点禁用 tool calling(LLM 只输出 markdown,避免 max_iterations 循环)
+            )
+        )
+    codegen_node = codegen_nodes  # list:[scaffold_inject, kernel, host, proto]
 
     review_fix_node = make_llm_node(
         phase="review_fix",
@@ -266,6 +286,7 @@ def build_new_dev_graph(
         skill_bundle_text=bundles.get("review_fix"),
         skill_names=bundle_names.get("review_fix"),
         agent_factory=factory,
+        no_tools=True,  # review_fix 期望文本审查报告,不 tool calling
     )
 
     # ---- 确定性节点:compile / precision(占位,U13 替换) ----
@@ -277,6 +298,7 @@ def build_new_dev_graph(
     elif compile_node_factory is not None:
         compile_node = compile_node_factory()
     else:
+
         def _placeholder_compile(state: dict) -> dict:
             return {
                 "compile_result": {
@@ -288,6 +310,7 @@ def build_new_dev_graph(
                 },
                 "last_phase_result": {"phase": "compile", "placeholder": True},
             }
+
         compile_node = Node(name="compile", func=_placeholder_compile)
 
     if precision_fix_loop_node_factory is not None:
@@ -295,6 +318,7 @@ def build_new_dev_graph(
     elif precision_node_factory is not None:
         precision_node = precision_node_factory()
     else:
+
         def _placeholder_precision(state: dict) -> dict:
             return {
                 "precision_report": {
@@ -305,6 +329,7 @@ def build_new_dev_graph(
                 },
                 "last_phase_result": {"phase": "precision", "placeholder": True},
             }
+
         precision_node = Node(name="precision", func=_placeholder_precision)
 
     # ---- 交付模式(U12)----
@@ -329,13 +354,15 @@ def build_new_dev_graph(
     else:
         # scaffold-based:单 codegen 节点
         nodes.append(codegen_node)
-    nodes.extend([
-        review_fix_node,
-        compile_node,
-        precision_node,
-        delivery_mode_node,
-        framework_adapt_node,
-        Node(name="done", func=_done_node),
-    ])
+    nodes.extend(
+        [
+            review_fix_node,
+            compile_node,
+            precision_node,
+            delivery_mode_node,
+            framework_adapt_node,
+            Node(name="done", func=_done_node),
+        ]
+    )
 
     return PhaseRunner(nodes=nodes, store=store, phase_callback=phase_callback)

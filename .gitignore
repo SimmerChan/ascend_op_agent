@@ -19,6 +19,7 @@ htmlcov/
 .vscode/
 *.swp
 *.swo
+.zread
 
 # Environment
 .env

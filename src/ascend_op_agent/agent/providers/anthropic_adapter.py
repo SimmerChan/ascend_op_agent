@@ -45,10 +45,12 @@ class AnthropicAdapter(BaseLLMAdapter):
     def __init__(self, config: Any):
         super().__init__(config)
         self.api_key = getattr(config, "api_key", "")
+        self.auth_token = getattr(config, "auth_token", "")
         self.api_base = getattr(config, "api_base", None)
         self.model = getattr(config, "model", "claude-sonnet-4-6-20250514")
         self.max_retries = getattr(config, "max_retries", 3)
         self.timeout = getattr(config, "timeout", 120)
+        self.disable_thinking = getattr(config, "disable_thinking", False)
 
         if anthropic is None:
             raise ImportError(
@@ -63,7 +65,13 @@ class AnthropicAdapter(BaseLLMAdapter):
     def _get_client(self):
         """Get or create Anthropic client"""
         if self._client is None:
-            client_kwargs = {"api_key": self.api_key, "timeout": self.timeout}
+            # auth_token 非空 -> Bearer auth(Ark 等用 Authorization: Bearer);
+            # 否则 api_key -> x-api-key(Anthropic 官方 / Minimax / GLM /api/anthropic)。
+            client_kwargs = {"timeout": self.timeout}
+            if self.auth_token:
+                client_kwargs["auth_token"] = self.auth_token
+            else:
+                client_kwargs["api_key"] = self.api_key
             if self.api_base:
                 client_kwargs["base_url"] = self.api_base
             self._client = anthropic.Anthropic(**client_kwargs)
@@ -162,13 +170,20 @@ class AnthropicAdapter(BaseLLMAdapter):
         last_error = None
         for attempt in range(self.max_retries):
             try:
-                response = client.messages.create(
+                create_kwargs = dict(
                     model=self.model,
                     max_tokens=4096,
                     system=system_prompt,
                     messages=messages,
                     tools=anthropic_tools,
                 )
+                if getattr(self, "disable_thinking", False):
+                    # 推理模型(glm-5.2/Ark)thinking 会吃光 max_tokens 致 text 空(SOUL
+                    # system 下实测 thinking 12k-15k 字符 vs max_tokens=4096)。禁 thinking
+                    # 让模型直出 visible text。非推理模型(MiniMax-M3)disable_thinking=False
+                    # 不传该参数(其兼容端点可能不认 thinking)。
+                    create_kwargs["thinking"] = {"type": "disabled"}
+                response = client.messages.create(**create_kwargs)
 
                 # Check for tool_use blocks (Native Function Calling)
                 for block in response.content:

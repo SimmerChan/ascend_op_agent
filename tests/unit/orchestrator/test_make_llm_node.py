@@ -42,6 +42,7 @@ class _FakeAgent:
         skills_layer_override=None,
         *,
         task_type=None,
+        no_tools=False,
     ) -> str:
         self._conversation_history.append({"role": "user", "content": user_input})
         return self._response
@@ -250,6 +251,7 @@ def test_template_vars_injected_into_prompt() -> None:
             skills_layer_override=None,
             *,
             task_type=None,
+            no_tools=False,
         ):
             captured["prompt"] = user_input
             return "ok"
@@ -275,6 +277,7 @@ def test_template_vars_none_keeps_original_behavior() -> None:
             skills_layer_override=None,
             *,
             task_type=None,
+            no_tools=False,
         ):
             captured["prompt"] = user_input
             return "ok"
@@ -300,6 +303,7 @@ def test_template_vars_unknown_placeholder_falls_back() -> None:
             skills_layer_override=None,
             *,
             task_type=None,
+            no_tools=False,
         ):
             captured["prompt"] = user_input
             return "ok"

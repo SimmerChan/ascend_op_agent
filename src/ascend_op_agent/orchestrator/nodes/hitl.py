@@ -32,6 +32,7 @@ def make_hitl_llm_node(
     skill_bundle_text: Optional[str] = None,
     agent_factory: Optional[AgentFactory] = None,
     skill_names: Optional[list[str]] = None,
+    no_tools: bool = False,
 ) -> Node:
     """构造 HITL LLM 节点。
 
@@ -54,6 +55,7 @@ def make_hitl_llm_node(
         skill_bundle_text=skill_bundle_text,
         agent_factory=agent_factory,
         skill_names=skill_names,
+        no_tools=no_tools,
     )
 
     def _hitl_node(state: dict) -> dict:

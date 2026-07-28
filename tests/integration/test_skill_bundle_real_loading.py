@@ -108,6 +108,7 @@ class _FakeAgent:
         skills_layer_override=None,
         *,
         task_type=None,
+        no_tools=False,
     ):
         self.captured_overrides.append(skills_layer_override)
         self._h.append({"role": "user", "content": user_input})

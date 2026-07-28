@@ -51,6 +51,7 @@ class TestTreeBuilder:
     def teardown_method(self):
         """Clean up temp files"""
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def _write_entry_to_jsonl(self, entry) -> None:
@@ -374,6 +375,7 @@ class TestAPIEndpoints:
 
         # Cleanup
         import shutil
+
         shutil.rmtree(temp_dir, ignore_errors=True)
 
     def test_list_sessions_api(self, temp_session_file):

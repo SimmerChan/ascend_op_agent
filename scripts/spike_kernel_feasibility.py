@@ -122,6 +122,7 @@ def setup_scaffold_once(local_workdir: Path) -> None:
 
 # ---- 复用 e2e_real_op.py 的接线工厂 ----
 
+
 def make_real_agent_factory():
     from ascend_op_agent.agent.context import ContextEngine
     from ascend_op_agent.agent.core import AIAgent
@@ -144,6 +145,7 @@ def make_real_agent_factory():
             memory_store=mem,
             session_manager=None,
         )
+
     return _factory
 
 
@@ -152,7 +154,10 @@ def make_npu_executor():
     from ascend_op_agent.ssh.manager import SSHEnvironment
 
     ssh_env = SSHEnvironment(
-        host=NPU_HOST, user=NPU_USER, port=22, timeout=60,
+        host=NPU_HOST,
+        user=NPU_USER,
+        port=22,
+        timeout=60,
     )
     return NpuExecutor(
         ssh_env=ssh_env,
@@ -169,6 +174,7 @@ def make_phase_callback(label: str):
             f"[{ts}] [{label}] phase={phase} status={status} "
             f"payload_keys={list((payload or {}).keys())}"
         )
+
     return _cb
 
 
@@ -179,6 +185,7 @@ def make_operator_path_resolver():
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
     from scripts.e2e_real_op import make_operator_path_resolver as _orig  # type: ignore
+
     return _orig(NPU_REMOTE_WORKDIR)
 
 
@@ -197,6 +204,8 @@ def run_one_op(
     基线对比,不测 LLM 能力。
     """
     from ascend_op_agent.orchestrator import CheckpointStore, build_new_dev_graph
+    from ascend_op_agent.orchestrator.cannbot_loader import _render_build_template_section
+    from ascend_op_agent.orchestrator.nodes.common import to_pascal
     from ascend_op_agent.orchestrator.nodes.validation import (
         make_real_compile_fix_loop_node,
         make_real_compile_node,
@@ -256,7 +265,8 @@ def run_one_op(
                 executor=npu,
                 operator_path_resolver=make_operator_path_resolver(),
                 agent_factory=make_real_agent_factory(),
-                max_rounds=3,
+                max_rounds=5,  # U6 A4
+                build_template_text=_render_build_template_section([]),  # U4 注入
             ),
             precision_node_factory=lambda: make_real_precision_node(
                 executor=npu,
@@ -269,7 +279,11 @@ def run_one_op(
             use_real_skill_bundles=True,  # A 验证:接通 cannbot codegen skill(ascendc-direct-invoke-template + simt-best-practices)
         )
 
-        state = runner.invoke(op_desc, thread_id=thread_id)
+        state = runner.invoke(
+            op_desc,
+            thread_id=thread_id,
+            op_info={"name": op_name, "class_name": to_pascal(op_name)},
+        )
 
         # HITL resume(若有 pending_confirmation)
         round_n = 0
@@ -287,17 +301,20 @@ def run_one_op(
         if not result.compile_success:
             result.stderr_summary = (cr.get("stderr") or "")[:300]
         elif not result.precision_success:
-            result.stderr_summary = f"precision: passed={pr.get('passed_cases')}/total={pr.get('total_cases')}"
+            result.stderr_summary = (
+                f"precision: passed={pr.get('passed_cases')}/total={pr.get('total_cases')}"
+            )
 
         # 线程统计
         try:
-            all_threads = npu.store.list_all_threads() if hasattr(npu, 'store') else []
+            all_threads = npu.store.list_all_threads() if hasattr(npu, "store") else []
             result.threads_total = len(all_threads)
         except Exception:
             pass
 
     except Exception as e:
         import traceback
+
         result.exception = f"{type(e).__name__}: {str(e)[:300]}"
         print(f"[run] op={op_name} EXCEPTION: {result.exception}")
         traceback.print_exc()
@@ -324,7 +341,8 @@ def run_spike(
         print(f"[spike] FATAL: 910B SSH unreachable ({NPU_HOST})")
         return [
             OpResult(
-                name=name, description=desc,
+                name=name,
+                description=desc,
                 exception="ssh_unreachable",
             )
             for name, desc in ops_to_run
@@ -348,12 +366,16 @@ def run_spike(
         print(f"{'='*60}")
         try:
             result = run_one_op(
-                op_name, op_desc, LOCAL_WORKDIR, npu,
+                op_name,
+                op_desc,
+                LOCAL_WORKDIR,
+                npu,
                 use_scaffold_codegen=use_scaffold_codegen,
             )
         except Exception as e:
             result = OpResult(
-                name=op_name, description=op_desc,
+                name=op_name,
+                description=op_desc,
                 exception=f"outer_exception: {type(e).__name__}: {str(e)[:200]}",
             )
         results.append(result)
@@ -406,25 +428,31 @@ def report(results: list[OpResult]) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Path A U1 kernel feasibility spike")
     parser.add_argument(
-        "--op", choices=list(DEMO_OPS.keys()),
+        "--op",
+        choices=list(DEMO_OPS.keys()),
         help="单个 op 跑(默认 5 个都跑)",
     )
     parser.add_argument(
-        "--list", action="store_true", help="列 5 个 demo ops 及其描述",
+        "--list",
+        action="store_true",
+        help="列 5 个 demo ops 及其描述",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="不真跑(910B),只列 ops + 输出 GO/NO-GO 阈值",
     )
     parser.add_argument(
-        "--scaffold-codegen", action="store_true",
+        "--scaffold-codegen",
+        action="store_true",
         help="走硬编码 scaffold 复用路径(不调 LLM,op_add 基线对比);"
         "默认 False = 真测 LLM 5 节点 codegen(U1 本意)",
     )
     args = parser.parse_args()
 
     logging.basicConfig(
-        level=logging.WARNING, format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        level=logging.WARNING,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
     if args.list:

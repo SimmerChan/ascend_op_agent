@@ -38,9 +38,9 @@ _FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "trivial_kernel"
 @pytest.mark.hardware
 def test_cann_env_configured_on_hardware() -> None:
     """硬件环境必须有 ASCEND_OPP_PATH 或 CANN_HOME。"""
-    assert NpuExecutor.is_cann_available(), (
-        "ASCEND_OPP_PATH / CANN_HOME 未设置 —— hardware 测试不应在此环境运行"
-    )
+    assert (
+        NpuExecutor.is_cann_available()
+    ), "ASCEND_OPP_PATH / CANN_HOME 未设置 —— hardware 测试不应在此环境运行"
 
 
 @pytest.mark.hardware
@@ -50,9 +50,7 @@ def test_compile_trivial_kernel_succeeds(tmp_path) -> None:
     需要 ``tests/fixtures/trivial_kernel/`` 存在(P1-1 后补全)。
     """
     if not _FIXTURE_DIR.is_dir():
-        pytest.skip(
-            f"fixture 目录不存在: {_FIXTURE_DIR} (P1-1 后补全 trivial kernel)"
-        )
+        pytest.skip(f"fixture 目录不存在: {_FIXTURE_DIR} (P1-1 后补全 trivial kernel)")
 
     operator_path = str(_FIXTURE_DIR)
     executor = NpuExecutor(archive_dir=tmp_path)

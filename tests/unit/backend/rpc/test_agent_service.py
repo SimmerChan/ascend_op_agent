@@ -35,6 +35,7 @@ class MockAgent:
         skills_layer_override=None,
         *,
         task_type=None,
+        no_tools=False,
     ) -> str:
         """模拟对话"""
         self.call_count += 1

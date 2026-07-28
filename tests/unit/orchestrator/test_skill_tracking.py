@@ -188,6 +188,7 @@ class _FakeAgent:
         skills_layer_override=None,
         *,
         task_type=None,
+        no_tools=False,
     ):
         return "ok"
 

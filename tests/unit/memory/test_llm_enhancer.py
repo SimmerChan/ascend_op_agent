@@ -133,6 +133,7 @@ class TestLlmEnhancer:
         enhancer = LlmEnhancer(llm_client=mock_client)
 
         import asyncio
+
         hints = asyncio.run(enhancer.enhance("test query", []))
 
         assert hints == []
@@ -147,6 +148,7 @@ HINT: Check GEMM implementation in similar operators | REASON: Related operation
         enhancer = LlmEnhancer(llm_client=mock_client, config=config)
 
         import asyncio
+
         hints = asyncio.run(enhancer.enhance("matmul development", []))
 
         assert len(hints) == 2
@@ -163,6 +165,7 @@ HINT: Check GEMM implementation in similar operators | REASON: Related operation
         enhancer = LlmEnhancer(llm_client=mock_client, config=config)
 
         import asyncio
+
         hints = asyncio.run(enhancer.enhance("test query", []))
 
         # 应该有一个回退提示
@@ -179,6 +182,7 @@ CONFIDENCE: 0.9"""
         enhancer = LlmEnhancer(llm_client=mock_client, config=config)
 
         import asyncio
+
         result = asyncio.run(enhancer.disambiguate("gemm", "matrix multiplication"))
 
         assert result["term"] == "gemm"
@@ -191,6 +195,7 @@ CONFIDENCE: 0.9"""
         enhancer = LlmEnhancer(llm_client=mock_client)
 
         import asyncio
+
         result = asyncio.run(enhancer.disambiguate("gemm", "matrix multiplication"))
 
         # 禁用时返回原始术语
@@ -206,13 +211,16 @@ CONFIDENCE: 0.9"""
         enhancer = LlmEnhancer(llm_client=mock_client, config=config)
 
         sessions = [
-            {"turns": [
-                {"role": "user", "content": "Issue with large tensor"},
-                {"role": "assistant", "content": "Check memory allocation"},
-            ]},
+            {
+                "turns": [
+                    {"role": "user", "content": "Issue with large tensor"},
+                    {"role": "assistant", "content": "Check memory allocation"},
+                ]
+            },
         ]
 
         import asyncio
+
         summary = asyncio.run(enhancer.summarize_sessions(sessions))
 
         assert "Memory allocation" in summary
@@ -223,6 +231,7 @@ CONFIDENCE: 0.9"""
         enhancer = LlmEnhancer(llm_client=mock_client)
 
         import asyncio
+
         summary = asyncio.run(enhancer.summarize_sessions([]))
 
         assert summary == ""
