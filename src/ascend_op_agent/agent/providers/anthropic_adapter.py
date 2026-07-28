@@ -51,6 +51,7 @@ class AnthropicAdapter(BaseLLMAdapter):
         self.max_retries = getattr(config, "max_retries", 3)
         self.timeout = getattr(config, "timeout", 120)
         self.disable_thinking = getattr(config, "disable_thinking", False)
+        self.max_tokens = getattr(config, "max_tokens", 16384)
 
         if anthropic is None:
             raise ImportError(
@@ -172,7 +173,7 @@ class AnthropicAdapter(BaseLLMAdapter):
             try:
                 create_kwargs = dict(
                     model=self.model,
-                    max_tokens=4096,
+                    max_tokens=getattr(self, "max_tokens", 16384),
                     system=system_prompt,
                     messages=messages,
                     tools=anthropic_tools,

@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 from ascend_op_agent.agent.providers.anthropic_adapter import AnthropicAdapter
 
 
-def _cfg(disable_thinking: bool) -> SimpleNamespace:
+def _cfg(disable_thinking: bool = False, max_tokens: int = 16384) -> SimpleNamespace:
     return SimpleNamespace(
         api_key="k",
         auth_token="",
@@ -25,6 +25,7 @@ def _cfg(disable_thinking: bool) -> SimpleNamespace:
         max_retries=1,
         timeout=10,
         disable_thinking=disable_thinking,
+        max_tokens=max_tokens,
     )
 
 
@@ -74,3 +75,32 @@ def test_disable_thinking_returns_text_not_empty():
         tools=None,
     )
     assert resp == "```cpp\n// x\nCODE\n```"
+
+
+# ---- max_tokens(thinking + text 共享预算,默认 16384 兜底) ----
+
+
+def test_max_tokens_default_16384():
+    """adapter max_tokens 默认 16384(不硬编码 4096,避免 thinking 吃光)。"""
+    ad = AnthropicAdapter(_cfg())
+    assert ad.max_tokens == 16384
+
+
+def test_max_tokens_override_from_config():
+    """config 设 max_tokens -> adapter 用配置值。"""
+    ad = AnthropicAdapter(_cfg(max_tokens=8192))
+    assert ad.max_tokens == 8192
+
+
+def test_max_tokens_passed_to_create():
+    """complete() 把 self.max_tokens 传给 client.messages.create(不硬编码 4096)。"""
+    ad = AnthropicAdapter(_cfg(max_tokens=8192))
+    ad._client = MagicMock()
+    ad._client.messages.create.return_value = _fake_text_resp("ok")
+    ad.complete(
+        system_prompt="s",
+        conversation_history=[{"role": "user", "content": "u"}],
+        tools=None,
+    )
+    _, kwargs = ad._client.messages.create.call_args
+    assert kwargs["max_tokens"] == 8192

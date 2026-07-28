@@ -49,6 +49,13 @@ class LLMConfig(BaseModel):
         "thinking={type:disabled}。非推理模型(MiniMax-M3)保持 False(其兼容端点"
         "可能不认 thinking 参数)。",
     )
+    max_tokens: int = Field(
+        default=16384,
+        description="completion 总预算(thinking + visible text 共享)。glm-5.2 推理模型 thinking "
+        "可能膨胀(实测 SOUL system 下 12-15k 字符 ~4500 tokens),4096 会被吃光致 text 空。"
+        "16384 给 thinking + text 足够空间,且不触发 anthropic SDK 非 streaming 的 10min "
+        "长请求保护(32768+ 需 streaming)。保留 thinking(不禁)让模型推理,大 max_tokens 兜底。",
+    )
 
     @field_validator("provider")
     @classmethod

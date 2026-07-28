@@ -356,7 +356,7 @@ llm:
 #   api_key: "${GLM_API_KEY}"
 #   api_base: "https://open.bigmodel.cn/api/anthropic"
 #   model: "glm-5.2"
-#   disable_thinking: true  # glm-5.2 推理模型,禁 thinking 否则吃光 max_tokens(4096) 致 codegen text 空(见经验)
+#   # max_tokens 默认 16384(adapter 兜底,thinking + text 共享预算),不禁 thinking
 
 # Ark GLM-5.2 (备 2, Anthropic 兼容)  — 取消注释切换
 # llm:
@@ -364,7 +364,7 @@ llm:
 #   auth_token: "${ARK_API_KEY}"   # Ark 走 Bearer(adapter 已支持 auth_token);api_key 的 x-api-key 会 401
 #   api_base: "https://ark.cn-beijing.volces.com/api/plan"
 #   model: "glm-5.2"
-#   disable_thinking: true  # glm-5.2 推理模型,禁 thinking 否则吃光 max_tokens(4096) 致 codegen text 空
+#   # max_tokens 默认 16384(thinking + text 兜底),不禁 thinking
 ```
 
 **轮询调试策略（Claude 执行）**：
@@ -376,7 +376,7 @@ llm:
 **经验**：
 - **默认 Minimax**：N=20 stress 100% PASS（line 24-25）
 - **GLM-5.2 不适合 stress**：连续调用 timeout（line 324），仅作 spike 一次性 codegen 验证
-- **glm-5.2 thinking 吃光 max_tokens（2026-07-24 坐实）**：glm-5.2 是**推理模型**，SOUL system_prompt 触发 thinking 膨胀 12-15k 字符，吃光 adapter `max_tokens=4096`（`stop_reason=max_tokens`），visible text 输出 **0 字符** → codegen kernel/host 全空 → compile 缺 object file。修复：config 加 `disable_thinking: true`（adapter `complete()` 传 `thinking={type:disabled}`）。**Minimax M3 非推理模型保持不设**（其兼容端点可能不认 thinking 参数）。**教训**：LLM 返回空必先打 raw response（`stop_reason`/`content blocks` thinking vs text/`usage.output_tokens`），别瞎归因 prompt 信噪比或 LLM 能力
+- **glm-5.2 thinking + max_tokens（2026-07-24 坐实）**：glm-5.2 是**推理模型**，SOUL system_prompt 触发 thinking 膨胀 12-15k 字符（~4500 tokens）。adapter `max_tokens` 是 **thinking + visible text 共享总预算**：4096 时 thinking 吃光 → text 0 字符 → codegen 全空 → compile 缺 object file。**修复：`max_tokens` 默认 16384**（thinking + text 都够，实测 8192/16384 下 text 正常），**不禁 thinking**（保留推理能力）。32768+ 触发 anthropic SDK 非 streaming 10min 长请求保护（需 streaming）。`disable_thinking: true` 仍可选（字段保留，特殊场景禁推理）但默认 false。**教训**：LLM 返回空必先打 raw response（`stop_reason`/`content blocks` thinking vs text/`usage.output_tokens`），别瞎归因 prompt 信噪比或 LLM 能力
 - **Ark auth_token**：Ark 走 Bearer auth，adapter `auth_token` 参数已支持（`api_key` 走 x-api-key 会 401），config.yaml 用 `auth_token: "${ARK_API_KEY}"`；`/api/plan` 是 Anthropic 兼容端点（SDK 拼 `/api/plan/v1/messages`）
 - 切 GLM 后跑 spike 5/5/6/7 真实发现 add_custom 参考工程与 910B CANN 9.1.0 不兼容（spike #6 暴露第 5 层根因），U2 加 `inline_build_template` 内联 `add_example` 修复
 
