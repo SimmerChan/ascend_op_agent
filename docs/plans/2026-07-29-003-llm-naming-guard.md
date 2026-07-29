@@ -56,11 +56,28 @@ gmake[3]: *** [op_kernel/CMakeFiles/VectorAdd_ascend910b.dir/build.make:70: ...]
 - e2e 暴露 `/home/hsl/e2e_ops/op_add/op_host/` 残留 `add_custom_def.cpp / add_custom_infershape.cpp`（d725530 之前的失败 e2e 产物）
 - 本次手动清：`ssh ... rm -rf /home/hsl/e2e_ops/op_add`，后续 `_rsync_to_npu` 会在每次 e2e 前自动清
 
-### E2E（已知限制）
+### E2E（已知限制 → 已闭环）
 
 - 当前 e2e 跑 vector_add：compile 仍 fail（kernel_meta `.o` 找不到）
 - 根因：LLM 写的 vector_add kernel 内部 `compile_op` 调用不完整（kernel function name + tiling_key 链缺失），非命名防御范围
 - 本次防御对 `add_custom_*` 命名飘移已生效（实测无残留），但需要后续 plan 单独修 LLM codegen 质量（增加更完整 few-shot + 后处理校验 kernel 完整性）
+
+## E2E 闭环（追加 commit f769fdd → 后修复）
+
+e2e 跑 op_add（用户明确要求算子名）：
+- **第一轮 compile 失败**：LLM 写 `Process() → Compute(i, currentNum)` 但 Compute 签名只接 1 个 `currentNum` 参数 → `error: too many arguments to function call`
+- 根因不是命名问题，而是 LLM kernel 代码 bug
+- **本次 e2e 之前用单节点 `make_real_compile_node`，没接 fix_loop → 没自愈机会**
+- 改造：e2e_real_op.py 改用 `make_real_compile_fix_loop_node`（U2 实现，5 轮 compile→fix→re-compile 闭环）+ 独立 `_sync_op_to_npu` 把每轮修好的 kernel 同步到 910B
+- **重跑 e2e**：fix_loop 第 1 轮 LLM 看到 stderr `too many arguments` → 修 `Compute(i, currentNum)` 为 `Compute(currentNum)` → 重 compile → **success=True, return_code=0** 🎉
+- Process() 最终内容：
+  ```cpp
+  CopyIn(i, currentNum);
+  Compute(currentNum);    // 修对了
+  CopyOut(i, currentNum);
+  ```
+
+整个链路：**analyze OP_INFO → codegen scaffold + 3 LLM 语义节点 → review_fix → compile_fix_loop (1 round self-heal) → precision → delivery → framework_adapt → done**。
 
 ## 改动文件
 
@@ -69,3 +86,4 @@ gmake[3]: *** [op_kernel/CMakeFiles/VectorAdd_ascend910b.dir/build.make:70: ...]
 | `src/ascend_op_agent/orchestrator/nodes/common.py` | +2 helper (`parse_op_info_block`, `enforce_op_naming`)、`_node` 注入 2 个 hook、模块 docstring 加 U5 说明 |
 | `src/ascend_op_agent/orchestrator/graphs/new_dev.py` | analyze prompt 加 `<<OP_INFO>>` 强制块 |
 | `tests/unit/test_op_naming_guard.py` | 新增 15 个测试 |
+| `scripts/e2e_real_op.py` | `compile_node_factory` → `compile_fix_loop_node_factory`，接 `make_real_compile_fix_loop_node` + sync_fn |

@@ -44,6 +44,7 @@ from ascend_op_agent.orchestrator import (
     build_new_dev_graph,
 )
 from ascend_op_agent.orchestrator.nodes.validation import (
+    make_real_compile_fix_loop_node,
     make_real_compile_node,
     make_real_precision_node,
 )
@@ -587,13 +588,23 @@ def _do_one_run(
     test_cases_resolver = make_test_cases_resolver()
     phase_cb = make_phase_callback("orchestrator")
 
+    # fix_loop 在每轮 LLM 修 kernel 后需要同步本地→910B 重 compile,否则读旧文件。
+    # operator_path_resolver 内已含 rsync 但不会每轮触发,这里独立提供 sync_fn。
+    local_op_dir = str(local_workdir / "op_add")
+    remote_op_dir = f"{NPU_REMOTE_WORKDIR}/op_add"
+
+    def _sync_op_to_npu(_operator_path: str) -> None:
+        _rsync_to_npu(local_op_dir, remote_op_dir)
+
     runner = build_new_dev_graph(
         store=store,
         agent_factory=agent_factory,
         phase_callback=phase_cb,
-        compile_node_factory=lambda: make_real_compile_node(
+        compile_fix_loop_node_factory=lambda: make_real_compile_fix_loop_node(
             executor=npu,
             operator_path_resolver=operator_path_resolver,
+            agent_factory=agent_factory,
+            sync_fn=_sync_op_to_npu,
         ),
         precision_node_factory=lambda: make_real_precision_node(
             executor=npu,
