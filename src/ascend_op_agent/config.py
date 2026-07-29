@@ -49,12 +49,16 @@ class LLMConfig(BaseModel):
         "thinking={type:disabled}。非推理模型(MiniMax-M3)保持 False(其兼容端点"
         "可能不认 thinking 参数)。",
     )
-    max_tokens: int = Field(
-        default=16384,
-        description="completion 总预算(thinking + visible text 共享)。glm-5.2 推理模型 thinking "
-        "可能膨胀(实测 SOUL system 下 12-15k 字符 ~4500 tokens),4096 会被吃光致 text 空。"
-        "16384 给 thinking + text 足够空间,且不触发 anthropic SDK 非 streaming 的 10min "
-        "长请求保护(32768+ 需 streaming)。保留 thinking(不禁)让模型推理,大 max_tokens 兜底。",
+    max_tokens: Optional[int] = Field(
+        default=None,
+        description="completion 总预算(thinking + visible text 共享)。None=用 provider 真实上限"
+        "(实测 Minimax 256K / GLM 官方 128K / Ark 64K,adapter 走 streaming + min 自适应);"
+        "数字=min(数字, provider 上限)。保留 thinking(不禁推理),大上限兜底。",
+    )
+    provider_max_tokens: Optional[dict[str, int]] = Field(
+        default=None,
+        description="用户自定义 provider max_tokens 上限 map(覆盖/补充内置 PROVIDER_MAX_TOKENS)。"
+        "key 为 api_base 子串,value 为上限。默认 None 用内置 map。",
     )
 
     @field_validator("provider")

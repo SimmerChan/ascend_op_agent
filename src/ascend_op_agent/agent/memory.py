@@ -53,7 +53,7 @@ class MemoryStore:
         """
         self._memory_pools: dict[str, list[str]] = {
             "memory": [],  # Agent记忆
-            "user": [],    # 用户偏好
+            "user": [],  # 用户偏好
         }
         self._snapshot: Optional[dict[str, list[str]]] = None  # 会话级冻结快照
         self._context_threshold = context_threshold
@@ -103,7 +103,7 @@ class MemoryStore:
             return
 
         # 保留最近的消息
-        kept_items = items[-self._compression_keep:]
+        kept_items = items[-self._compression_keep :]
         compressed_count = len(items) - self._compression_keep
 
         # 生成压缩摘要

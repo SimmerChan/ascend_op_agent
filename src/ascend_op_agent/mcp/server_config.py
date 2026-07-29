@@ -21,6 +21,7 @@ from typing import Any, Optional
 
 class TransportType(Enum):
     """传输类型"""
+
     STDIO = "stdio"
     HTTP = "http"
     STREAMABLE_HTTP = "streamable-http"
@@ -35,6 +36,7 @@ class MCPServerConfig:
     - http: HTTP 请求响应
     - streamable-http: 流式 HTTP（支持 long polling）
     """
+
     name: str
     type: TransportType = TransportType.STDIO
     command: Optional[str] = None
@@ -94,7 +96,7 @@ class MCPServerConfig:
             import re
 
             token = self.token
-            pattern = re.compile(r'\$\{([^}]+)\}')
+            pattern = re.compile(r"\$\{([^}]+)\}")
             matches = pattern.findall(token)
             for env_var in matches:
                 token = token.replace(f"${{{env_var}}}", os.getenv(env_var, ""))

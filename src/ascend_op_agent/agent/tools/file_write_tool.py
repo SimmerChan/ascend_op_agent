@@ -2,6 +2,7 @@
 
 Migration from Hermes Agent file_tools.py
 """
+
 import os
 import shutil
 from pathlib import Path
@@ -56,7 +57,7 @@ def file_write(path: str, content: str, create_dirs: bool = True, backup: bool =
     # Atomic write: write to temp file then rename
     temp_path = abs_path + ".tmp"
     try:
-        with open(temp_path, 'w', encoding='utf-8') as f:
+        with open(temp_path, "w", encoding="utf-8") as f:
             f.write(content)
         os.replace(temp_path, abs_path)
     except Exception as e:
@@ -74,27 +75,13 @@ SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "path": {
-                "type": "string",
-                "description": "文件路径"
-            },
-            "content": {
-                "type": "string",
-                "description": "文件内容"
-            },
-            "create_dirs": {
-                "type": "boolean",
-                "description": "自动创建父目录",
-                "default": True
-            },
-            "backup": {
-                "type": "boolean",
-                "description": "备份现有文件",
-                "default": True
-            }
+            "path": {"type": "string", "description": "文件路径"},
+            "content": {"type": "string", "description": "文件内容"},
+            "create_dirs": {"type": "boolean", "description": "自动创建父目录", "default": True},
+            "backup": {"type": "boolean", "description": "备份现有文件", "default": True},
         },
-        "required": ["path", "content"]
-    }
+        "required": ["path", "content"],
+    },
 }
 
 
@@ -107,10 +94,10 @@ def register(registry):
             path=kw.get("path"),
             content=kw.get("content"),
             create_dirs=kw.get("create_dirs", True),
-            backup=kw.get("backup", True)
+            backup=kw.get("backup", True),
         ),
         parameters=SCHEMA,
         toolset="file",
         emoji="📝",
-        max_result_size_chars=50_000
+        max_result_size_chars=50_000,
     )

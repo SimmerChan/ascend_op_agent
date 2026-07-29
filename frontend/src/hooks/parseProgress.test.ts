@@ -116,3 +116,36 @@ test('skill_usage 字段非 string 数组 → 过滤掉(只留 string)', () => {
     assert.deepEqual(parsed.used_skills, ['used1']);
   }
 });
+
+// U5: stream text delta 透传(streaming on_delta → agent.progress{stage:thinking, delta})
+
+test('payload.delta → kind=phase, delta 透传', () => {
+  const parsed = parseProgressNotification({
+    payload: { stage: 'thinking', delta: 'hello world' },
+  });
+  assert.equal(parsed.kind, 'phase');
+  if (parsed.kind === 'phase') {
+    assert.equal(parsed.delta, 'hello world');
+  }
+});
+
+test('params 顶层 delta 兼容(老后端格式)', () => {
+  const parsed = parseProgressNotification({
+    stage: 'thinking',
+    delta: 'chunk',
+  });
+  assert.equal(parsed.kind, 'phase');
+  if (parsed.kind === 'phase') {
+    assert.equal(parsed.delta, 'chunk');
+  }
+});
+
+test('无 delta 字段 → delta undefined', () => {
+  const parsed = parseProgressNotification({
+    payload: { stage: 'completed' },
+  });
+  assert.equal(parsed.kind, 'phase');
+  if (parsed.kind === 'phase') {
+    assert.equal(parsed.delta, undefined);
+  }
+});

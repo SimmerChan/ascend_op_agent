@@ -29,7 +29,7 @@ class TokenResolver:
     """
 
     # 环境变量引用模式: ${VAR_NAME}
-    ENV_VAR_PATTERN = re.compile(r'\$\{([^}]+)\}')
+    ENV_VAR_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
     def __init__(self):
         pass

@@ -182,9 +182,7 @@ class SessionRecordManager:
                 # 创建一个新的 entry 用于每块
                 chunk_entry = entry
                 if hasattr(entry, "content"):
-                    chunk_entry = entry.__class__(
-                        **{**entry.__dict__, "content": chunk}
-                    )
+                    chunk_entry = entry.__class__(**{**entry.__dict__, "content": chunk})
                 self._write_queue.put(chunk_entry.to_json())
         else:
             self._write_queue.put(json_line)
@@ -242,6 +240,7 @@ class SessionRecordManager:
                 try:
                     # 解析 session_id
                     import json
+
                     data = json.loads(line)
                     session_id = data.get("session_id", "default")
 
@@ -355,7 +354,9 @@ def list_sessions(
         return []
 
     sessions = []
-    for file_path in sorted(persist_path.glob("*.jsonl*"), key=lambda p: p.stat().st_mtime, reverse=True):
+    for file_path in sorted(
+        persist_path.glob("*.jsonl*"), key=lambda p: p.stat().st_mtime, reverse=True
+    ):
         # 跳过目录
         if file_path.is_dir():
             continue
@@ -374,11 +375,13 @@ def list_sessions(
         if any(s["session_id"] == session_id for s in sessions):
             continue
 
-        sessions.append({
-            "session_id": session_id,
-            "file_path": str(file_path),
-            "modified_at": file_path.stat().st_mtime,
-        })
+        sessions.append(
+            {
+                "session_id": session_id,
+                "file_path": str(file_path),
+                "modified_at": file_path.stat().st_mtime,
+            }
+        )
 
         if len(sessions) >= limit:
             break

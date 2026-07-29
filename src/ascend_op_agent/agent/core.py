@@ -21,7 +21,7 @@ import logging
 import threading
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 from ascend_op_agent.agent.context import ContextEngine
 from ascend_op_agent.agent.memory import MemoryStore
@@ -220,6 +220,7 @@ class AIAgent:
                     system_prompt=system_prompt,
                     conversation_history=self._conversation_history,
                     tools=tools if tools else None,
+                    on_delta=getattr(self, "_stream_delta_callback", None),
                 )
             finally:
                 timeout_tracker.cancel()
@@ -684,18 +685,22 @@ class LLMClient:
         system_prompt: str,
         conversation_history: list[dict[str, str]],
         tools: Optional[list[dict]] = None,
-    ) -> str:
+        on_delta: Optional[Callable[[str], None]] = None,
+    ) -> Union[str, ToolCallResult]:
         """Call the LLM using the configured provider adapter
 
         Args:
             system_prompt: System prompt for the conversation
             conversation_history: List of message dicts with 'role' and 'content'
             tools: Optional list of tool definitions in OpenAI function format
+            on_delta: Optional streaming callback (per text delta); forwarded to adapter.
 
         Returns:
-            LLM response text
+            LLM response text, or ToolCallResult if a tool call is triggered.
         """
-        return self._adapter.complete(system_prompt, conversation_history, tools=tools)
+        return self._adapter.complete(
+            system_prompt, conversation_history, tools=tools, on_delta=on_delta
+        )
 
 
 class RateLimitError(Exception):

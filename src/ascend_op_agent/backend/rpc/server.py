@@ -173,6 +173,7 @@ class JSONRPCServer:
 
             # P1 U4 fix: handler 返的 dataclass (AgentResponse 用 TypedDict 不是 dataclass) 转 dict 再序列化
             from dataclasses import asdict, is_dataclass
+
             if is_dataclass(result) and not isinstance(result, type):
                 result = asdict(result)
             elif isinstance(result, dict):  # TypedDict 实际就是 dict

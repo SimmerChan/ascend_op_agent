@@ -21,6 +21,7 @@ from typing import Any, Optional
 @dataclass
 class Skill:
     """Skill完整数据模型"""
+
     name: str
     description: str
     content: str
@@ -70,6 +71,7 @@ class Skill:
 @dataclass
 class SkillInfo:
     """Skill摘要信息（用于列表展示）"""
+
     name: str
     description: str
     tags: list[str] = field(default_factory=list)
@@ -104,6 +106,7 @@ class SkillInfo:
 @dataclass
 class SkillBundle:
     """Skill包（用于远程获取）"""
+
     name: str
     files: dict[str, str]
     source: str

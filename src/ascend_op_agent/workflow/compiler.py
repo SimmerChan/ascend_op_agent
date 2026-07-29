@@ -39,9 +39,9 @@ COMMON_HEADERS = {
     "iostream": ["<iostream>", "#include <iostream>"],
     "memory": ["<memory>", "#include <memory>"],
     "functional": ["<functional>", "#include <functional>"],
-    "tensor": ["acl/acl_base.h", "#include \"acl/acl_base.h\""],
-    "kernel": ["kernel_operator.h", "#include \"kernel_operator.h\""],
-    "kernel_base": ["kernel_base.h", "#include \"kernel_base.h\""],
+    "tensor": ["acl/acl_base.h", '#include "acl/acl_base.h"'],
+    "kernel": ["kernel_operator.h", '#include "kernel_operator.h"'],
+    "kernel_base": ["kernel_base.h", '#include "kernel_base.h"'],
 }
 
 
@@ -300,7 +300,9 @@ class CodeFixer:
         for i, line in enumerate(lines):
             if error_line.strip() in line or line.strip() == error_line.strip():
                 # 修复缺失分号
-                if not line.strip().endswith((";", "{", "}", "//")) and not line.strip().startswith("//"):
+                if not line.strip().endswith((";", "{", "}", "//")) and not line.strip().startswith(
+                    "//"
+                ):
                     if i + 1 < len(lines) and lines[i + 1].strip().startswith("//"):
                         # 注释行前需要分号
                         lines[i] = line.rstrip() + ";"

@@ -455,7 +455,7 @@ class _FakeLLMClient:
     def __init__(self, response: str = "ok"):
         self.response = response
 
-    def call(self, system_prompt, conversation_history, tools=None):
+    def call(self, system_prompt, conversation_history, tools=None, on_delta=None):
         return self.response
 
 

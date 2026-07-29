@@ -109,7 +109,7 @@ class ACPAdapter:
             response = self._protocol.build_error_response(
                 request.id,
                 self._protocol._protocol.METHOD_NOT_FOUND_CODE,
-                f"Method not found: {method}"
+                f"Method not found: {method}",
             )
             async with self._ensure_lock():
                 print(response, flush=True)
@@ -120,7 +120,7 @@ class ACPAdapter:
             response = self._protocol.build_error_response(
                 request.id,
                 self._protocol._protocol.INVALID_PARAMS_CODE,
-                f"Invalid params for method: {method}"
+                f"Invalid params for method: {method}",
             )
             async with self._ensure_lock():
                 print(response, flush=True)
@@ -146,14 +146,14 @@ class ACPAdapter:
         except Exception as e:
             logger.error(f"Error handling {method}: {e}")
             response = self._protocol.build_error_response(
-                request.id,
-                self._protocol._protocol.INTERNAL_ERROR_CODE,
-                str(e)
+                request.id, self._protocol._protocol.INTERNAL_ERROR_CODE, str(e)
             )
             async with self._ensure_lock():
                 print(response, flush=True)
 
-    async def _handle_initialize(self, params: Optional[dict[str, Any]], req_id: Any) -> dict[str, Any]:
+    async def _handle_initialize(
+        self, params: Optional[dict[str, Any]], req_id: Any
+    ) -> dict[str, Any]:
         """处理 initialize 请求
 
         Args:
@@ -183,7 +183,9 @@ class ACPAdapter:
             "sessionId": session_id,
         }
 
-    async def _handle_agent_run(self, params: Optional[dict[str, Any]], req_id: Any) -> dict[str, Any]:
+    async def _handle_agent_run(
+        self, params: Optional[dict[str, Any]], req_id: Any
+    ) -> dict[str, Any]:
         """处理 agent.run 请求
 
         Args:
@@ -201,11 +203,7 @@ class ACPAdapter:
 
         # 运行 Agent
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            self._agent_runner,
-            user_input
-        )
+        response = await loop.run_in_executor(None, self._agent_runner, user_input)
 
         return {"response": response}
 
@@ -231,7 +229,9 @@ class ACPAdapter:
 
         return {"tools": tools}
 
-    async def _handle_tools_call(self, params: Optional[dict[str, Any]], req_id: Any) -> dict[str, Any]:
+    async def _handle_tools_call(
+        self, params: Optional[dict[str, Any]], req_id: Any
+    ) -> dict[str, Any]:
         """处理 tools/call 请求
 
         Args:

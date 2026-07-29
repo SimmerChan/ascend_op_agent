@@ -43,6 +43,7 @@ def estimate_tokens(text: str) -> int:
 @dataclass
 class Entry:
     """对话记录条目基类"""
+
     type: str  # user, assistant, system, tool
     timestamp: float = field(default_factory=time.time)
     session_id: str = ""
@@ -64,6 +65,7 @@ class Entry:
 @dataclass
 class UserEntry(Entry):
     """用户输入条目"""
+
     type: str = "user"
     content: str = ""
 
@@ -85,6 +87,7 @@ class UserEntry(Entry):
 @dataclass
 class SystemEntry(Entry):
     """系统提示条目（记录发送给 LLM 的完整 system prompt）"""
+
     type: str = "system"
     content: str = ""
 
@@ -106,6 +109,7 @@ class SystemEntry(Entry):
 @dataclass
 class LLMEntry(Entry):
     """LLM 输入输出条目"""
+
     type: str = "assistant"
     input_messages: list[dict[str, str]] = field(default_factory=list)
     output_content: str = ""
@@ -131,6 +135,7 @@ class LLMEntry(Entry):
 @dataclass
 class ToolEntry(Entry):
     """工具调用条目"""
+
     type: str = "tool"
     tool_name: str = ""
     tool_call_id: str = ""  # Native Function Calling 的 tool_call_id

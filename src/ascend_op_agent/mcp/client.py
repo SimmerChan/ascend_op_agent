@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 class MCPConnectionError(Exception):
     """MCP 连接错误"""
+
     pass
 
 
@@ -146,6 +147,7 @@ class MCPClient:
 
             # 读取响应
             import select
+
             if select.select([proc.stdout], [], [], 30)[0]:
                 response_line = proc.stdout.readline()
                 if response_line:

@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ACPSession:
     """ACP 会话对象"""
+
     session_id: str
     editor_info: dict[str, Any]
     created_at: float = field(default_factory=time.time)

@@ -46,6 +46,7 @@ class TestSkillInstaller:
         skills_dir.mkdir()
 
         from ascend_op_agent.skills.storage import SkillStorage
+
         storage = SkillStorage(str(skills_dir))
 
         mock_index = MagicMock()
@@ -83,6 +84,7 @@ class TestSkillInstaller:
             )
 
         from ascend_op_agent.skills.storage import SkillStorage
+
         storage = SkillStorage(str(skills_dir))
         mock_index = MagicMock()
 
@@ -124,6 +126,7 @@ class TestSkillInstaller:
         )
 
         from ascend_op_agent.skills.storage import SkillStorage
+
         storage = SkillStorage(str(skills_dir))
         mock_index = MagicMock()
 
@@ -153,6 +156,7 @@ class TestSkillInstaller:
         skills_dir.mkdir()
 
         from ascend_op_agent.skills.storage import SkillStorage
+
         storage = SkillStorage(str(skills_dir))
         mock_index = MagicMock()
 
@@ -180,6 +184,7 @@ class TestSkillInstaller:
         skills_dir.mkdir()
 
         from ascend_op_agent.skills.storage import SkillStorage
+
         storage = SkillStorage(str(skills_dir))
         mock_index = MagicMock()
 
@@ -206,6 +211,7 @@ class TestSkillInstaller:
         skills_dir.mkdir()
 
         from ascend_op_agent.skills.storage import SkillStorage
+
         storage = SkillStorage(str(skills_dir))
         mock_index = MagicMock()
 

@@ -48,6 +48,7 @@ export const App: React.FC = () => {
   const [state, setState] = useState<AppState>('idle');
   const [input, setInput] = useState('');
   const [progress, setProgress] = useState<ProgressState>({ stage: 'thinking' });
+  const [thinkingText, setThinkingText] = useState('');
   const [skillLoads, setSkillLoads] = useState<SkillLoad[]>([]);
   const [messages, setMessages] = useState<string[]>([]);
   const [confirmData, setConfirmData] = useState<ConfirmData | null>(null);
@@ -92,12 +93,20 @@ export const App: React.FC = () => {
           ];
         });
       } else {
-        setProgress({
-          stage: parsed.stage ?? 'thinking',
-          tool_name: parsed.tool_name,
-          error_code: parsed.error_code,
-          error_message: parsed.error_message,
-        });
+        if (parsed.delta !== undefined) {
+          // U5: stream text delta 累积(实时 thinking 文本)
+          setThinkingText(prev => prev + parsed.delta);
+        } else {
+          setProgress({
+            stage: parsed.stage ?? 'thinking',
+            tool_name: parsed.tool_name,
+            error_code: parsed.error_code,
+            error_message: parsed.error_message,
+          });
+          if (parsed.stage === 'thinking') {
+            setThinkingText('');  // 新 LLM call 开始,清空旧累积
+          }
+        }
       }
     } else if (lastResponse.method === 'agent.error') {
       const err = lastResponse.params?.message as string;
@@ -195,7 +204,14 @@ export const App: React.FC = () => {
       )}
 
       {state === 'running' && (
-        <ProgressBar stage={progress.stage} tool_name={progress.tool_name} error_message={progress.error_message} />
+        <Box flexDirection="column">
+          <ProgressBar stage={progress.stage} tool_name={progress.tool_name} error_message={progress.error_message} />
+          {thinkingText && (
+            <Box marginLeft={2} marginTop={0}>
+              <Text dimColor>{thinkingText.slice(-2000)}</Text>
+            </Box>
+          )}
+        </Box>
       )}
 
       {/* U8: skill 加载/使用 chips(cannbot skill 跟踪,只在非空时显示) */}

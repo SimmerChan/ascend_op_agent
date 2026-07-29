@@ -2,16 +2,13 @@
 
 Provides git_log, git_diff, git_status, git_branch functions.
 """
+
 import os
 import subprocess
 from typing import Optional, List
 
 
-def git_log(
-    path: str = ".",
-    max_count: int = 50,
-    format: str = "%h %s %an %ad"
-) -> str:
+def git_log(path: str = ".", max_count: int = 50, format: str = "%h %s %an %ad") -> str:
     """Get git commit log.
 
     Args:
@@ -24,12 +21,12 @@ def git_log(
     """
     work_dir = os.path.abspath(path)
 
-    if not os.path.exists(os.path.join(work_dir, '.git')):
+    if not os.path.exists(os.path.join(work_dir, ".git")):
         return f"错误: {path} 不是 Git 仓库"
 
     try:
         result = subprocess.run(
-            ['git', 'log', f'-{max_count}', f'--format={format}'],
+            ["git", "log", f"-{max_count}", f"--format={format}"],
             cwd=work_dir,
             capture_output=True,
             text=True,
@@ -52,10 +49,7 @@ def git_log(
 
 
 def git_diff(
-    path: str = ".",
-    ref1: Optional[str] = None,
-    ref2: Optional[str] = None,
-    staged: bool = False
+    path: str = ".", ref1: Optional[str] = None, ref2: Optional[str] = None, staged: bool = False
 ) -> str:
     """Get git diff between refs or working tree.
 
@@ -70,17 +64,17 @@ def git_diff(
     """
     work_dir = os.path.abspath(path)
 
-    if not os.path.exists(os.path.join(work_dir, '.git')):
+    if not os.path.exists(os.path.join(work_dir, ".git")):
         return f"错误: {path} 不是 Git 仓库"
 
     try:
-        args = ['git', 'diff', '--no-color']
+        args = ["git", "diff", "--no-color"]
 
         if staged:
-            args.append('--staged')
+            args.append("--staged")
 
         if ref1 and ref2:
-            args.append(f'{ref1}..{ref2}')
+            args.append(f"{ref1}..{ref2}")
         elif ref1:
             args.append(ref1)
 
@@ -118,12 +112,12 @@ def git_status(path: str = ".") -> str:
     """
     work_dir = os.path.abspath(path)
 
-    if not os.path.exists(os.path.join(work_dir, '.git')):
+    if not os.path.exists(os.path.join(work_dir, ".git")):
         return f"错误: {path} 不是 Git 仓库"
 
     try:
         result = subprocess.run(
-            ['git', 'status', '--porcelain'],
+            ["git", "status", "--porcelain"],
             cwd=work_dir,
             capture_output=True,
             text=True,
@@ -160,13 +154,13 @@ def git_branch(path: str = ".", list_branches: bool = True) -> str:
     """
     work_dir = os.path.abspath(path)
 
-    if not os.path.exists(os.path.join(work_dir, '.git')):
+    if not os.path.exists(os.path.join(work_dir, ".git")):
         return f"错误: {path} 不是 Git 仓库"
 
     try:
         if list_branches:
             result = subprocess.run(
-                ['git', 'branch', '-v'],
+                ["git", "branch", "-v"],
                 cwd=work_dir,
                 capture_output=True,
                 text=True,
@@ -174,7 +168,7 @@ def git_branch(path: str = ".", list_branches: bool = True) -> str:
             )
         else:
             result = subprocess.run(
-                ['git', 'branch', '--show-current'],
+                ["git", "branch", "--show-current"],
                 cwd=work_dir,
                 capture_output=True,
                 text=True,
@@ -203,19 +197,11 @@ GIT_LOG_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "path": {
-                "type": "string",
-                "description": "仓库路径",
-                "default": "."
-            },
-            "max_count": {
-                "type": "integer",
-                "description": "最大提交数",
-                "default": 50
-            }
+            "path": {"type": "string", "description": "仓库路径", "default": "."},
+            "max_count": {"type": "integer", "description": "最大提交数", "default": 50},
         },
-        "required": []
-    }
+        "required": [],
+    },
 }
 
 # Schema for git_diff
@@ -225,27 +211,13 @@ GIT_DIFF_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "path": {
-                "type": "string",
-                "description": "仓库路径",
-                "default": "."
-            },
-            "ref1": {
-                "type": "string",
-                "description": "第一个引用（可选）"
-            },
-            "ref2": {
-                "type": "string",
-                "description": "第二个引用（可选）"
-            },
-            "staged": {
-                "type": "boolean",
-                "description": "是否显示暂存区差异",
-                "default": False
-            }
+            "path": {"type": "string", "description": "仓库路径", "default": "."},
+            "ref1": {"type": "string", "description": "第一个引用（可选）"},
+            "ref2": {"type": "string", "description": "第二个引用（可选）"},
+            "staged": {"type": "boolean", "description": "是否显示暂存区差异", "default": False},
         },
-        "required": []
-    }
+        "required": [],
+    },
 }
 
 # Schema for git_status
@@ -254,15 +226,9 @@ GIT_STATUS_SCHEMA = {
     "description": "查看 Git 仓库状态（工作区、暂存区）。",
     "parameters": {
         "type": "object",
-        "properties": {
-            "path": {
-                "type": "string",
-                "description": "仓库路径",
-                "default": "."
-            }
-        },
-        "required": []
-    }
+        "properties": {"path": {"type": "string", "description": "仓库路径", "default": "."}},
+        "required": [],
+    },
 }
 
 # Schema for git_branch
@@ -272,19 +238,11 @@ GIT_BRANCH_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "path": {
-                "type": "string",
-                "description": "仓库路径",
-                "default": "."
-            },
-            "list_branches": {
-                "type": "boolean",
-                "description": "列出所有分支",
-                "default": True
-            }
+            "path": {"type": "string", "description": "仓库路径", "default": "."},
+            "list_branches": {"type": "boolean", "description": "列出所有分支", "default": True},
         },
-        "required": []
-    }
+        "required": [],
+    },
 }
 
 
@@ -300,7 +258,7 @@ def register(registry):
         parameters=GIT_LOG_SCHEMA,
         toolset="vcs",
         emoji="📜",
-        max_result_size_chars=50_000
+        max_result_size_chars=50_000,
     )
 
     registry.register(
@@ -315,7 +273,7 @@ def register(registry):
         parameters=GIT_DIFF_SCHEMA,
         toolset="vcs",
         emoji="📊",
-        max_result_size_chars=50_000
+        max_result_size_chars=50_000,
     )
 
     registry.register(
@@ -327,7 +285,7 @@ def register(registry):
         parameters=GIT_STATUS_SCHEMA,
         toolset="vcs",
         emoji="📋",
-        max_result_size_chars=50_000
+        max_result_size_chars=50_000,
     )
 
     registry.register(
@@ -340,5 +298,5 @@ def register(registry):
         parameters=GIT_BRANCH_SCHEMA,
         toolset="vcs",
         emoji="🌿",
-        max_result_size_chars=50_000
+        max_result_size_chars=50_000,
     )

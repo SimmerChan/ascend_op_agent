@@ -41,7 +41,7 @@ class ContextEngine:
     """
 
     # 优先级文件列表（按优先级从高到低）
-    PRIORITY_FILES = ['.hermes.md', 'AGENTS.md', 'CLAUDE.md', '.cursorrules']
+    PRIORITY_FILES = [".hermes.md", "AGENTS.md", "CLAUDE.md", ".cursorrules"]
 
     def __init__(
         self,
@@ -86,7 +86,7 @@ class ContextEngine:
         if filepath in self._context_cache:
             return self._context_cache[filepath]
 
-        with open(filepath, 'r', encoding='utf-8') as f:
+        with open(filepath, "r", encoding="utf-8") as f:
             content = f.read()
 
         # 安全扫描
@@ -107,21 +107,21 @@ class ContextEngine:
         """
         # 不可见字符
         invisible_patterns = [
-            r'\x00',  # null byte
-            r'\u200b',  # zero-width space
-            r'\u202b',  # right-to-left embedding
-            r'\ufeff',  # byte order mark
+            r"\x00",  # null byte
+            r"\u200b",  # zero-width space
+            r"\u202b",  # right-to-left embedding
+            r"\ufeff",  # byte order mark
         ]
         for pattern in invisible_patterns:
-            content = re.sub(pattern, '', content)
+            content = re.sub(pattern, "", content)
 
         # 中文威胁词（示例）
         threat_patterns = [
-            r'[\梯队]',
-            r'软体',
+            r"[\梯队]",
+            r"软体",
         ]
         for pattern in threat_patterns:
-            content = re.sub(pattern, '', content)
+            content = re.sub(pattern, "", content)
 
         return content
 

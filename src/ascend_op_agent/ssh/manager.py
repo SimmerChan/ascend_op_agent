@@ -36,12 +36,14 @@ import paramiko
 
 class SSHConnectionError(Exception):
     """SSH连接错误"""
+
     pass
 
 
 @dataclass
 class CommandResult:
     """命令执行结果"""
+
     stdout: str
     stderr: str
     return_code: int
@@ -139,12 +141,12 @@ class SSHManager:
             except paramiko.SSHException as e:
                 last_error = e
                 if attempt < self.max_retries - 1:
-                    wait_time = self.backoff_factor ** attempt
+                    wait_time = self.backoff_factor**attempt
                     time.sleep(wait_time)
             except Exception as e:
                 last_error = e
                 if attempt < self.max_retries - 1:
-                    wait_time = self.backoff_factor ** attempt
+                    wait_time = self.backoff_factor**attempt
                     time.sleep(wait_time)
 
         raise SSHConnectionError(f"连接失败 (尝试{self.max_retries}次): {last_error}")
@@ -236,11 +238,13 @@ def create_ssh_manager_from_config(
     # 解析环境变量引用
     if password and password.startswith("${") and password.endswith("}"):
         import os
+
         env_var = password[2:-1]
         password = os.getenv(env_var, "")
 
     if key_path and key_path.startswith("${") and key_path.endswith("}"):
         import os
+
         env_var = key_path[2:-1]
         key_path = os.getenv(env_var, "")
 
@@ -467,12 +471,12 @@ class SSHEnvironment(BaseEnvironment):
             except paramiko.SSHException as e:
                 last_error = e
                 if attempt < self.max_retries - 1:
-                    wait_time = self.backoff_factor ** attempt
+                    wait_time = self.backoff_factor**attempt
                     time.sleep(wait_time)
             except Exception as e:
                 last_error = e
                 if attempt < self.max_retries - 1:
-                    wait_time = self.backoff_factor ** attempt
+                    wait_time = self.backoff_factor**attempt
                     time.sleep(wait_time)
 
         raise SSHConnectionError(f"连接失败 (尝试{self.max_retries}次): {last_error}")

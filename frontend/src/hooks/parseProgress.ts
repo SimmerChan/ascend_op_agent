@@ -17,6 +17,7 @@ export type ProgressKind =
       error_code?: string;
       error_message?: string;
       event?: string;
+      delta?: string;
     }
   | {
       kind: 'skill_usage';
@@ -76,5 +77,6 @@ export function parseProgressNotification(
     error_message:
       asString(payload.error_message) ?? asString(params.error_message),
     event,
+    delta: asString(payload.delta) ?? asString(params.delta),
   };
 }

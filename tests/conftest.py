@@ -22,9 +22,7 @@ def pytest_configure(config):
 
 def pytest_collection_modifyitems(config, items):
     """CANN 环境未配置时,hardware 测试自动 skip。"""
-    cann_ready = bool(
-        os.environ.get("ASCEND_OPP_PATH") or os.environ.get("CANN_HOME")
-    )
+    cann_ready = bool(os.environ.get("ASCEND_OPP_PATH") or os.environ.get("CANN_HOME"))
     if cann_ready:
         return
     skip_hardware = pytest.mark.skip(

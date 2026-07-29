@@ -55,6 +55,7 @@ class VectorStore:
         """
         if persist_dir is None:
             from ascend_op_agent.config import load_config
+
             cfg = load_config()
             persist_dir = cfg.vector_store.persist_dir
 
@@ -72,7 +73,7 @@ class VectorStore:
             path=str(self.persist_dir),
             settings=Settings(
                 anonymized_telemetry=False,
-            )
+            ),
         )
 
         # 确保 collection 存在
@@ -89,15 +90,13 @@ class VectorStore:
 
         if self.collection_skills not in existing:
             self._client.create_collection(
-                name=self.collection_skills,
-                metadata={"description": "Skill 向量存储"}
+                name=self.collection_skills, metadata={"description": "Skill 向量存储"}
             )
             logger.info(f"Created collection: {self.collection_skills}")
 
         if self.collection_memories not in existing:
             self._client.create_collection(
-                name=self.collection_memories,
-                metadata={"description": "记忆向量存储"}
+                name=self.collection_memories, metadata={"description": "记忆向量存储"}
             )
             logger.info(f"Created collection: {self.collection_memories}")
 
@@ -192,11 +191,17 @@ class VectorStore:
         formatted = []
         if results and results["ids"]:
             for i, sid in enumerate(results["ids"][0]):
-                formatted.append({
-                    "id": sid,
-                    "distance": results["distances"][0][i] if "distances" in results else None,
-                    "metadata": results["metadatas"][0][i] if "metadatas" in results and results["metadatas"] else None,
-                })
+                formatted.append(
+                    {
+                        "id": sid,
+                        "distance": results["distances"][0][i] if "distances" in results else None,
+                        "metadata": (
+                            results["metadatas"][0][i]
+                            if "metadatas" in results and results["metadatas"]
+                            else None
+                        ),
+                    }
+                )
 
         return formatted
 
@@ -282,11 +287,17 @@ class VectorStore:
         formatted = []
         if results and results["ids"]:
             for i, mid in enumerate(results["ids"][0]):
-                formatted.append({
-                    "id": mid,
-                    "distance": results["distances"][0][i] if "distances" in results else None,
-                    "metadata": results["metadatas"][0][i] if "metadatas" in results and results["metadatas"] else None,
-                })
+                formatted.append(
+                    {
+                        "id": mid,
+                        "distance": results["distances"][0][i] if "distances" in results else None,
+                        "metadata": (
+                            results["metadatas"][0][i]
+                            if "metadatas" in results and results["metadatas"]
+                            else None
+                        ),
+                    }
+                )
 
         return formatted
 
@@ -304,8 +315,7 @@ class VectorStore:
         """清空所有 Skill 向量"""
         self._client.delete_collection(name=self.collection_skills)
         self._client.create_collection(
-            name=self.collection_skills,
-            metadata={"description": "Skill 向量存储"}
+            name=self.collection_skills, metadata={"description": "Skill 向量存储"}
         )
         logger.info("Cleared all skill vectors")
 
@@ -313,8 +323,7 @@ class VectorStore:
         """清空所有记忆向量"""
         self._client.delete_collection(name=self.collection_memories)
         self._client.create_collection(
-            name=self.collection_memories,
-            metadata={"description": "记忆向量存储"}
+            name=self.collection_memories, metadata={"description": "记忆向量存储"}
         )
         logger.info("Cleared all memory vectors")
 

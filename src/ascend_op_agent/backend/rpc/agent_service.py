@@ -20,6 +20,7 @@
 import asyncio
 import functools
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Callable, TypedDict, Optional
 
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 class AgentResponse(TypedDict):
     """Agent 响应的类型定义"""
+
     status: str
     response: Optional[str]
     data: Optional[dict]
@@ -45,6 +47,39 @@ PHASE_EVENT_TO_STAGE = {
     "failed": "phase_failed",
     "interrupted": "phase_interrupted",
 }
+
+
+class _DeltaBatcher:
+    """stream text delta 节流累积器。
+
+    大 max_tokens(最高 256K)长生成可能产生数千 token chunk,per-chunk 发 agent.progress
+    会洪水 stdout。累积 chunk 按 interval 合并成单个 agent.progress{stage:thinking,delta},
+    status_callback idle/completed 时 finish() flush 收尾。
+    """
+
+    def __init__(self, queue: NotificationQueue, interval_s: float = 0.1) -> None:
+        self._queue = queue
+        self._interval = interval_s
+        self._buf: list[str] = []
+        self._last_flush = 0.0
+
+    def push(self, delta: str) -> None:
+        if self._last_flush == 0.0:
+            self._last_flush = time.monotonic()
+        self._buf.append(delta)
+        if time.monotonic() - self._last_flush >= self._interval:
+            self._flush()
+
+    def _flush(self) -> None:
+        if not self._buf:
+            return
+        self._queue.put("agent.progress", {"stage": "thinking", "delta": "".join(self._buf)})
+        self._buf.clear()
+        self._last_flush = time.monotonic()
+
+    def finish(self) -> None:
+        """LLM call 结束(status idle/completed)时 flush 收尾未发 buffer。"""
+        self._flush()
 
 
 class AgentAsyncWrapper:
@@ -90,6 +125,13 @@ class AgentAsyncWrapper:
                     params["stage"] = "tool_executing"
                 self._notification_queue.put("agent.progress", params)
 
+            # U5: stream text delta 节流累积 → agent.progress{stage:thinking, delta}
+            # adapter on_delta 转发至此;batcher 防 per-token stdout 洪水。
+            delta_batcher = _DeltaBatcher(self._notification_queue)
+
+            def stream_delta_callback(delta: str) -> None:
+                delta_batcher.push(delta)
+
             def status_callback(kind: str, text: Optional[str] = None) -> None:
                 params: dict[str, Any] = {}
                 if text:
@@ -98,8 +140,10 @@ class AgentAsyncWrapper:
                     params["stage"] = "thinking"
                 elif kind == "idle":
                     params["stage"] = "idle"
+                    delta_batcher.finish()  # LLM call 结束,flush 收尾 delta
                 elif kind == "completed":
                     params["stage"] = "completed"
+                    delta_batcher.finish()
                 elif kind == "waiting":
                     params["stage"] = "waiting"
                 self._notification_queue.put("agent.progress", params)
@@ -107,6 +151,7 @@ class AgentAsyncWrapper:
             # 传递包装后的回调给 AIAgent
             self.agent._tool_progress_callback = tool_progress_callback
             self.agent._status_callback = status_callback
+            self.agent._stream_delta_callback = stream_delta_callback
 
     async def run_conversation_async(self, user_input: str) -> AgentResponse:
         """异步运行对话
@@ -125,9 +170,7 @@ class AgentAsyncWrapper:
 
         try:
             result = await loop.run_in_executor(
-                self._thread_pool,
-                self.agent.run_conversation,
-                user_input
+                self._thread_pool, self.agent.run_conversation, user_input
             )
         finally:
             # 停止通知队列消费
@@ -162,14 +205,11 @@ class AgentAsyncWrapper:
         if self._notification_queue is None:
             # 无通知机制:静默 noop
             def _noop(phase: str, event: str, error: Optional[str] = None) -> None:
-                logger.debug(
-                    f"phase event (no queue): phase={phase} event={event} error={error}"
-                )
+                logger.debug(f"phase event (no queue): phase={phase} event={event} error={error}")
+
             return _noop
 
-        def _phase_callback(
-            phase: str, event: str, error: Optional[str] = None
-        ) -> None:
+        def _phase_callback(phase: str, event: str, error: Optional[str] = None) -> None:
             stage = PHASE_EVENT_TO_STAGE.get(event, f"phase_{event}")
             params: dict[str, Any] = {"phase": phase, "stage": stage}
             if error is not None:

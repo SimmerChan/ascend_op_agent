@@ -144,8 +144,12 @@ class TestPerformanceReport:
     def test_calculate_summary(self):
         """测试汇总计算"""
         results = [
-            PerformanceResult(case_name="case1", metrics=[], avg_latency_ms=1.0, throughput_gflops=100.0),
-            PerformanceResult(case_name="case2", metrics=[], avg_latency_ms=2.0, throughput_gflops=200.0),
+            PerformanceResult(
+                case_name="case1", metrics=[], avg_latency_ms=1.0, throughput_gflops=100.0
+            ),
+            PerformanceResult(
+                case_name="case2", metrics=[], avg_latency_ms=2.0, throughput_gflops=200.0
+            ),
         ]
         report = PerformanceReport(
             operator_name="test_op",

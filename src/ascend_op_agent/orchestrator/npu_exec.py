@@ -65,10 +65,7 @@ class PrecisionMetrics:
         cos_sim_threshold: float = 0.999,
     ) -> bool:
         """默认阈值:abs_err < 1e-3 且 cos_sim > 0.999。"""
-        return (
-            self.abs_err_max < abs_err_max_threshold
-            and self.cos_sim > cos_sim_threshold
-        )
+        return self.abs_err_max < abs_err_max_threshold and self.cos_sim > cos_sim_threshold
 
     def to_dict(self) -> dict:
         return {
@@ -176,9 +173,7 @@ class NpuExecutor:
 
         远程模式请用 ``is_remote_cann_available``。
         """
-        return bool(
-            os.environ.get("ASCEND_OPP_PATH") or os.environ.get("CANN_HOME")
-        )
+        return bool(os.environ.get("ASCEND_OPP_PATH") or os.environ.get("CANN_HOME"))
 
     def is_remote_cann_available(self) -> bool:
         """远程模式:SSH(可选进容器)探测 ASCEND_OPP_PATH 是否就绪。
@@ -410,9 +405,7 @@ class NpuExecutor:
         两个数组需 shape 兼容(否则 ValueError)。
         """
         if golden.shape != actual.shape:
-            raise ValueError(
-                f"shape mismatch: golden={golden.shape} vs actual={actual.shape}"
-            )
+            raise ValueError(f"shape mismatch: golden={golden.shape} vs actual={actual.shape}")
         diff = np.abs(golden.astype(np.float64) - actual.astype(np.float64))
         abs_err_max = float(np.max(diff))
         abs_err_mean = float(np.mean(diff))
@@ -506,9 +499,7 @@ class NpuExecutor:
         r"\[(PASS|FAIL)\]\s+MERE=([\d.eE+-]+),\s*MARE=([\d.eE+-]+)"
         r"\s*\(threshold=([\d.eE+-]+),\s*(\d+)\s*elems\)"
     )
-    _ST_INT_CASE_RE = re.compile(
-        r"\[(PASS|FAIL)\]\s+所有\s*(\d+)\s*个元素一致"
-    )
+    _ST_INT_CASE_RE = re.compile(r"\[(PASS|FAIL)\]\s+所有\s*(\d+)\s*个元素一致")
     _ST_SUMMARY_RE = {
         "total": re.compile(r"总计:\s*(\d+)"),
         "passed": re.compile(r"通过:\s*(\d+)"),
@@ -543,12 +534,8 @@ class NpuExecutor:
             失败时 success=False 的降级报告(不抛)。
         """
         if self.is_remote:
-            return self._run_st_driver_remote(
-                operator_path, op_name, soc_version, st_subdir
-            )
-        return self._run_st_driver_local(
-            operator_path, op_name, soc_version, st_subdir
-        )
+            return self._run_st_driver_remote(operator_path, op_name, soc_version, st_subdir)
+        return self._run_st_driver_local(operator_path, op_name, soc_version, st_subdir)
 
     @staticmethod
     def _parse_st_stdout(stdout: str, op_name: str) -> dict:
@@ -566,26 +553,30 @@ class NpuExecutor:
             m = NpuExecutor._ST_FP_CASE_RE.search(line)
             if m:
                 status, mere, mare, thr, elems = m.groups()
-                cases.append({
-                    "case_id": case_id,
-                    "passed": status == "PASS",
-                    "metrics": {
-                        "mere": float(mere),
-                        "mare": float(mare),
-                        "threshold": float(thr),
-                        "elems": int(elems),
-                    },
-                })
+                cases.append(
+                    {
+                        "case_id": case_id,
+                        "passed": status == "PASS",
+                        "metrics": {
+                            "mere": float(mere),
+                            "mare": float(mare),
+                            "threshold": float(thr),
+                            "elems": int(elems),
+                        },
+                    }
+                )
                 case_id += 1
                 continue
             mi = NpuExecutor._ST_INT_CASE_RE.search(line)
             if mi:
                 status, elems = mi.groups()
-                cases.append({
-                    "case_id": case_id,
-                    "passed": status == "PASS",
-                    "metrics": {"elems": int(elems), "dtype": "int"},
-                })
+                cases.append(
+                    {
+                        "case_id": case_id,
+                        "passed": status == "PASS",
+                        "metrics": {"elems": int(elems), "dtype": "int"},
+                    }
+                )
                 case_id += 1
 
         total = passed = failed = None
@@ -667,22 +658,26 @@ class NpuExecutor:
                     full = self._wrap_remote_cmd(cmd)  # type: ignore[union-attr]
                     r = self.ssh_env.execute(full, timeout=self.run_timeout)  # type: ignore[union-attr]
                     rc = r.return_code
-                    return (rc == 0 and not getattr(r, "timed_out", False),
-                            r.stdout or "", r.stderr or "", rc)
+                    return (
+                        rc == 0 and not getattr(r, "timed_out", False),
+                        r.stdout or "",
+                        r.stderr or "",
+                        rc,
+                    )
                 else:
-                    r = subprocess.run(["bash", "-c", cmd],
-                                       capture_output=True, text=True,
-                                       timeout=self.run_timeout)
+                    r = subprocess.run(
+                        ["bash", "-c", cmd],
+                        capture_output=True,
+                        text=True,
+                        timeout=self.run_timeout,
+                    )
                     return (r.returncode == 0, r.stdout, r.stderr, r.returncode)
             except Exception as e:
                 logger.warning(f"run_st_driver exec failed: {e}")
                 return (False, "", str(e), 126)
 
         # Step 1: install op 包(--force,见 spike 坑 2)
-        install_cmd = (
-            f"cd {operator_path}/build && "
-            f"./custom_opp_almalinux_aarch64.run --force"
-        )
+        install_cmd = f"cd {operator_path}/build && " f"./custom_opp_almalinux_aarch64.run --force"
         ok, out, err, rc = _exec(install_cmd)
         if not ok:
             return self._st_driver_failure(
@@ -703,10 +698,7 @@ class NpuExecutor:
 
         # Step 4: 跑 ST 二进制(设 LD_LIBRARY_PATH,spike 坑 3)
         binary = f"{run_path}/test_aclnn_{op_name}"
-        run_cmd = (
-            f"export LD_LIBRARY_PATH={vendors_lib}:$LD_LIBRARY_PATH && "
-            f"{binary}"
-        )
+        run_cmd = f"export LD_LIBRARY_PATH={vendors_lib}:$LD_LIBRARY_PATH && " f"{binary}"
         ok, out, err, rc = _exec(run_cmd)
 
         # Step 5: 解析 stdout(即使 ok=False 也尝试解析 —— 二进制可能 rc!=0 但有部分输出)

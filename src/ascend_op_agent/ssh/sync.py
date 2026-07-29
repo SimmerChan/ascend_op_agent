@@ -41,13 +41,16 @@ _FORCE_SYNC_ENV = "ASCEND_FORCE_FILE_SYNC"
 
 # 传输回调类型
 UploadFn = Callable[[str, str], None]  # (host_path, remote_path) -> raises on failure
-BulkUploadFn = Callable[[list[tuple[str, str]]], None]  # [(host_path, remote_path), ...] -> raises on failure
+BulkUploadFn = Callable[
+    [list[tuple[str, str]]], None
+]  # [(host_path, remote_path), ...] -> raises on failure
 DeleteFn = Callable[[list[str]], None]  # (remote_paths) -> raises on failure
 GetFilesFn = Callable[[], list[tuple[str, str]]]  # () -> [(host_path, remote_path), ...]
 
 
 class SyncDirection(Enum):
     """同步方向"""
+
     PUSH = "push"  # 本地到远程
     PULL = "pull"  # 远程到本地
 
@@ -310,12 +313,18 @@ class FileSync:
                 rsync_cmd.extend(["--exclude", pattern])
 
         # 默认排除项
-        rsync_cmd.extend([
-            "--exclude", ".git",
-            "--exclude", "__pycache__",
-            "--exclude", "*.pyc",
-            "--exclude", ".pytest_cache",
-        ])
+        rsync_cmd.extend(
+            [
+                "--exclude",
+                ".git",
+                "--exclude",
+                "__pycache__",
+                "--exclude",
+                "*.pyc",
+                "--exclude",
+                ".pytest_cache",
+            ]
+        )
 
         # SSH隧道
         ssh_opts = f"-p {self.ssh_manager.port}"
@@ -368,11 +377,16 @@ class FileSync:
                 rsync_cmd.extend(["--exclude", pattern])
 
         # 默认排除项
-        rsync_cmd.extend([
-            "--exclude", ".git",
-            "--exclude", "__pycache__",
-            "--exclude", "*.pyc",
-        ])
+        rsync_cmd.extend(
+            [
+                "--exclude",
+                ".git",
+                "--exclude",
+                "__pycache__",
+                "--exclude",
+                "*.pyc",
+            ]
+        )
 
         # SSH隧道
         ssh_opts = f"-p {self.ssh_manager.port}"

@@ -39,6 +39,7 @@ spec.loader.exec_module(backend_module)
 
 if __name__ == "__main__":
     import asyncio
+
     try:
         asyncio.run(backend_module.main())
     except KeyboardInterrupt:

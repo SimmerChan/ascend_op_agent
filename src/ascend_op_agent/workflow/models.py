@@ -21,6 +21,7 @@ from typing import Any, Optional
 
 class MigrationStrategy(Enum):
     """迁移策略"""
+
     FROM_SCRATCH = "from_scratch"
     CUDA_TO_ASCENDC = "cuda_to_ascendc"
     TRITON_TO_ASCENDC = "triton_to_ascendc"
@@ -29,6 +30,7 @@ class MigrationStrategy(Enum):
 
 class PhaseStatus(Enum):
     """阶段状态"""
+
     PENDING = "pending"
     RUNNING = "running"
     WAITING_CONFIRMATION = "waiting_confirmation"
@@ -40,6 +42,7 @@ class PhaseStatus(Enum):
 @dataclass
 class ArchitectureMapping:
     """GPU迁移架构映射"""
+
     source_type: str  # "cuda", "triton", "cutlass"
     mappings: dict[str, str] = field(default_factory=dict)
 
@@ -79,10 +82,12 @@ class ArchitectureMapping:
         elif source_type == "cutlass":
             # CUTLASS 基于 CUDA，扩展映射
             mappings = dict(cls.CUDA_MAPPINGS)
-            mappings.update({
-                "cutlass::MatrixCoord": "Coord<2>",
-                "cutlass::gemm::GemmCoord": "Coord<3>",
-            })
+            mappings.update(
+                {
+                    "cutlass::MatrixCoord": "Coord<2>",
+                    "cutlass::gemm::GemmCoord": "Coord<3>",
+                }
+            )
             return cls(source_type=source_type, mappings=mappings)
         return cls(source_type=source_type, mappings={})
 
@@ -101,6 +106,7 @@ class ArchitectureMapping:
 @dataclass
 class OpInfo:
     """算子信息"""
+
     name: str
     description: str
     op_type: str  # "elementwise", "matmul", "reduction", "conv", etc.
@@ -121,9 +127,10 @@ class OpInfo:
 
     def detect_migration_scenario(self) -> bool:
         """检测是否为GPU迁移场景"""
-        return (
-            self.ref_code_path is not None
-            and self.ref_code_type in ("cuda", "triton", "cutlass")
+        return self.ref_code_path is not None and self.ref_code_type in (
+            "cuda",
+            "triton",
+            "cutlass",
         )
 
     def get_complexity_score(self) -> int:
@@ -188,10 +195,13 @@ class OpInfo:
 @dataclass
 class DesignDoc:
     """方案设计文档"""
+
     op_info: OpInfo
 
     # 内存布局
-    input_layouts: list[str] = field(default_factory=list)  # "ROW_MAJOR", "COL_MAJOR", "NCHW", "NHWC"
+    input_layouts: list[str] = field(
+        default_factory=list
+    )  # "ROW_MAJOR", "COL_MAJOR", "NCHW", "NHWC"
     output_layouts: list[str] = field(default_factory=list)
 
     # Tiling策略
@@ -238,6 +248,7 @@ class DesignDoc:
 @dataclass
 class FileChange:
     """文件变更"""
+
     path: str
     action: str  # "create", "modify", "delete"
     content: Optional[str] = None
@@ -257,6 +268,7 @@ class FileChange:
 @dataclass
 class CodeGenResult:
     """代码生成结果"""
+
     success: bool
     files: list[FileChange] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -289,6 +301,7 @@ class CodeGenResult:
 @dataclass
 class CompileResult:
     """编译验证结果"""
+
     success: bool
     command: str
     stdout: str = ""
@@ -348,6 +361,7 @@ class CompileResult:
 @dataclass
 class TestCase:
     """测试用例"""
+
     name: str
     input_shapes: list[list[int]]
     input_dtypes: list[str]
@@ -380,6 +394,7 @@ class TestCase:
 @dataclass
 class TestResult:
     """单个测试结果"""
+
     test_case: TestCase
     passed: bool
     abs_err: Optional[float] = None
@@ -412,6 +427,7 @@ class TestResult:
 @dataclass
 class PrecisionReport:
     """精度评估报告"""
+
     operator_name: str
     total_cases: int
     passed_cases: int
@@ -528,6 +544,7 @@ class PrecisionReport:
 @dataclass
 class PerformanceMetric:
     """单个性能指标"""
+
     case_name: str
     latency_ms: float  # 延迟(毫秒)
     throughput_gflops: float  # 吞吐(GFLOPS)
@@ -537,6 +554,7 @@ class PerformanceMetric:
 @dataclass
 class PerformanceReport:
     """性能评估报告"""
+
     operator_name: str
     total_cases: int
 
@@ -569,9 +587,9 @@ class PerformanceReport:
 
         # 检查是否满足要求：平均吞吐量 > 100 GFLOPS
         self.meets_requirement = (
-            self.total_cases >= 10 and
-            self.avg_throughput_gflops is not None and
-            self.avg_throughput_gflops > 100
+            self.total_cases >= 10
+            and self.avg_throughput_gflops is not None
+            and self.avg_throughput_gflops > 100
         )
 
     def to_markdown(self) -> str:
@@ -614,6 +632,7 @@ class PerformanceReport:
 @dataclass
 class PhaseResult:
     """阶段执行结果"""
+
     phase_name: str
     status: PhaseStatus
     data: Any = None

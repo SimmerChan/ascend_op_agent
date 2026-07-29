@@ -59,7 +59,7 @@ class Tool:
         required = []
 
         for param_name, param in sig.parameters.items():
-            if param_name in ('self', 'cls'):
+            if param_name in ("self", "cls"):
                 continue
 
             param_type = "string"
@@ -203,6 +203,7 @@ def tool(
         def my_tool(arg1: str, arg2: int) -> str:
             return f"{arg1} {arg2}"
     """
+
     def decorator(func: Callable) -> Callable:
         tool_registry.register(
             name=name,
@@ -211,6 +212,7 @@ def tool(
             parameters=parameters,
         )
         return func
+
     return decorator
 
 

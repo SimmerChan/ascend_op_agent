@@ -173,14 +173,16 @@ tags: [test, example]
 
             skill_path = Path(tmpdir) / "test-skill" / "SKILL.md"
             skill_path.parent.mkdir()
-            skill_path.write_text("""---
+            skill_path.write_text(
+                """---
 name: test-skill
 description: A test skill
 version: 1.0.0
 tags: [test, example]
 ---
 # Test Skill
-""")
+"""
+            )
 
             info = repo.extract_skill_info(skill_path)
 
@@ -198,13 +200,15 @@ tags: [test, example]
             # 创建测试skill
             skill_dir = Path(tmpdir) / "test-skill"
             skill_dir.mkdir()
-            (skill_dir / "SKILL.md").write_text("""---
+            (skill_dir / "SKILL.md").write_text(
+                """---
 name: test-skill
 description: A test skill
 tags: [test]
 ---
 # Test Skill
-""")
+"""
+            )
 
             skills = repo.list_local_skills()
 

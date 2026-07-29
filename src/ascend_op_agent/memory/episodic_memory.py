@@ -39,6 +39,7 @@ DEFAULT_TOKEN_THRESHOLD = 4000
 @dataclass
 class ConversationTurn:
     """对话轮次"""
+
     role: str  # user, assistant, system
     content: str
     timestamp: float = field(default_factory=time.time)
@@ -47,6 +48,7 @@ class ConversationTurn:
 @dataclass
 class Episode:
     """会话片段"""
+
     episode_id: str
     turns: list[ConversationTurn]
     summary: Optional[str] = None
@@ -88,6 +90,7 @@ class EpisodicMemory:
             embedding_dimension: embedding向量维度
         """
         from ascend_op_agent.config import load_config
+
         cfg = load_config()
 
         self._vector_store = vector_store or VectorStore()
@@ -109,6 +112,7 @@ class EpisodicMemory:
         if self._embedding_model is None:
             try:
                 from sentence_transformers import SentenceTransformer
+
                 self._embedding_model = SentenceTransformer(self._embedding_model_name)
             except Exception as e:
                 logger.warning(f"Failed to load embedding model: {e}")

@@ -89,7 +89,9 @@ class InteractiveSelector:
 
                 # 显示标题
                 stdscr.addstr(0, 0, self.title, curses.A_BOLD)
-                stdscr.addstr(1, 0, "(输入编号切换选择, ↑↓导航, SPACE切换, ENTER确认)", curses.A_DIM)
+                stdscr.addstr(
+                    1, 0, "(输入编号切换选择, ↑↓导航, SPACE切换, ENTER确认)", curses.A_DIM
+                )
 
                 # 显示skills列表
                 for i, skill in enumerate(self.skills):
@@ -109,11 +111,11 @@ class InteractiveSelector:
                     display_line = f"[{i + 1}] {skill.name}"
                     if skill.tags:
                         display_line += f" ({', '.join(skill.tags[:2])})"
-                    stdscr.addstr(row, 7, display_line[:width - 10])
+                    stdscr.addstr(row, 7, display_line[: width - 10])
 
                     # 显示描述（截断）
                     if skill.description:
-                        desc = skill.description[:width - 15]
+                        desc = skill.description[: width - 15]
                         stdscr.addstr(row + 1, 4, f"    {desc}", curses.A_DIM)
 
                 # 显示底部状态

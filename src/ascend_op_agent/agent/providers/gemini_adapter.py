@@ -32,11 +32,13 @@ class GeminiAdapter(BaseLLMAdapter):
 
     def __init__(self, config: Any):
         super().__init__(config)
-        self.api_key = getattr(config, 'api_key', '')
-        self.model = getattr(config, 'model', 'gemini-2.5-flash')
-        self.api_base = getattr(config, 'api_base', 'https://generativelanguage.googleapis.com/v1beta')
-        self.max_retries = getattr(config, 'max_retries', 3)
-        self.timeout = getattr(config, 'timeout', 120)
+        self.api_key = getattr(config, "api_key", "")
+        self.model = getattr(config, "model", "gemini-2.5-flash")
+        self.api_base = getattr(
+            config, "api_base", "https://generativelanguage.googleapis.com/v1beta"
+        )
+        self.max_retries = getattr(config, "max_retries", 3)
+        self.timeout = getattr(config, "timeout", 120)
 
     def get_provider_name(self) -> str:
         return "gemini"
@@ -46,6 +48,7 @@ class GeminiAdapter(BaseLLMAdapter):
         system_prompt: str,
         conversation_history: list[dict[str, str]],
         tools: Optional[list[dict]] = None,
+        on_delta=None,
     ) -> str:
         """Send completion request to Gemini API
 
@@ -64,23 +67,16 @@ class GeminiAdapter(BaseLLMAdapter):
         contents = []
         for msg in conversation_history:
             role = "user" if msg["role"] == "user" else "model"
-            contents.append({
-                "role": role,
-                "parts": [{"text": msg["content"]}]
-            })
+            contents.append({"role": role, "parts": [{"text": msg["content"]}]})
 
         # Add system prompt as the first user message if present
         if system_prompt and not contents:
-            contents.insert(0, {
-                "role": "user",
-                "parts": [{"text": system_prompt}]
-            })
+            contents.insert(0, {"role": "user", "parts": [{"text": system_prompt}]})
         elif system_prompt:
             # Prepend system instruction
-            contents.insert(0, {
-                "role": "user",
-                "parts": [{"text": f"System instructions: {system_prompt}"}]
-            })
+            contents.insert(
+                0, {"role": "user", "parts": [{"text": f"System instructions: {system_prompt}"}]}
+            )
 
         payload = {
             "contents": contents,
@@ -107,10 +103,12 @@ class GeminiAdapter(BaseLLMAdapter):
                     data = response.json()
                     # Gemini returns candidates[0].content.parts[0].text
                     candidates = data.get("candidates", [])
-                    if (candidates and
-                        len(candidates) > 0 and
-                        candidates[0].get("content", {}).get("parts") and
-                        len(candidates[0]["content"]["parts"]) > 0):
+                    if (
+                        candidates
+                        and len(candidates) > 0
+                        and candidates[0].get("content", {}).get("parts")
+                        and len(candidates[0]["content"]["parts"]) > 0
+                    ):
                         return candidates[0]["content"]["parts"][0]["text"]
                     return str(data)
 

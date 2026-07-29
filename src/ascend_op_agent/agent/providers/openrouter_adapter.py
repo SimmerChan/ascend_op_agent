@@ -36,14 +36,16 @@ class OpenRouterAdapter(BaseLLMAdapter):
 
     def __init__(self, config: Any):
         super().__init__(config)
-        self.api_key = getattr(config, 'api_key', '')
-        self.api_base = getattr(config, 'api_base', 'https://openrouter.ai/api/v1')
-        self.model = getattr(config, 'model', 'anthropic/claude-sonnet-4-6-20250514')
-        self.max_retries = getattr(config, 'max_retries', 3)
-        self.timeout = getattr(config, 'timeout', 120)
+        self.api_key = getattr(config, "api_key", "")
+        self.api_base = getattr(config, "api_base", "https://openrouter.ai/api/v1")
+        self.model = getattr(config, "model", "anthropic/claude-sonnet-4-6-20250514")
+        self.max_retries = getattr(config, "max_retries", 3)
+        self.timeout = getattr(config, "timeout", 120)
 
         if httpx is None:
-            raise ImportError("httpx is required for OpenRouter adapter. Install with: pip install httpx")
+            raise ImportError(
+                "httpx is required for OpenRouter adapter. Install with: pip install httpx"
+            )
 
     def get_provider_name(self) -> str:
         return "openrouter"
@@ -53,6 +55,7 @@ class OpenRouterAdapter(BaseLLMAdapter):
         system_prompt: str,
         conversation_history: list[dict[str, str]],
         tools: Optional[list[dict]] = None,
+        on_delta=None,
     ) -> str:
         """Send completion request to OpenRouter API
 
@@ -129,4 +132,6 @@ class OpenRouterAdapter(BaseLLMAdapter):
                     time.sleep(1)
                 continue
 
-        raise Exception(f"OpenRouter request failed after {self.max_retries} attempts: {last_error}")
+        raise Exception(
+            f"OpenRouter request failed after {self.max_retries} attempts: {last_error}"
+        )

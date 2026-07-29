@@ -237,7 +237,7 @@ class TestSSHEnvironment:
         )
 
         # 使用错误的密码应该认证失败 - 用mock来避免实际网络请求
-        with patch.object(env, 'connect', side_effect=SSHConnectionError("连接失败")):
+        with patch.object(env, "connect", side_effect=SSHConnectionError("连接失败")):
             with pytest.raises(SSHConnectionError):
                 env.connect()
 

@@ -31,7 +31,7 @@ class MockLLMClient:
         self.response = response
         self.call_count = 0
 
-    def call(self, system_prompt: str, conversation_history: list) -> str:
+    def call(self, system_prompt: str, conversation_history: list, on_delta=None) -> str:
         """模拟 LLM 调用"""
         self.call_count += 1
         return self.response

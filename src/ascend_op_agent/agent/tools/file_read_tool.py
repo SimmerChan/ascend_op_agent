@@ -2,6 +2,7 @@
 
 Migration from Hermes Agent file_tools.py
 """
+
 import hashlib
 import os
 import re
@@ -64,15 +65,35 @@ def file_read(path: str, offset: int = 1, limit: int = 500) -> str:
         raise ValueError(f"不是文件: {path}")
 
     # Binary file check
-    binary_extensions = {'.exe', '.bin', '.so', '.dylib', '.png', '.jpg', '.jpeg',
-                         '.gif', '.bmp', '.ico', '.pdf', '.zip', '.tar', '.gz',
-                         '.bz2', '.xz', '.7z', '.rar', '.class', '.pyc', '.pyo'}
+    binary_extensions = {
+        ".exe",
+        ".bin",
+        ".so",
+        ".dylib",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".ico",
+        ".pdf",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".rar",
+        ".class",
+        ".pyc",
+        ".pyo",
+    }
     if any(abs_path.endswith(ext) for ext in binary_extensions):
         raise ValueError(f"二进制文件不支持: {path}")
 
     try:
         mtime = os.path.getmtime(abs_path)
-        with open(abs_path, 'r', encoding='utf-8') as f:
+        with open(abs_path, "r", encoding="utf-8") as f:
             content = f.read()
     except UnicodeDecodeError:
         raise ValueError(f"无法解码为文本: {path}")
@@ -100,10 +121,10 @@ def file_read(path: str, offset: int = 1, limit: int = 500) -> str:
     _read_counter[cache_key] = 0
 
     # Line pagination
-    lines = content.split('\n')
+    lines = content.split("\n")
     start = max(0, offset - 1)
     end = start + limit
-    paginated = '\n'.join(lines[start:end])
+    paginated = "\n".join(lines[start:end])
 
     if end < len(lines):
         return f"[lines {offset}-{end}/{len(lines)}]\n{paginated}"
@@ -117,23 +138,12 @@ SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "path": {
-                "type": "string",
-                "description": "文件路径"
-            },
-            "offset": {
-                "type": "integer",
-                "description": "起始行号 (1-based)",
-                "default": 1
-            },
-            "limit": {
-                "type": "integer",
-                "description": "最大行数",
-                "default": 500
-            }
+            "path": {"type": "string", "description": "文件路径"},
+            "offset": {"type": "integer", "description": "起始行号 (1-based)", "default": 1},
+            "limit": {"type": "integer", "description": "最大行数", "default": 500},
         },
-        "required": ["path"]
-    }
+        "required": ["path"],
+    },
 }
 
 
@@ -143,12 +153,10 @@ def register(registry):
         name="file_read",
         description=SCHEMA["description"],
         func=lambda **kw: file_read(
-            path=kw.get("path"),
-            offset=kw.get("offset", 1),
-            limit=kw.get("limit", 500)
+            path=kw.get("path"), offset=kw.get("offset", 1), limit=kw.get("limit", 500)
         ),
         parameters=SCHEMA,
         toolset="file",
         emoji="📖",
-        max_result_size_chars=100_000
+        max_result_size_chars=100_000,
     )

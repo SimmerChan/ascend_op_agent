@@ -101,7 +101,12 @@ class TestMCPServerConfig:
             name="test",
             type=TransportType.HTTP,
             url="http://localhost",
-            oauth={"type": "oauth", "client_id": "id", "client_secret": "secret", "token_url": "http://auth"},
+            oauth={
+                "type": "oauth",
+                "client_id": "id",
+                "client_secret": "secret",
+                "token_url": "http://auth",
+            },
         )
         assert config_with_oauth.requires_oauth() is True
 

@@ -25,6 +25,7 @@ from typing import Any, Optional
 
 class MCPOAuthError(Exception):
     """OAuth 错误"""
+
     pass
 
 
@@ -37,7 +38,7 @@ class MCPOAuthManager:
     - Token 缓存和自动刷新
     """
 
-    TOKEN_VAR_PATTERN = re.compile(r'\$\{([^}]+)\}')
+    TOKEN_VAR_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
     def __init__(self, server_name: str, oauth_config: Optional[dict[str, Any]] = None):
         """
@@ -107,11 +108,13 @@ class MCPOAuthManager:
             import urllib.parse
             import json
 
-            data = urllib.parse.urlencode({
-                "grant_type": "client_credentials",
-                "client_id": client_id,
-                "client_secret": client_secret,
-            }).encode()
+            data = urllib.parse.urlencode(
+                {
+                    "grant_type": "client_credentials",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                }
+            ).encode()
 
             req = urllib.request.Request(
                 token_url,

@@ -15,9 +15,13 @@
 """Anthropic API adapter"""
 
 import logging
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
-from ascend_op_agent.agent.providers.base import BaseLLMAdapter, ToolCallResult
+from ascend_op_agent.agent.providers.base import (
+    BaseLLMAdapter,
+    ToolCallResult,
+    _resolve_limit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +112,9 @@ class AnthropicAdapter(BaseLLMAdapter):
         system_prompt: str,
         conversation_history: list[dict[str, str]],
         tools: Optional[list[dict]] = None,
+        on_delta: Optional[Callable[[str], None]] = None,
     ) -> Union[str, ToolCallResult]:
-        """Send completion request to Anthropic API
+        """Send completion request to Anthropic API (streaming)
 
         Args:
             system_prompt: System prompt
@@ -168,23 +173,37 @@ class AnthropicAdapter(BaseLLMAdapter):
         # Convert tools from OpenAI format to Anthropic format if provided
         anthropic_tools = self._convert_tools_to_anthropic_format(tools) if tools else None
 
+        # effective max_tokens = min(config or provider_limit, provider_limit)
+        # config.max_tokens=None -> 用 provider 真实上限(用满); 数字 -> min(数字, 上限)。
+        # 三端点实测:Minimax 256K / GLM 官方 128K / Ark 64K(_resolve_limit 按 api_base)。
+        limit = _resolve_limit(self.api_base)
+        cfg_max = getattr(self, "max_tokens", None)
+        effective = min(cfg_max, limit) if cfg_max else limit
+
         last_error = None
         for attempt in range(self.max_retries):
             try:
                 create_kwargs = dict(
                     model=self.model,
-                    max_tokens=getattr(self, "max_tokens", 16384),
+                    max_tokens=effective,
                     system=system_prompt,
                     messages=messages,
                     tools=anthropic_tools,
                 )
                 if getattr(self, "disable_thinking", False):
-                    # 推理模型(glm-5.2/Ark)thinking 会吃光 max_tokens 致 text 空(SOUL
-                    # system 下实测 thinking 12k-15k 字符 vs max_tokens=4096)。禁 thinking
+                    # 推理模型(glm-5.2/Ark)thinking 会吃光 max_tokens 致 text 空。禁 thinking
                     # 让模型直出 visible text。非推理模型(MiniMax-M3)disable_thinking=False
                     # 不传该参数(其兼容端点可能不认 thinking)。
                     create_kwargs["thinking"] = {"type": "disabled"}
-                response = client.messages.create(**create_kwargs)
+
+                # streaming 总开(支持 >32K max_tokens,绕过 SDK 非 streaming 10min 保护)。
+                # get_final_message 聚合 tool_use/text block(实测三端点 tool_use 聚合完整,
+                # OQ2 验证)。on_delta 转发 visible text delta;None 时不遍历 text_stream。
+                with client.messages.stream(**create_kwargs) as stream:
+                    if on_delta is not None:
+                        for text in stream.text_stream:
+                            on_delta(text)
+                    response = stream.get_final_message()
 
                 # Check for tool_use blocks (Native Function Calling)
                 for block in response.content:

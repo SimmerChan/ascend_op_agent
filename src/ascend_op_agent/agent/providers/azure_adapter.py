@@ -32,17 +32,19 @@ class AzureOpenAIAdapter(BaseLLMAdapter):
 
     def __init__(self, config: Any):
         super().__init__(config)
-        self.api_key = getattr(config, 'api_key', '')
+        self.api_key = getattr(config, "api_key", "")
         # Azure OpenAI uses deployment name as model
-        self.deployment = getattr(config, 'model', 'gpt-4o')
+        self.deployment = getattr(config, "model", "gpt-4o")
         # Azure OpenAI endpoint format: https://{resource}.openai.azure.com/openai/deployments/{deployment}
-        self.api_base = getattr(config, 'api_base', '')
-        self.api_version = getattr(config, 'api_version', '2024-02-01')
-        self.max_retries = getattr(config, 'max_retries', 3)
-        self.timeout = getattr(config, 'timeout', 120)
+        self.api_base = getattr(config, "api_base", "")
+        self.api_version = getattr(config, "api_version", "2024-02-01")
+        self.max_retries = getattr(config, "max_retries", 3)
+        self.timeout = getattr(config, "timeout", 120)
 
         if httpx is None:
-            raise ImportError("httpx is required for Azure OpenAI adapter. Install with: pip install httpx")
+            raise ImportError(
+                "httpx is required for Azure OpenAI adapter. Install with: pip install httpx"
+            )
 
     def get_provider_name(self) -> str:
         return "azure"
@@ -51,12 +53,15 @@ class AzureOpenAIAdapter(BaseLLMAdapter):
         """Build the Azure OpenAI endpoint URL"""
         if self.api_base:
             return f"{self.api_base}/chat/completions?api-version={self.api_version}"
-        raise ValueError("Azure OpenAI api_base is required (e.g., https://your-resource.openai.azure.com)")
+        raise ValueError(
+            "Azure OpenAI api_base is required (e.g., https://your-resource.openai.azure.com)"
+        )
 
     def complete(
         self,
         system_prompt: str,
         conversation_history: list[dict[str, str]],
+        on_delta=None,
     ) -> str:
         """Send completion request to Azure OpenAI API
 
@@ -111,7 +116,9 @@ class AzureOpenAIAdapter(BaseLLMAdapter):
                     raise Exception(f"Azure OpenAI authentication failed: {response.text}")
 
                 else:
-                    raise Exception(f"Azure OpenAI API error {response.status_code}: {response.text}")
+                    raise Exception(
+                        f"Azure OpenAI API error {response.status_code}: {response.text}"
+                    )
 
             except httpx.TimeoutException:
                 last_error = "Request timed out"
@@ -127,4 +134,6 @@ class AzureOpenAIAdapter(BaseLLMAdapter):
                     time.sleep(1)
                 continue
 
-        raise Exception(f"Azure OpenAI request failed after {self.max_retries} attempts: {last_error}")
+        raise Exception(
+            f"Azure OpenAI request failed after {self.max_retries} attempts: {last_error}"
+        )

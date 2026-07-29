@@ -105,9 +105,7 @@ def _summarize_code_result(code_result: Optional[dict]) -> dict:
     return {
         "file_count": len(files) if isinstance(files, list) else 0,
         "file_names": [
-            (f.get("path") or f.get("name") or "<unnamed>")
-            for f in files
-            if isinstance(f, dict)
+            (f.get("path") or f.get("name") or "<unnamed>") for f in files if isinstance(f, dict)
         ],
     }
 

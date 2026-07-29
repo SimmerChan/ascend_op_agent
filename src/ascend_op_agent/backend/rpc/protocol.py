@@ -25,6 +25,7 @@ from typing import Any, Optional, Union
 @dataclass
 class RPCRequest:
     """JSON-RPC 2.0 请求对象"""
+
     jsonrpc: str = "2.0"
     method: str = ""
     id: Any = None
@@ -34,6 +35,7 @@ class RPCRequest:
 @dataclass
 class RPCNotification:
     """JSON-RPC 2.0 通知对象（无响应）"""
+
     jsonrpc: str = "2.0"
     method: str = ""
     id: Any = None  # Notification has no id, but we track it for consistency
@@ -43,6 +45,7 @@ class RPCNotification:
 @dataclass
 class RPCResponse:
     """JSON-RPC 2.0 响应对象"""
+
     jsonrpc: str = "2.0"
     id: Any = None
     result: Optional[Any] = None
@@ -51,6 +54,7 @@ class RPCResponse:
 
 class JSONRPCParseError(Exception):
     """JSON-RPC 解析错误"""
+
     def __init__(self, message: str, code: int = -32700):
         self.message = message
         self.code = code
@@ -93,8 +97,7 @@ class JSONRPCProtocol:
 
         if data.get("jsonrpc") != "2.0":
             raise JSONRPCParseError(
-                "Invalid jsonrpc version, expected '2.0'",
-                cls.INVALID_REQUEST_CODE
+                "Invalid jsonrpc version, expected '2.0'", cls.INVALID_REQUEST_CODE
             )
 
         if "method" not in data:
@@ -106,18 +109,9 @@ class JSONRPCProtocol:
 
         # 有 id 的是 request，无 id 的是 notification
         if rpc_id is not None:
-            return RPCRequest(
-                jsonrpc="2.0",
-                method=method,
-                id=rpc_id,
-                params=params
-            )
+            return RPCRequest(jsonrpc="2.0", method=method, id=rpc_id, params=params)
         else:
-            return RPCNotification(
-                jsonrpc="2.0",
-                method=method,
-                params=params
-            )
+            return RPCNotification(jsonrpc="2.0", method=method, params=params)
 
     @classmethod
     def build_response(cls, id: Any, result: Any) -> str:
@@ -166,13 +160,7 @@ class JSONRPCProtocol:
         Returns:
             JSON 字符串
         """
-        notification = RPCNotification(
-            jsonrpc="2.0",
-            method=method,
-            params=params or {}
+        notification = RPCNotification(jsonrpc="2.0", method=method, params=params or {})
+        return json.dumps(
+            {"jsonrpc": "2.0", "method": method, "params": params or {}}, ensure_ascii=False
         )
-        return json.dumps({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params or {}
-        }, ensure_ascii=False)

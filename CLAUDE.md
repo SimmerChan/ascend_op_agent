@@ -356,7 +356,7 @@ llm:
 #   api_key: "${GLM_API_KEY}"
 #   api_base: "https://open.bigmodel.cn/api/anthropic"
 #   model: "glm-5.2"
-#   # max_tokens 默认 16384(adapter 兜底,thinking + text 共享预算),不禁 thinking
+#   # max_tokens 默认 None(用 provider 上限 GLM 128K);adapter streaming 总开,不禁 thinking
 
 # Ark GLM-5.2 (备 2, Anthropic 兼容)  — 取消注释切换
 # llm:
@@ -364,7 +364,7 @@ llm:
 #   auth_token: "${ARK_API_KEY}"   # Ark 走 Bearer(adapter 已支持 auth_token);api_key 的 x-api-key 会 401
 #   api_base: "https://ark.cn-beijing.volces.com/api/plan"
 #   model: "glm-5.2"
-#   # max_tokens 默认 16384(thinking + text 兜底),不禁 thinking
+#   # max_tokens 默认 None(用 provider 上限 Ark 64K);adapter streaming 总开,不禁 thinking
 ```
 
 **轮询调试策略（Claude 执行）**：
@@ -376,7 +376,7 @@ llm:
 **经验**：
 - **默认 Minimax**：N=20 stress 100% PASS（line 24-25）
 - **GLM-5.2 不适合 stress**：连续调用 timeout（line 324），仅作 spike 一次性 codegen 验证
-- **glm-5.2 thinking + max_tokens（2026-07-24 坐实）**：glm-5.2 是**推理模型**，SOUL system_prompt 触发 thinking 膨胀 12-15k 字符（~4500 tokens）。adapter `max_tokens` 是 **thinking + visible text 共享总预算**：4096 时 thinking 吃光 → text 0 字符 → codegen 全空 → compile 缺 object file。**修复：`max_tokens` 默认 16384**（thinking + text 都够，实测 8192/16384 下 text 正常），**不禁 thinking**（保留推理能力）。32768+ 触发 anthropic SDK 非 streaming 10min 长请求保护（需 streaming）。`disable_thinking: true` 仍可选（字段保留，特殊场景禁推理）但默认 false。**教训**：LLM 返回空必先打 raw response（`stop_reason`/`content blocks` thinking vs text/`usage.output_tokens`），别瞎归因 prompt 信噪比或 LLM 能力
+- **adapter streaming + per-provider max_tokens（2026-07-29 重构）**：adapter 已重构为 **streaming 总开**（`messages.stream` + `get_final_message`，绕过 anthropic SDK >32K non-stream 10min 长请求保护；tool_use 流式聚合三端点实证完整）+ **per-provider max_tokens 自适应上限**（`base.PROVIDER_MAX_TOKENS` 按 `api_base` 子串匹配：Minimax 256K / GLM 官方 128K / Ark 64K；`LLMConfig.max_tokens` 默认 `None`=用 provider 真实上限，数字=`min(数字, 上限)`）。glm-5.2 是推理模型，SOUL system_prompt 触发 thinking 膨胀 12-15k 字符，但大 max_tokens 兜底（不再 4096 吃光致 codegen 空）。`disable_thinking` 默认 false（不禁推理，保留）。**1M token 证伪**（2026-07-29 三端点探测 `probe_1m.py`）：Minimax/GLM/Ark 全 400 拒绝 1048576，真实上限即上表，别信「模型支持 1M」宣称。**教训**：LLM 返回空必先打 raw response（`stop_reason`/thinking vs text/`usage.output_tokens`）；max_tokens 上限以实测为准，别信宣称
 - **Ark auth_token**：Ark 走 Bearer auth，adapter `auth_token` 参数已支持（`api_key` 走 x-api-key 会 401），config.yaml 用 `auth_token: "${ARK_API_KEY}"`；`/api/plan` 是 Anthropic 兼容端点（SDK 拼 `/api/plan/v1/messages`）
 - 切 GLM 后跑 spike 5/5/6/7 真实发现 add_custom 参考工程与 910B CANN 9.1.0 不兼容（spike #6 暴露第 5 层根因），U2 加 `inline_build_template` 内联 `add_example` 修复
 

@@ -195,11 +195,13 @@ class SemanticMemory:
         # 构建推荐结果
         recommendations = []
         for i, skill in enumerate(results[:k]):
-            recommendations.append({
-                "skill": skill,
-                "similarity_score": 1.0 / (i + 1),  # 简化的相似度分数
-                "reason": self._generate_recommendation_reason(skill, current_op_type),
-            })
+            recommendations.append(
+                {
+                    "skill": skill,
+                    "similarity_score": 1.0 / (i + 1),  # 简化的相似度分数
+                    "reason": self._generate_recommendation_reason(skill, current_op_type),
+                }
+            )
 
         return recommendations
 
@@ -247,6 +249,10 @@ class SemanticMemory:
         if hasattr(self._skill_index, "rebuild_index"):
             self._skill_index.rebuild_index(repository)
             logger.info("Semantic index rebuilt successfully")
-            return len(repository.list_local_skills()) if hasattr(repository, "list_local_skills") else 0
+            return (
+                len(repository.list_local_skills())
+                if hasattr(repository, "list_local_skills")
+                else 0
+            )
 
         return 0

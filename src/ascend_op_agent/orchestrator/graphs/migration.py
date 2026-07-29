@@ -98,8 +98,7 @@ def build_migration_graph(
     """
     if source_type not in _SUPPORTED_SOURCE_TYPES:
         raise ValueError(
-            f"Unsupported source_type: {source_type}. "
-            f"Supported: {_SUPPORTED_SOURCE_TYPES}"
+            f"Unsupported source_type: {source_type}. " f"Supported: {_SUPPORTED_SOURCE_TYPES}"
         )
     if agent_factory is None:
         raise ValueError(
@@ -185,6 +184,7 @@ def build_migration_graph(
     elif compile_node_factory is not None:
         compile_node = compile_node_factory()
     else:
+
         def _placeholder_compile(state: dict) -> dict:
             return {
                 "compile_result": {
@@ -195,6 +195,7 @@ def build_migration_graph(
                     "return_code": 0,
                 },
             }
+
         compile_node = Node(name="compile", func=_placeholder_compile)
 
     if precision_fix_loop_node_factory is not None:
@@ -202,6 +203,7 @@ def build_migration_graph(
     elif precision_node_factory is not None:
         precision_node = precision_node_factory()
     else:
+
         def _placeholder_precision(state: dict) -> dict:
             return {
                 "precision_report": {
@@ -211,6 +213,7 @@ def build_migration_graph(
                     "failed_cases": 0,
                 },
             }
+
         precision_node = Node(name="precision", func=_placeholder_precision)
 
     # ---- 交付模式(U12)----

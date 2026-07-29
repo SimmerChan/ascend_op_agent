@@ -58,9 +58,7 @@ class SkillRepository:
         self.local_skills_dir = Path(
             local_skills_dir or os.path.expanduser("~/.ascend_op_agent/skills")
         )
-        self.cache_dir = Path(
-            cache_dir or os.path.expanduser("~/.ascend_op_agent/.skill_cache")
-        )
+        self.cache_dir = Path(cache_dir or os.path.expanduser("~/.ascend_op_agent/.skill_cache"))
 
         # 确保目录存在
         self.local_skills_dir.mkdir(parents=True, exist_ok=True)
@@ -238,9 +236,7 @@ class SkillRepositoryDiscovery:
         Args:
             cache_dir: 缓存目录
         """
-        self.cache_dir = Path(
-            cache_dir or os.path.expanduser("~/.ascend_op_agent/.repo_cache")
-        )
+        self.cache_dir = Path(cache_dir or os.path.expanduser("~/.ascend_op_agent/.repo_cache"))
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def clone_or_update(self, repo_url: str, branch: str = "main") -> Path:

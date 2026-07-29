@@ -33,14 +33,16 @@ class OllamaAdapter(BaseLLMAdapter):
     def __init__(self, config: Any):
         super().__init__(config)
         # Ollama may not require an API key for local usage
-        self.api_key = getattr(config, 'api_key', 'ollama')
-        self.api_base = getattr(config, 'api_base', 'http://localhost:11434/v1')
-        self.model = getattr(config, 'model', 'llama3')
-        self.max_retries = getattr(config, 'max_retries', 3)
-        self.timeout = getattr(config, 'timeout', 300)  # Longer timeout for local models
+        self.api_key = getattr(config, "api_key", "ollama")
+        self.api_base = getattr(config, "api_base", "http://localhost:11434/v1")
+        self.model = getattr(config, "model", "llama3")
+        self.max_retries = getattr(config, "max_retries", 3)
+        self.timeout = getattr(config, "timeout", 300)  # Longer timeout for local models
 
         if httpx is None:
-            raise ImportError("httpx is required for Ollama adapter. Install with: pip install httpx")
+            raise ImportError(
+                "httpx is required for Ollama adapter. Install with: pip install httpx"
+            )
 
     def get_provider_name(self) -> str:
         return "ollama"
@@ -50,6 +52,7 @@ class OllamaAdapter(BaseLLMAdapter):
         system_prompt: str,
         conversation_history: list[dict[str, str]],
         tools: Optional[list[dict]] = None,
+        on_delta=None,
     ) -> str:
         """Send completion request to Ollama API
 
@@ -100,7 +103,9 @@ class OllamaAdapter(BaseLLMAdapter):
 
                 elif response.status_code == 404:
                     # Ollama might not have the model pulled
-                    raise Exception(f"Model '{self.model}' not found. Run: ollama pull {self.model}")
+                    raise Exception(
+                        f"Model '{self.model}' not found. Run: ollama pull {self.model}"
+                    )
 
                 elif response.status_code == 429:
                     wait_time = (attempt + 1) * 2

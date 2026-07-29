@@ -126,11 +126,7 @@ class TestConfig:
         os.environ["TEST_API_KEY"] = "secret-key-123"
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            yaml.dump({
-                "llm": {
-                    "api_key": "${TEST_API_KEY}"
-                }
-            }, f)
+            yaml.dump({"llm": {"api_key": "${TEST_API_KEY}"}}, f)
             config_path = f.name
 
         try:
@@ -146,13 +142,9 @@ class TestConfig:
         os.environ["REMOTE_USER"] = "admin"
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            yaml.dump({
-                "remote": {
-                    "host": "${REMOTE_HOST}",
-                    "user": "${REMOTE_USER}",
-                    "port": 22
-                }
-            }, f)
+            yaml.dump(
+                {"remote": {"host": "${REMOTE_HOST}", "user": "${REMOTE_USER}", "port": 22}}, f
+            )
             config_path = f.name
 
         try:
@@ -167,11 +159,7 @@ class TestConfig:
     def test_missing_env_var_resolves_to_empty(self):
         """测试缺失的环境变量解析为空字符串"""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            yaml.dump({
-                "llm": {
-                    "api_key": "${NON_EXISTENT_VAR_12345}"
-                }
-            }, f)
+            yaml.dump({"llm": {"api_key": "${NON_EXISTENT_VAR_12345}"}}, f)
             config_path = f.name
 
         try:

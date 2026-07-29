@@ -16,7 +16,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 
 @dataclass
@@ -25,10 +25,32 @@ class ToolCallResult:
 
     用于 Native Function Calling 模式，从 Provider 的原生响应中解析。
     """
+
     tool_call_id: str
     tool_name: str
     arguments: dict[str, Any]
     raw_response: Any
+
+
+# Per-provider max_tokens 真实上限(2026-07-29 三端点探测实证)
+# Minimax 256K / GLM 官方 128K / Ark 64K。>32K non-stream 被 anthropic SDK
+# 10min 长请求保护拒,故 adapter 走 streaming。按 api_base 子串匹配;未匹配 fallback。
+PROVIDER_MAX_TOKENS: dict[str, int] = {
+    "api.minimaxi.com": 262144,  # Minimax MiniMax-M3
+    "open.bigmodel.cn": 131072,  # GLM 官方 glm-5.2
+    "ark.cn-beijing.volces.com": 65536,  # Ark glm-5.2
+}
+_DEFAULT_MAX_TOKENS_FALLBACK = 65536
+
+
+def _resolve_limit(api_base: Optional[str]) -> int:
+    """按 api_base 子串匹配 provider 真实 max_tokens 上限;未匹配返保守 fallback。"""
+    if not api_base:
+        return _DEFAULT_MAX_TOKENS_FALLBACK
+    for host, limit in PROVIDER_MAX_TOKENS.items():
+        if host in api_base:
+            return limit
+    return _DEFAULT_MAX_TOKENS_FALLBACK
 
 
 class BaseLLMAdapter(ABC):
@@ -48,6 +70,7 @@ class BaseLLMAdapter(ABC):
         system_prompt: str,
         conversation_history: list[dict[str, str]],
         tools: Optional[list[dict]] = None,
+        on_delta: Optional[Callable[[str], None]] = None,
     ) -> Union[str, ToolCallResult]:
         """Send a completion request to the LLM provider
 
@@ -55,6 +78,9 @@ class BaseLLMAdapter(ABC):
             system_prompt: System prompt for the conversation
             conversation_history: List of message dicts with 'role' and 'content'
             tools: Optional list of tool definitions in OpenAI function format
+            on_delta: Optional streaming callback invoked per text delta chunk
+                (None = no streaming delta forwarding; adapter still streams internally
+                to support large max_tokens beyond the SDK 10min non-stream guard).
 
         Returns:
             The LLM's response text, or ToolCallResult if a tool call is triggered

@@ -26,6 +26,7 @@ from typing import Optional
 
 class EnvironmentType(Enum):
     """环境类型"""
+
     HOST = "host"  # 宿主机环境
     AUTO_CONTAINER = "auto_container"  # 自动创建容器
     EXISTING_CONTAINER = "existing_container"  # 已有容器
@@ -34,6 +35,7 @@ class EnvironmentType(Enum):
 @dataclass
 class EnvironmentInfo:
     """环境信息"""
+
     type: EnvironmentType
     description: str
     host: str
@@ -150,6 +152,7 @@ class RemoteEnvValidator:
 
         try:
             import subprocess
+
             result = subprocess.run(
                 full_cmd,
                 capture_output=True,
@@ -394,12 +397,14 @@ class RemoteEnvValidator:
                 continue
             parts = line.split("|")
             if len(parts) >= 5:
-                containers.append({
-                    "id": parts[0],
-                    "name": parts[1],
-                    "image": parts[2],
-                    "status": parts[3],
-                    "state": parts[4],
-                })
+                containers.append(
+                    {
+                        "id": parts[0],
+                        "name": parts[1],
+                        "image": parts[2],
+                        "status": parts[3],
+                        "state": parts[4],
+                    }
+                )
 
         return containers

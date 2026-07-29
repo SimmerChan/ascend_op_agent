@@ -109,7 +109,7 @@ class _ScriptedLLMClient:
         self.responses = list(responses)
         self.history_snapshots: list[list[dict]] = []
 
-    def call(self, system_prompt, conversation_history, tools=None):
+    def call(self, system_prompt, conversation_history, tools=None, on_delta=None):
         self.history_snapshots.append([dict(m) for m in conversation_history])
         if not self.responses:
             return "fallback"
@@ -282,10 +282,28 @@ def _make_adapter_with_mock_client(captured_messages: list) -> Any:
     class _Resp:
         content = [_TextBlock()]
 
+    class _StreamCM:
+        """messages.stream() context manager mock:get_final_message 返 _Resp。"""
+
+        text_stream = iter([])  # on_delta=None 不遍历
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get_final_message(self):
+            return _Resp()
+
     class _Messages:
         def create(self, **kwargs):
             captured_messages.append(kwargs.get("messages"))
             return _Resp()
+
+        def stream(self, **kwargs):
+            captured_messages.append(kwargs.get("messages"))
+            return _StreamCM()
 
     class _Client:
         messages = _Messages()

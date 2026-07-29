@@ -123,7 +123,7 @@ class ACPProtocol:
             "serverInfo": {
                 "name": "ascend-op-agent-acp",
                 "version": "1.0.0",
-            }
+            },
         }
         return self._protocol.build_response(1, result)
 

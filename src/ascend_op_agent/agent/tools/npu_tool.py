@@ -2,6 +2,7 @@
 
 Provides npu_smi, msop, and cann_compile functions.
 """
+
 import os
 import subprocess
 from typing import Optional
@@ -17,10 +18,10 @@ def npu_smi(device_id: Optional[str] = None) -> str:
         NPU device info or error message
     """
     try:
-        args = ['npu-smi', 'info']
+        args = ["npu-smi", "info"]
 
         if device_id is not None:
-            args.extend(['-d', str(device_id)])
+            args.extend(["-d", str(device_id)])
 
         result = subprocess.run(
             args,
@@ -61,10 +62,10 @@ def msop(operator_path: str, analyze: bool = True) -> str:
         return f"错误: 路径不存在: {operator_path}"
 
     try:
-        args = ['msop']
+        args = ["msop"]
 
         if analyze:
-            args.append('-a')
+            args.append("-a")
 
         args.append(operator_path)
 
@@ -115,9 +116,11 @@ def cann_compile(operator_path: str, target: str = "ascend910b") -> str:
         return f"错误: 工程内未找到 build.sh: {build_sh}(非 AscendC 工程结构)"
 
     # Check if CANN is activated
-    cann_home = os.environ.get('ASCEND_OPP_PATH') or os.environ.get('CANN_HOME')
+    cann_home = os.environ.get("ASCEND_OPP_PATH") or os.environ.get("CANN_HOME")
     if not cann_home:
-        return "警告: CANN 环境未配置（ASCEND_OPP_PATH 或 CANN_HOME 未设置）。请先 source cann脚本。"
+        return (
+            "警告: CANN 环境未配置（ASCEND_OPP_PATH 或 CANN_HOME 未设置）。请先 source cann脚本。"
+        )
 
     try:
         # cd 进工程 + bash build.sh --soc=<soc_version> -j8
@@ -151,14 +154,9 @@ NPU_SMI_SCHEMA = {
     "description": "查询昇腾 NPU 设备信息（设备 ID、内存、利用率等）。",
     "parameters": {
         "type": "object",
-        "properties": {
-            "device_id": {
-                "type": "string",
-                "description": "设备 ID（可选）"
-            }
-        },
-        "required": []
-    }
+        "properties": {"device_id": {"type": "string", "description": "设备 ID（可选）"}},
+        "required": [],
+    },
 }
 
 # Schema for msop
@@ -168,18 +166,11 @@ MSOP_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "operator_path": {
-                "type": "string",
-                "description": "算子文件或目录路径"
-            },
-            "analyze": {
-                "type": "boolean",
-                "description": "是否运行分析模式",
-                "default": True
-            }
+            "operator_path": {"type": "string", "description": "算子文件或目录路径"},
+            "analyze": {"type": "boolean", "description": "是否运行分析模式", "default": True},
         },
-        "required": ["operator_path"]
-    }
+        "required": ["operator_path"],
+    },
 }
 
 # Schema for cann_compile
@@ -191,7 +182,7 @@ CANN_COMPILE_SCHEMA = {
         "properties": {
             "operator_path": {
                 "type": "string",
-                "description": "算子工程根目录(需含 build.sh/op_host/op_kernel)"
+                "description": "算子工程根目录(需含 build.sh/op_host/op_kernel)",
             },
             "target": {
                 "type": "string",
@@ -199,11 +190,11 @@ CANN_COMPILE_SCHEMA = {
                     "目标芯片 soc_version(910B3 → ascend910b;"
                     " A5/950 → ascend950;910A → ascend910a)"
                 ),
-                "default": "ascend910b"
-            }
+                "default": "ascend910b",
+            },
         },
-        "required": ["operator_path"]
-    }
+        "required": ["operator_path"],
+    },
 }
 
 
@@ -218,7 +209,7 @@ def register(registry):
         parameters=NPU_SMI_SCHEMA,
         toolset="hardware",
         emoji="🔧",
-        max_result_size_chars=50_000
+        max_result_size_chars=50_000,
     )
 
     registry.register(
@@ -231,7 +222,7 @@ def register(registry):
         parameters=MSOP_SCHEMA,
         toolset="hardware",
         emoji="🔍",
-        max_result_size_chars=50_000
+        max_result_size_chars=50_000,
     )
 
     registry.register(
@@ -244,5 +235,5 @@ def register(registry):
         parameters=CANN_COMPILE_SCHEMA,
         toolset="hardware",
         emoji="⚡",
-        max_result_size_chars=50_000
+        max_result_size_chars=50_000,
     )

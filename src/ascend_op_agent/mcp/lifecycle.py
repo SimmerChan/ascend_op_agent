@@ -24,6 +24,7 @@ from ascend_op_agent.mcp.server_config import MCPServerConfig, TransportType
 
 class MCPProcessError(Exception):
     """MCP进程错误"""
+
     pass
 
 
@@ -155,6 +156,7 @@ class MCPLifecycleManager:
         # 检查是否有输出（可能表明进程崩溃）
         try:
             import select
+
             if select.select([proc.stderr], [], [], 0)[0]:
                 # 有错误输出，可能有问题
                 return False

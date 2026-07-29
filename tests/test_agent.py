@@ -35,6 +35,7 @@ class TestTool:
 
     def test_tool_creation(self):
         """测试Tool创建"""
+
         def dummy_func(x: str, y: int) -> str:
             return f"{x} {y}"
 
@@ -48,6 +49,7 @@ class TestTool:
 
     def test_tool_execution(self):
         """测试Tool执行"""
+
         def add(a: int, b: int) -> int:
             return a + b
 
@@ -57,6 +59,7 @@ class TestTool:
 
     def test_to_openai_format(self):
         """测试OpenAI格式转换"""
+
         def dummy(x: str) -> str:
             return x
 
@@ -96,6 +99,7 @@ class TestToolRegistry:
 
         # 使用全局registry检查
         from ascend_op_agent.agent.tool_registry import tool_registry
+
         assert tool_registry.get_tool("decorator_tool") is not None
 
 

@@ -68,9 +68,7 @@ class NotificationQueue:
             return
 
         self._running = True
-        self._consume_task = asyncio.create_task(
-            self._consume_loop(loop, send_notification_fn)
-        )
+        self._consume_task = asyncio.create_task(self._consume_loop(loop, send_notification_fn))
 
     async def _consume_loop(
         self,

@@ -78,6 +78,7 @@ class ProcessHandle(Protocol):
 @dataclass
 class ExecuteResult:
     """命令执行结果"""
+
     stdout: str
     stderr: str
     return_code: int
@@ -127,7 +128,9 @@ class _ThreadedProcessHandle:
     def _run(self) -> None:
         """在线程中执行目标函数"""
         try:
-            self._stdout, self._stderr, self._returncode = self._target_fn(*self._args, **self._kwargs)
+            self._stdout, self._stderr, self._returncode = self._target_fn(
+                *self._args, **self._kwargs
+            )
         except Exception as e:
             self._exc = e
             self._returncode = -1
@@ -280,6 +283,7 @@ class BaseEnvironment(ABC):
             包装后的命令
         """
         import shlex
+
         return f"cd {shlex.quote(cwd)} && {command}"
 
     def init_session(self) -> None:

@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PerformanceMetric:
     """性能指标"""
+
     name: str
     value: float
     unit: str  # "ms", "GFLOPS", "GB/s", etc.
@@ -43,6 +44,7 @@ class PerformanceMetric:
 @dataclass
 class BenchmarkCase:
     """基准测试用例"""
+
     name: str
     input_shapes: list[list[int]]
     input_dtypes: list[str]
@@ -53,6 +55,7 @@ class BenchmarkCase:
 @dataclass
 class PerformanceResult:
     """单个性能测试结果"""
+
     case_name: str
     metrics: list[PerformanceMetric]
 
@@ -74,6 +77,7 @@ class PerformanceResult:
 @dataclass
 class PerformanceReport:
     """性能评测报告"""
+
     operator_name: str
     timestamp: str
     test_cases: list[BenchmarkCase]
@@ -97,18 +101,12 @@ class PerformanceReport:
             return
 
         # 计算平均延迟
-        latencies = [
-            r.avg_latency_ms for r in self.results
-            if r.avg_latency_ms is not None
-        ]
+        latencies = [r.avg_latency_ms for r in self.results if r.avg_latency_ms is not None]
         if latencies:
             self.avg_latency_ms = sum(latencies) / len(latencies)
 
         # 计算平均吞吐量
-        throughputs = [
-            r.throughput_gflops for r in self.results
-            if r.throughput_gflops is not None
-        ]
+        throughputs = [r.throughput_gflops for r in self.results if r.throughput_gflops is not None]
         if throughputs:
             self.avg_throughput_gflops = sum(throughputs) / len(throughputs)
 
@@ -275,9 +273,7 @@ class PerformanceEvaluator:
 
         # 如果有标杆数据，进行对比
         if benchmark_data:
-            report.benchmark_comparison = self._compare_with_benchmark(
-                results, benchmark_data
-            )
+            report.benchmark_comparison = self._compare_with_benchmark(results, benchmark_data)
 
         # 保存报告
         report.calculate_summary()
@@ -429,7 +425,9 @@ class PerformanceEvaluator:
                 comparison[f"{case_name}_throughput"] = {
                     "custom": custom_throughput,
                     "benchmark": benchmark_throughput,
-                    "speedup": custom_throughput / benchmark_throughput if benchmark_throughput > 0 else 0,
+                    "speedup": (
+                        custom_throughput / benchmark_throughput if benchmark_throughput > 0 else 0
+                    ),
                 }
 
         return comparison
@@ -456,16 +454,24 @@ class PerformanceEvaluator:
         ]
 
         for result in report.results:
-            lines.append(",".join([
-                result.case_name,
-                f"{result.avg_latency_ms:.6f}" if result.avg_latency_ms else "",
-                f"{result.min_latency_ms:.6f}" if result.min_latency_ms else "",
-                f"{result.max_latency_ms:.6f}" if result.max_latency_ms else "",
-                f"{result.p50_latency_ms:.6f}" if result.p50_latency_ms else "",
-                f"{result.p99_latency_ms:.6f}" if result.p99_latency_ms else "",
-                f"{result.throughput_gflops:.6f}" if result.throughput_gflops else "",
-                f"{result.memory_bandwidth_gb_s:.6f}" if result.memory_bandwidth_gb_s else "",
-            ]))
+            lines.append(
+                ",".join(
+                    [
+                        result.case_name,
+                        f"{result.avg_latency_ms:.6f}" if result.avg_latency_ms else "",
+                        f"{result.min_latency_ms:.6f}" if result.min_latency_ms else "",
+                        f"{result.max_latency_ms:.6f}" if result.max_latency_ms else "",
+                        f"{result.p50_latency_ms:.6f}" if result.p50_latency_ms else "",
+                        f"{result.p99_latency_ms:.6f}" if result.p99_latency_ms else "",
+                        f"{result.throughput_gflops:.6f}" if result.throughput_gflops else "",
+                        (
+                            f"{result.memory_bandwidth_gb_s:.6f}"
+                            if result.memory_bandwidth_gb_s
+                            else ""
+                        ),
+                    ]
+                )
+            )
 
         with open(output_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
@@ -490,11 +496,17 @@ class PerformanceEvaluator:
         """
         # 构建 profiler 命令
         cmd = [
-            "python", "-m", "torch_npu.profiler",
-            "--script", operator_script,
-            "--output", output_path,
-            "--warmup", str(self.warmup_iterations),
-            "--active", str(self.active_iterations),
+            "python",
+            "-m",
+            "torch_npu.profiler",
+            "--script",
+            operator_script,
+            "--output",
+            output_path,
+            "--warmup",
+            str(self.warmup_iterations),
+            "--active",
+            str(self.active_iterations),
         ]
 
         try:

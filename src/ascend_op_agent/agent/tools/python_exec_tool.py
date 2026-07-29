@@ -2,6 +2,7 @@
 
 Migration from Hermes Agent code_execution_tool.py
 """
+
 import os
 import subprocess
 import tempfile
@@ -22,12 +23,7 @@ def python_exec(code: str, timeout: int = 30, cwd: Optional[str] = None) -> str:
     work_dir = cwd if cwd else os.getcwd()
 
     # Write code to a temporary file to avoid shell injection
-    with tempfile.NamedTemporaryFile(
-        mode='w',
-        suffix='.py',
-        encoding='utf-8',
-        delete=False
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", encoding="utf-8", delete=False) as f:
         f.write(code)
         temp_path = f.name
 
@@ -36,7 +32,7 @@ def python_exec(code: str, timeout: int = 30, cwd: Optional[str] = None) -> str:
         env = os.environ.copy()
 
         result = subprocess.run(
-            ['python', temp_path],
+            ["python", temp_path],
             cwd=work_dir,
             capture_output=True,
             text=True,
@@ -76,22 +72,12 @@ SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "code": {
-                "type": "string",
-                "description": "要执行的 Python 代码"
-            },
-            "timeout": {
-                "type": "integer",
-                "description": "超时时间（秒）",
-                "default": 30
-            },
-            "cwd": {
-                "type": "string",
-                "description": "工作目录（可选）"
-            }
+            "code": {"type": "string", "description": "要执行的 Python 代码"},
+            "timeout": {"type": "integer", "description": "超时时间（秒）", "default": 30},
+            "cwd": {"type": "string", "description": "工作目录（可选）"},
         },
-        "required": ["code"]
-    }
+        "required": ["code"],
+    },
 }
 
 
@@ -108,5 +94,5 @@ def register(registry):
         parameters=SCHEMA,
         toolset="terminal",
         emoji="🐍",
-        max_result_size_chars=50_000
+        max_result_size_chars=50_000,
     )

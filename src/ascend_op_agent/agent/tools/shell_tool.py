@@ -2,6 +2,7 @@
 
 Migration from Hermes Agent terminal_tool.py (simplified local execution)
 """
+
 import os
 import subprocess
 import threading
@@ -65,22 +66,12 @@ SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "command": {
-                "type": "string",
-                "description": "Shell命令"
-            },
-            "cwd": {
-                "type": "string",
-                "description": "工作目录（可选）"
-            },
-            "timeout": {
-                "type": "integer",
-                "description": "超时时间（秒）",
-                "default": 60
-            }
+            "command": {"type": "string", "description": "Shell命令"},
+            "cwd": {"type": "string", "description": "工作目录（可选）"},
+            "timeout": {"type": "integer", "description": "超时时间（秒）", "default": 60},
         },
-        "required": ["command"]
-    }
+        "required": ["command"],
+    },
 }
 
 
@@ -90,12 +81,10 @@ def register(registry):
         name="shell_exec",
         description=SCHEMA["description"],
         func=lambda **kw: shell_exec(
-            command=kw.get("command"),
-            cwd=kw.get("cwd"),
-            timeout=kw.get("timeout", 60)
+            command=kw.get("command"), cwd=kw.get("cwd"), timeout=kw.get("timeout", 60)
         ),
         parameters=SCHEMA,
         toolset="terminal",
         emoji="💻",
-        max_result_size_chars=50_000
+        max_result_size_chars=50_000,
     )

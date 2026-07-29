@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class LlmEnhancerConfig:
     """LLM 增强器配置"""
+
     enabled: bool = False  # 是否启用 LLM 增强
     trigger_threshold: float = 0.6  # 基础检索得分低于此阈值时触发
     model: Optional[str] = None  # 可选，覆盖 LLMClient 默认模型
@@ -38,6 +39,7 @@ class LlmEnhancerConfig:
 @dataclass
 class ExperienceHint:
     """LLM 增强的经验提示"""
+
     content: str  # 提示内容
     reason: str  # 生成原因
     confidence: float  # 置信度 (0-1)
@@ -86,7 +88,7 @@ class LlmEnhancer:
             return True
 
         # 检查最高得分是否低于阈值
-        if hasattr(base_results[0], 'score'):
+        if hasattr(base_results[0], "score"):
             return base_results[0].score < self.config.trigger_threshold
 
         return False
@@ -197,8 +199,8 @@ class LlmEnhancer:
             prompt_parts.append("")
             prompt_parts.append("Base search results (may be incomplete or low-scored):")
             for i, result in enumerate(base_results[:5], 1):
-                name = getattr(result, 'name', 'unknown')
-                desc = getattr(result, 'description', '')
+                name = getattr(result, "name", "unknown")
+                desc = getattr(result, "description", "")
                 prompt_parts.append(f"{i}. {name}: {desc[:100]}")
         else:
             prompt_parts.append("")
@@ -227,15 +229,13 @@ class LlmEnhancer:
         for i, session in enumerate(sessions[:5], 1):
             prompt_parts.append(f"Session {i}:")
             if isinstance(session, dict):
-                for turn in session.get('turns', [])[:10]:
-                    role = turn.get('role', 'unknown')
-                    content = turn.get('content', '')[:200]
+                for turn in session.get("turns", [])[:10]:
+                    role = turn.get("role", "unknown")
+                    content = turn.get("content", "")[:200]
                     prompt_parts.append(f"  {role}: {content}")
             prompt_parts.append("")
 
-        prompt_parts.append(
-            "Provide a concise summary of the common themes and learnings."
-        )
+        prompt_parts.append("Provide a concise summary of the common themes and learnings.")
 
         return "\n".join(prompt_parts)
 
@@ -269,9 +269,7 @@ CONFIDENCE: <0.0-1.0>
             LLM 响应
         """
         # 构建对话历史
-        conversation_history = [
-            {"role": "user", "content": prompt}
-        ]
+        conversation_history = [{"role": "user", "content": prompt}]
 
         try:
             # 使用 LLMClient 调用
@@ -292,44 +290,48 @@ CONFIDENCE: <0.0-1.0>
         """解析 LLM 增强响应"""
         hints = []
 
-        for line in response.split('\n'):
+        for line in response.split("\n"):
             line = line.strip()
-            if line.startswith('HINT:'):
+            if line.startswith("HINT:"):
                 # 解析 HINT: <content> | REASON: <reason> | CONFIDENCE: <0.0-1.0>
                 try:
-                    parts = line.split('|')
-                    hint_text = parts[0].replace('HINT:', '').strip()
+                    parts = line.split("|")
+                    hint_text = parts[0].replace("HINT:", "").strip()
                     reason = ""
                     confidence = 0.5
 
                     for part in parts[1:]:
                         part = part.strip()
-                        if part.startswith('REASON:'):
-                            reason = part.replace('REASON:', '').strip()
-                        elif part.startswith('CONFIDENCE:'):
+                        if part.startswith("REASON:"):
+                            reason = part.replace("REASON:", "").strip()
+                        elif part.startswith("CONFIDENCE:"):
                             try:
-                                confidence = float(part.replace('CONFIDENCE:', '').strip())
+                                confidence = float(part.replace("CONFIDENCE:", "").strip())
                             except ValueError:
                                 confidence = 0.5
 
                     if hint_text:
-                        hints.append(ExperienceHint(
-                            content=hint_text,
-                            reason=reason or "LLM suggested",
-                            confidence=confidence,
-                            source="cross_type",
-                        ))
+                        hints.append(
+                            ExperienceHint(
+                                content=hint_text,
+                                reason=reason or "LLM suggested",
+                                confidence=confidence,
+                                source="cross_type",
+                            )
+                        )
                 except Exception as e:
                     logger.debug(f"Failed to parse hint line: {line}, error: {e}")
 
         # 如果没有解析出提示，创建默认提示
         if not hints and response.strip():
-            hints.append(ExperienceHint(
-                content=response.strip()[:200],
-                reason="Direct LLM response",
-                confidence=0.5,
-                source="cross_type",
-            ))
+            hints.append(
+                ExperienceHint(
+                    content=response.strip()[:200],
+                    reason="Direct LLM response",
+                    confidence=0.5,
+                    source="cross_type",
+                )
+            )
 
         return hints
 
@@ -342,13 +344,13 @@ CONFIDENCE: <0.0-1.0>
         meaning = term
         confidence = 0.5
 
-        for line in response.split('\n'):
+        for line in response.split("\n"):
             line = line.strip()
-            if line.startswith('MEANING:'):
-                meaning = line.replace('MEANING:', '').strip()
-            elif line.startswith('CONFIDENCE:'):
+            if line.startswith("MEANING:"):
+                meaning = line.replace("MEANING:", "").strip()
+            elif line.startswith("CONFIDENCE:"):
                 try:
-                    confidence = float(line.replace('CONFIDENCE:', '').strip())
+                    confidence = float(line.replace("CONFIDENCE:", "").strip())
                 except ValueError:
                     confidence = 0.5
 
