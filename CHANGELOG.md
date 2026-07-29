@@ -37,7 +37,7 @@ limitations under the License.
 
 ### 新增功能
 
-- **自研 PhaseRunner 状态机**：14 节点顺序+条件+HITL（entry → analyze → design(HITL) → codegen → review_fix → compile → precision → delivery_mode → framework_adapt → done）
+- **自研 PhaseRunner 状态机**：13 节点顺序+条件+HITL（entry → analyze → design(HITL) → codegen → review_fix → compile → precision → delivery_mode → framework_adapt → done）
 - **CheckpointStore**：SQLite v2 schema + v1↔v2 migration + rollback + quarantine LRU + WAL + busy_timeout
 - **NpuExecutor**：SSH → docker exec ops_pt → build.sh --soc=ascend910b + ST 驱动（NPU 跑 + CPU golden + MERE/MARE）
 - **compile cosmetic fix**：build.sh 末尾 `[ERROR] Package not found` false negative → `_is_compile_success` 检测 `.run successfully created`
@@ -71,13 +71,45 @@ limitations under the License.
 
 ## [Unreleased]
 
+> 以下变更发生于 v1.0.0（2026-07-06）之后，尚未形成正式版本。
+
 ### 新增
 
+- **Skill 结晶化 PR-A**（#5）：`/learn` 命令 + `skill_manage` 工具（scope-reduced 5U），支持将调试经验固化为可复用 skill
+- **Skill 结晶化 PR-B**（#6）：R5b 路由 + R6 hybrid 检索（向量+关键词）+ R7 分组 + R3 self-check
+- **Skill Curator Lite Tier 0**：技能活跃度追踪埋点 + `curator status` 只读汇总
+- **任务管理层一期-a（U1-U4）**：TaskStore + R15 rollup 状态推导（cross-db 读协议）+ progress 聚合 + executor_dispatch 路由 + CLI `task` 子命令组 + falsifier baseline gate
+- **task_router**：U3 develop dispatch（PhaseRunner 复用 + gated types）+ U4 显式命令（list/new/select/progress/run，CLI 与 chat 共用）
+- **task_store**：U1 task store + U2 progress aggregator + `CheckpointStore.list_all_threads`
+- **R16 dogfood 自动化**：埋点采集 + falsifier gate GO/NO-GO 判定
+- **R16 complaints 半自动采集**：churn 检测（频繁切换视为"混乱模式"）+ 主动询问（C 方案）
+- **viewer 统一会话列表**：聊天会话与工作流会话合一展示
+- **viewer 接 CheckpointStore**：算子开发数据（compile/precision 等）可视化
+- **U2 compile fix_loop**：compile 失败 -> LLM 修 -> re-compile 循环（替代单 compile 节点）
+- **U2 codegen 内联构建参考**：codegen 阶段从 `add_example` 内联 `CMakeLists.txt + build.sh`，解决 LLM 漏 `ASCEND_COMPUTE_UNIT` / arch 分代
+- **cannbot skill 真实接入**：`use_real_skill_bundles=True` 从 cannbot submodule 加载华为官方 skill
+- **add_example 参考工程**：替换 `add_custom`（与 910B CANN 9.1.0 不兼容），spike #6 证伪后改用 `add_example`
+- **checkpoint 路径统一**：迁移到 `~/.ascend_op_agent/checkpoints/`
+
 ### 变更
+
+- **LLM adapter streaming 重构**：adapter 改为 streaming 总开（`messages.stream` + `get_final_message`，绕过 anthropic SDK >32K non-stream 10min 长请求保护；tool_use 流式聚合三端点实证完整）
+- **per-provider max_tokens 自适应上限**：`base.PROVIDER_MAX_TOKENS` 按 `api_base` 子串匹配（Minimax 256K / GLM 官方 128K / Ark 64K）；`LLMConfig.max_tokens` 默认 `None`=用 provider 真实上限，数字=`min(数字, 上限)`
+- **三 provider 轮询机制**：Minimax（主力）/ 智谱 GLM-5.2（备 1）/ 火山 Ark GLM-5.2（备 2）互备，全 Anthropic 兼容协议；Ark 走 Bearer `auth_token`
+- **max_tokens 默认 16384 兜底**：thinking 不禁推理（`disable_thinking` 默认 false），大 max_tokens 兜底推理模型 thinking 膨胀
+- **方向 B codegen->compile 收敛 on 910B**：6 层根因修复，inline build template 消除 build.sh 幻觉
 
 ### 废弃
 
 ### 修复
+
+- **fix(agent)**：多轮 tool_use 协议，ToolCallResult 分支存 native tool_use 元数据
+- **fix(learn)**：`/learn` 端到端通 -- prompt 引导直接 create + file_search 防御 + 测试隔离
+- **fix(review)**：code-review P1/P2 修复（dispatch 顺序 / PRAGMA / 快照 / 校验 / cli）
+- **fix(codegen)**：markdown fallback 同步写 file.path 到磁盘 + regex 跨行 + absolute 限定（shebang 适配）+ 扩展语言标签与 `#` 注释
+- **fix(codegen)**：markdown fallback + 改 prompt 修 GLM-5.2 tool calling 循环
+- **fix(spike)**：参数化 `use_scaffold_codegen` + 修正首跑 0/5 误判
+- **chore**：ship gate 修复 -- black 格式化 + stress scaffold 悬空 symlink
 
 ### 安全
 

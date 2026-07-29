@@ -11,6 +11,113 @@ Ascend Op Agent 支持多 LLM Provider，通过适配器模式实现。目前支
 | `azure` | GPT-4o, GPT-4-turbo 等 | Azure OpenAI |
 | `ollama` | Llama 3, Mistral, Qwen 等 | 本地 Ollama 模型 |
 
+## Adapter 内部机制
+
+### Streaming 总开
+
+Anthropic adapter **streaming 总开**（`client.messages.stream` + `stream.get_final_message()`），
+绕过 anthropic SDK 对 >32K non-stream 请求的 10min 长请求保护。`tool_use` block 流式聚合
+完整（三端点实测验证）。
+
+`on_delta` 回调可选转发 visible text delta chunk；`None` 时 adapter 仍内部流式，
+只是不向前端转发增量：
+
+```python
+# BaseLLMAdapter.complete 签名
+def complete(
+    self,
+    system_prompt: str,
+    conversation_history: list[dict[str, str]],
+    tools: Optional[list[dict]] = None,
+    on_delta: Optional[Callable[[str], None]] = None,
+) -> Union[str, ToolCallResult]:
+    ...
+```
+
+### Per-provider max_tokens 自适应上限
+
+`base.PROVIDER_MAX_TOKENS` 按 `api_base` 子串匹配 provider 真实 max_tokens 上限
+（2026-07-29 三端点探测实证，1M 是 context window 输入容量非输出上限）：
+
+| Provider (api_base 子串) | 真实 max_tokens 上限 |
+|--------------------------|----------------------|
+| `api.minimaxi.com`（Minimax） | 262144（256K） |
+| `open.bigmodel.cn`（GLM 官方） | 131072（128K） |
+| `ark.cn-beijing.volces.com`（Ark） | 65536（64K） |
+| 未匹配 | 65536（保守 fallback） |
+
+`LLMConfig.max_tokens` 语义：
+- `None`（默认）-- 用 provider 真实上限（用满）
+- 数字 -- `min(数字, provider上限)`
+
+```python
+# base._resolve_limit(api_base) 按 api_base 子串匹配返回上限
+effective_max_tokens = min(cfg_max_tokens or limit, limit)
+```
+
+> **教训**：LLM 返回空必先看 raw response（`stop_reason` / thinking vs text /
+> `usage.output_tokens`），别瞎归因。glm-5.2 是推理模型，thinking 膨胀 12-15k 字符
+> 会吃光 max_tokens 致 codegen 空输出（见 `disable_thinking`）。
+
+### disable_thinking
+
+`LLMConfig.disable_thinking`（默认 `False`，不禁推理）：推理模型（glm-5.2/Ark）
+thinking 会吃光 max_tokens 致 text 空。设 `True` 时 adapter 在 `messages.create` 传
+`thinking={"type": "disabled"}` 让模型直出 visible text。非推理模型（MiniMax-M3）
+保持 `False`。
+
+### auth_token（Bearer 认证）
+
+`LLMConfig.auth_token` 用于走 Bearer auth 的 provider（如火山 Ark）。adapter 优先用
+`auth_token`（`Authorization: Bearer`），`api_key` 走 `x-api-key`（Ark 的 x-api-key 会 401）：
+
+```yaml
+# Ark 走 Bearer auth
+llm:
+  provider: "anthropic"
+  auth_token: "${ARK_API_KEY}"   # Bearer auth
+  api_base: "https://ark.cn-beijing.volces.com/api/plan"
+  model: "glm-5.2"
+```
+
+## 三 Provider 轮询（Minimax ↔ GLM ↔ Ark）
+
+LLM 配额/服务频繁踩坑，已配三个 provider 互备（全部 anthropic 兼容协议）。任一
+provider 不可用（配额耗尽 / 服务波动 / timeout），按轮询顺序切下一个 provider 重试，
+不原地重试同一 provider。
+
+| 顺序 | Provider | Model | api_base | Key env | 适用 |
+|------|----------|-------|----------|---------|------|
+| 主力 | Minimax | `MiniMax-M3` | `https://api.minimaxi.com/anthropic` | `MINIMAX_API_KEY` | e2e / stress（N=20 100% PASS） |
+| 备 1 | 智谱 GLM | `glm-5.2` | `https://open.bigmodel.cn/api/anthropic` | `GLM_API_KEY` | Minimax 配额耗尽时切；不适合 stress（连续调用 timeout） |
+| 备 2 | 火山 Ark | `glm-5.2` | `https://ark.cn-beijing.volces.com/api/plan` | `ARK_API_KEY` | Minimax+GLM 都不可用时切；Bearer auth_token |
+
+切换方法：改 `~/.ascend_op_agent/config.yaml` 的 `llm` 段（三 provider 的 key 已在
+`~/.ascend_op_agent/.env` 配齐）。三 provider 都不可用 -> 停止 LLM 依赖操作，报告用户。
+
+```yaml
+# Minimax（默认主力，Anthropic 兼容）
+llm:
+  provider: "anthropic"
+  api_key: "${MINIMAX_API_KEY}"
+  api_base: "https://api.minimaxi.com/anthropic"
+  model: "MiniMax-M3"
+
+# GLM-5.2（备 1，Anthropic 兼容）-- 取消注释切换
+# llm:
+#   provider: "anthropic"
+#   api_key: "${GLM_API_KEY}"
+#   api_base: "https://open.bigmodel.cn/api/anthropic"
+#   model: "glm-5.2"
+
+# Ark GLM-5.2（备 2，Anthropic 兼容，Bearer auth）-- 取消注释切换
+# llm:
+#   provider: "anthropic"
+#   auth_token: "${ARK_API_KEY}"
+#   api_base: "https://ark.cn-beijing.volces.com/api/plan"
+#   model: "glm-5.2"
+```
+
 ## 快速配置
 
 ### 方式一：使用 .env 文件（推荐）
@@ -390,14 +497,16 @@ llm:
 
 1. 在 `src/ascend_op_agent/agent/providers/` 创建 `xxx_adapter.py`
 2. 继承 `BaseLLMAdapter`
-3. 实现 `complete()` 和 `get_provider_name()` 方法
-4. 在 `core.py` 的 `_ADAPTERS` 字典中注册
-5. 在 `__init__.py` 中导出
+3. 实现 `complete(system_prompt, conversation_history, tools=None, on_delta=None)`
+   和 `get_provider_name()` 方法（Anthropic 兼容 provider 走 streaming + `get_final_message`）
+4. 在 `agent/core.py` 的 `_ADAPTERS` 字典中注册
+5. 在 `agent/providers/__init__.py` 中导出
 
 参见现有实现：
-- [OpenAI Adapter 源码](../src/ascend_op_agent/agent/providers/openai_adapter.py)
-- [Anthropic Adapter 源码](../src/ascend_op_agent/agent/providers/anthropic_adapter.py)
-- [Gemini Adapter 源码](../src/ascend_op_agent/agent/providers/gemini_adapter.py)
-- [OpenRouter Adapter 源码](../src/ascend_op_agent/agent/providers/openrouter_adapter.py)
-- [Azure Adapter 源码](../src/ascend_op_agent/agent/providers/azure_adapter.py)
-- [Ollama Adapter 源码](../src/ascend_op_agent/agent/providers/ollama_adapter.py)
+- [Anthropic Adapter 源码](../../src/ascend_op_agent/agent/providers/anthropic_adapter.py)（streaming + per-provider max_tokens）
+- [Base Adapter 源码](../../src/ascend_op_agent/agent/providers/base.py)（`PROVIDER_MAX_TOKENS` / `_resolve_limit` / `ToolCallResult`）
+- [OpenAI Adapter 源码](../../src/ascend_op_agent/agent/providers/openai_adapter.py)
+- [Gemini Adapter 源码](../../src/ascend_op_agent/agent/providers/gemini_adapter.py)
+- [OpenRouter Adapter 源码](../../src/ascend_op_agent/agent/providers/openrouter_adapter.py)
+- [Azure Adapter 源码](../../src/ascend_op_agent/agent/providers/azure_adapter.py)
+- [Ollama Adapter 源码](../../src/ascend_op_agent/agent/providers/ollama_adapter.py)

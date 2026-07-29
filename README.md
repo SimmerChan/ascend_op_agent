@@ -3,12 +3,14 @@
 昇腾算子开发 Agent — 自研轻量状态机编排器 + cannbot-skills 知识层 + 910B 真编译 + ST 驱动真算子验证。
 
 **P0 + P1 已完成**（2026-06-23 → 2026-07-05）：
-- ✅ 自研 PhaseRunner 状态机（14 节点顺序+条件+HITL）
+- ✅ 自研 PhaseRunner 状态机（13 节点顺序+条件+HITL）
 - ✅ 910B 真编译（build.sh + compile cosmetic fix）
 - ✅ 真算子验证（ST 驱动 + 10/10 precision PASS）
 - ✅ N=20 stress 100% PASS（Minimax MiniMax-M3）
 - ✅ CLI 端到端 5/5 PASS（op: 前缀 → PhaseRunner → done）
 - ✅ ship gate 4 步全过 → 🚢 SHIP READY
+
+> v1.0.0 发布于 2026-07-06。之后的迭代进展（skill 结晶化、任务管理层、LLM adapter streaming 重构等）见 [CHANGELOG.md](CHANGELOG.md) 的 [Unreleased] 段。
 
 ## Quick Start
 
@@ -44,7 +46,7 @@ PYTHONPATH=src python scripts/e2e_real_op.py
 - **ST 驱动真算子验证**: NPU 跑 + CPU golden + MERE/MARE 精度比对（CANN 社区标准）
 - **N=20 stress**: dual metric（first-try ≥80% + with-retry ≥95%）+ 3-state exit code
 - **CLI 端到端**: op: 前缀路由 → PhaseRunner → agent.progress 通知 → SIGTERM graceful + heartbeat
-- **LLM 多 Provider**: Minimax（anthropic 协议）/ 智谱 GLM（OpenAI 兼容 + coding plan）
+- **LLM 多 Provider 轮询**: 三 provider 互备（Minimax MiniMax-M3 主力 / 智谱 GLM-5.2 备 1 / 火山 Ark GLM-5.2 备 2），全 Anthropic 兼容协议；adapter streaming 总开 + per-provider max_tokens 自适应上限（Minimax 256K / GLM 128K / Ark 64K）
 - **ACP编辑器适配器**: 支持 VS Code、Zed、JetBrains
 - **对话可视化器**: 树形结构调试 Agent 与用户的完整交互流程
 
@@ -115,7 +117,7 @@ pip install -e .
 ```bash
 # 1. 配置
 mkdir -p ~/.ascend_op_agent
-cp config.yaml.example ~/.ascend_op_agent/config.yaml
+cp config.example.yaml ~/.ascend_op_agent/config.yaml
 cp .env.example ~/.ascend_op_agent/.env
 vim ~/.ascend_op_agent/.env
 
@@ -178,40 +180,44 @@ ascend-op-agent run
 | 记忆系统 | [docs/modules/memory.md](docs/modules/memory.md) |
 | ACP 适配器 | [docs/modules/acp.md](docs/modules/acp.md) |
 | 工作流引擎 | [docs/modules/workflow.md](docs/modules/workflow.md) |
+| LLM Provider 配置 | [docs/modules/llm_providers.md](docs/modules/llm_providers.md) |
 
 ## 目录结构
 
 ```
 ascend_op_agent/
-├── agent/           # Agent核心引擎
-│   ├── core.py      # AIAgent 主类
-│   ├── memory.py    # 四层记忆系统
-│   ├── context.py   # 上下文引擎
-│   └── SOUL.md      # Agent 身份定义
-├── workflow/       # 工作流引擎
-│   ├── engine.py    # 工作流引擎
-│   └── phases.py    # Phase0-8 阶段定义
-├── mcp/            # MCP服务器集成
-│   ├── client.py    # MCP 客户端
-│   └── lifecycle.py # 生命周期管理
-├── skills/         # Skill知识库
-│   ├── repository.py # 技能仓库
-│   └── index.py     # 技能索引
-├── ssh/            # SSH远程开发
-│   ├── manager.py   # SSH 管理器
-│   └── sync.py     # 文件同步
-├── memory/        # 记忆系统
-│   ├── episodic_memory.py  # 情景记忆
-│   └── semantic_memory.py  # 语义记忆
-├── acp/           # ACP编辑器适配器
-│   ├── adapter.py  # 适配器主类
-│   └── protocol.py # 协议定义
-├── backend/       # RPC后端服务
-├── viewer/        # Agent对话可视化器
-│   ├── backend/    # 后端 API 服务（FastAPI）
-│   └── frontend/   # 前端界面（Vue 3 + Element Plus）
-├── security/      # 安全模块
-└── cli.py         # CLI入口
+├── agent/              # Agent 核心引擎
+│   ├── core.py          # AIAgent 主类（会话循环 + 工具调用）
+│   ├── prompt_builder.py # 7 层 Prompt 组装
+│   ├── memory.py        # Working Memory
+│   ├── context.py       # 上下文引擎
+│   ├── tool_registry.py # 工具注册
+│   ├── session_manager.py / session_record.py  # 会话持久化
+│   ├── skill_standards.py # Skill 规范
+│   ├── SOUL.md          # Agent 身份定义
+│   ├── providers/       # 多 Provider LLM 适配器（anthropic/openai/gemini/openrouter/azure/ollama，streaming + per-provider max_tokens）
+│   └── tools/           # 工具集（file_read/write/search、patch、shell_exec、python_exec、git_*、npu_smi、msop、skill_manage）
+├── orchestrator/       # 自研状态机编排器（非 LangGraph）
+│   ├── state_machine.py # PhaseRunner（13 节点顺序+条件+HITL）
+│   ├── checkpoint.py    # CheckpointStore（SQLite v2 + v1↔v2 迁移 + WAL + rollback）
+│   ├── fix_loop.py      # review->fix->re-review 闭环
+│   ├── npu_exec.py      # NpuExecutor（SSH -> docker exec ops_pt -> build.sh + ST 驱动）
+│   ├── cannbot_loader.py # cannbot-skills 加载器 + SkillUsageRegistry（signal-1 跟踪）
+│   ├── state.py         # OpState 类型定义 + reducer
+│   ├── graphs/          # 三路径图定义（migration / new_dev）
+│   └── nodes/           # 编排节点（common / hitl / delivery / migration / micro_mod / validation）
+├── task_router/        # 任务类型路由（commands + executor_dispatch）
+├── task_store/         # 任务存储与状态推导（models + store + progress + rollup）
+├── backend/rpc/        # JSON-RPC 服务端（server.py + agent_service.py + notification_queue.py）
+├── workflow/           # 工作流辅助（compiler / models / performance）
+├── skills/             # Skill 知识库（repository / index / installer / models / storage / usage_tracker）
+├── memory/             # 长期记忆（episodic / semantic / vector_store / llm_enhancer / system）
+├── mcp/                # MCP 服务器集成（client / lifecycle / oauth / server_config）
+├── ssh/                # SSH 远程开发（manager / sync / env_config / base_environment）
+├── acp/                # ACP 编辑器适配器（adapter / protocol / session）
+├── security/           # 凭据管理与 Token 解析
+├── viewer/             # Agent 对话可视化器（FastAPI 后端 + Vue 3 + Element Plus 前端，接 CheckpointStore）
+└── cli.py              # CLI 入口
 ```
 
 ## 开发

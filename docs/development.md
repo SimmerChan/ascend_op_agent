@@ -22,68 +22,98 @@ limitations under the License.
 ascend_op_agent/
 ├── agent/                  # Agent 核心引擎
 │   ├── __init__.py
-│   ├── core.py            # AIAgent 主类
-│   ├── memory.py          # 四层记忆系统
+│   ├── core.py            # AIAgent 主类（会话循环 + 工具调用）
+│   ├── memory.py          # Working Memory（MemoryStore）
 │   ├── context.py         # 上下文引擎
-│   ├── prompt_builder.py  # 7层 Prompt 组装
-│   ├── tool_registry.py   # 工具注册
-│   └── SOUL.md            # Agent 身份定义
-├── workflow/              # 工作流引擎
+│   ├── prompt_builder.py  # 7 层 Prompt 组装（含 Layer 6 cannbot scope 注入）
+│   ├── tool_registry.py   # 工具注册表
+│   ├── skill_standards.py # Skill 命名规范 + R3 trigger 计数
+│   ├── session_manager.py # 会话管理
+│   ├── session_record.py  # 会话记录持久化（树形结构）
+│   ├── SOUL.md            # Agent 身份定义
+│   ├── providers/         # LLM 多 Provider 适配器（注册表模式）
+│   │   ├── base.py        # BaseLLMAdapter + ToolCallResult + per-provider max_tokens
+│   │   ├── anthropic_adapter.py
+│   │   ├── openai_adapter.py
+│   │   ├── azure_adapter.py
+│   │   ├── gemini_adapter.py
+│   │   ├── ollama_adapter.py
+│   │   └── openrouter_adapter.py
+│   └── tools/             # 工具集（file_read/write/search, patch, shell, python_exec, git, npu, skill_manage）
+├── orchestrator/          # 编排层（自研 PhaseRunner 状态机，非 LangGraph）
 │   ├── __init__.py
-│   ├── engine.py          # 工作流引擎主类
-│   ├── phases.py          # Phase0-8 阶段定义
-│   ├── adapters.py        # 外部适配器
-│   ├── compiler.py        # 编译器封装
-│   ├── performance.py     # 性能评估
-│   ├── skill_save.py      # Skill 保存
-│   └── models.py          # 数据模型
-├── mcp/                   # MCP 服务器集成
+│   ├── state_machine.py   # PhaseRunner 顺序 DAG 引擎 + apply_update reducer
+│   ├── state.py           # OpState (TypedDict) + APPEND_FIELDS / MERGE_FIELDS
+│   ├── checkpoint.py      # CheckpointStore (SQLite v2: WAL + v1↔v2 迁移 + quarantine)
+│   ├── npu_exec.py        # NpuExecutor（SSH->docker exec ops_pt->build.sh + ST 驱动）
+│   ├── fix_loop.py        # run_fix_loop（review->fix->re-review 闭环）+ compress_transcript
+│   ├── cannbot_loader.py  # cannbot-skills 加载器 + SkillUsageRegistry + SKILL_BUNDLES
+│   ├── graphs/            # 三路径图定义
+│   │   ├── migration.py   # Path-B（CUDA / Triton 迁移）
+│   │   └── new_dev.py     # Path-C（全新开发）
+│   └── nodes/             # 节点实现
+│       ├── common.py      # make_llm_node（fresh AIAgent + markdown fallback）
+│       ├── hitl.py        # make_hitl_llm_node（HITL 暂停 + resume 推进）
+│       ├── delivery.py    # 交付模式选择 + 框架适配（条件跳过）
+│       ├── migration.py   # cuda_frontend / triton_frontend 节点
+│       ├── validation.py  # compile/precision 真节点 + fix_loop 包装
+│       └── micro_mod.py
+├── task_router/           # 任务类型路由（一期-a 显式命令）
+│   ├── commands.py        # TaskCommands（list/new/select/progress/run/complain）
+│   └── executor_dispatch.py # TaskRouter（按 task.type 路由；develop -> PhaseRunner）
+├── task_store/            # 任务存储与状态推导
+│   ├── models.py          # Task 模型 + 任务类型 + 状态常量
+│   ├── store.py           # TaskStore (SQLite)
+│   ├── progress.py        # 任务进展聚合
+│   └── rollup.py          # 状态推导（draft/running/paused/done/failed）
+├── backend/               # RPC 后端服务
 │   ├── __init__.py
-│   ├── client.py          # MCP 客户端
-│   ├── lifecycle.py       # 生命周期管理
-│   ├── oauth.py           # OAuth 认证
-│   └── server_config.py   # 服务器配置
+│   ├── __main__.py        # 后端入口
+│   ├── backend.py         # 后端编排（_build_orchestrator lazy-init op: 路由）
+│   └── rpc/
+│       ├── __init__.py
+│       ├── server.py      # JSONRPCServer（send_notification -> stdout）
+│       ├── agent_service.py # AgentAsyncWrapper + _DeltaBatcher（stream delta 节流）
+│       ├── notification_queue.py # 通知队列（线程池 -> stdout）
+│       └── protocol.py    # 协议定义
 ├── skills/                # Skill 知识库
 │   ├── __init__.py
 │   ├── repository.py      # 技能仓库
-│   ├── index.py           # 技能索引
+│   ├── index.py           # SkillsIndex（SQLite FTS5 + 向量混合检索）
 │   ├── installer.py       # 技能安装
 │   ├── storage.py         # 存储管理
 │   ├── models.py          # 数据模型
 │   ├── interactive.py     # 交互接口
-│   └── hybrid_search.py   # 混合检索
+│   └── usage_tracker.py   # Skill 活跃度追踪埋点（Curator Lite）
+├── memory/                # 长期记忆系统
+│   ├── episodic_memory.py # 情景记忆（ChromaDB）
+│   ├── semantic_memory.py # 语义记忆
+│   ├── vector_store.py    # 向量存储
+│   ├── system.py          # 系统记忆
+│   └── llm_enhancer.py    # LLM 增强
 ├── ssh/                   # SSH 远程开发
-│   ├── __init__.py
 │   ├── manager.py         # SSH 管理器
 │   ├── sync.py            # 文件同步
 │   ├── env_config.py      # 环境配置
 │   └── base_environment.py # 基础环境
-├── memory/                # 记忆系统
-│   ├── __init__.py
-│   ├── episodic_memory.py  # 情景记忆
-│   ├── semantic_memory.py  # 语义记忆
-│   ├── vector_store.py     # 向量存储
-│   ├── system.py          # 系统记忆
-│   └── llm_enhancer.py    # LLM 增强
-├── acp/                   # ACP 编辑器适配器
-│   ├── __init__.py
+├── mcp/                   # MCP 服务器集成
+│   ├── client.py          # MCP 客户端
+│   ├── lifecycle.py       # 生命周期管理
+│   ├── oauth.py           # OAuth 认证
+│   └── server_config.py   # 服务器配置
+├── acp/                   # ACP 编辑器适配器（VS Code / Zed / JetBrains）
 │   ├── adapter.py         # 适配器主类
 │   ├── protocol.py        # 协议定义
 │   └── session.py         # 会话管理
-├── backend/               # RPC 后端服务
-│   ├── __init__.py
-│   ├── rpc/
-│   │   ├── __init__.py
-│   │   ├── agent_service.py # Agent 服务
-│   │   ├── protocol.py    # 协议定义
-│   │   └── server.py      # RPC 服务器
-│   └── backend.py         # 后端入口
 ├── security/              # 安全模块
-│   ├── __init__.py
 │   ├── credential_manager.py # 凭据管理
-│   └── token_resolver.py  # Token 解析
-├── config.py              # 配置加载
-├── cli.py                 # CLI 入口
+│   └── token_resolver.py  # Token 解析（${VAR} / ${VAR:-default}）
+├── workflow/              # 早期工作流工具（compiler/performance 辅助，编排主路径在 orchestrator/）
+│   ├── compiler.py
+│   ├── performance.py
+│   └── models.py
+├── config.py              # 配置加载（双文件：config.yaml + .env）
+├── cli.py                 # CLI 入口（run/task/skill/mcp/acp/sync/viewer/curator/learn）
 ├── version.py             # 版本信息
 └── __init__.py
 ```
@@ -117,7 +147,7 @@ cd frontend && npm install && cd ..
 
 ```bash
 # 创建配置
-cp config.yaml.example config.yaml
+cp config.example.yaml config.yaml
 
 # 创建环境变量文件
 mkdir -p ~/.ascend_op_agent
@@ -240,9 +270,10 @@ class TestClassName:
 
 ### 日志调试
 
+后端日志输出到 stderr，级别由 `config.yaml` 的 `logging` 段控制（默认 INFO）：
+
 ```bash
-# 启用详细日志
-ascend-op-agent run --debug --log-level trace
+ascend-op-agent run
 ```
 
 ### IDE 调试
@@ -258,7 +289,7 @@ ascend-op-agent run --debug --log-level trace
             "type": "debugpy",
             "request": "launch",
             "module": "ascend_op_agent",
-            "args": ["run", "--mode", "local"],
+            "args": ["run", "--local"],
             "env": {
                 "PYTHONPATH": "${workspaceFolder}/src"
             }
@@ -304,18 +335,22 @@ graph TB
     E --> I[四层记忆]
 ```
 
-### 工作流引擎
+### 编排器（PhaseRunner 状态机）
 
 ```mermaid
 graph LR
-    A[Phase0] --> B[Phase1]
-    B --> C[Phase2]
-    C --> D[Phase3]
-    D --> E[Phase4]
-    E --> F[Phase5]
-    F --> G[Phase7]
-    G --> H[Phase8]
+    E["entry"] --> A["analyze<br/>(Path-C) 或<br/>cuda/triton_frontend<br/>(Path-B)"]
+    A --> D["design<br/>(HITL)"]
+    D --> CG["codegen"]
+    CG --> RF["review_fix"]
+    RF --> CP["compile<br/>(fix_loop)"]
+    CP --> PR["precision<br/>(ST 驱动)"]
+    PR --> DM["delivery_mode<br/>(HITL)"]
+    DM --> FA["framework_adapt<br/>(条件跳过)"]
+    FA --> DN["done"]
 ```
+
+> 详见 [工作流说明](workflow.md) 和 [架构设计](architecture.md)。
 
 ### TUI 架构
 
@@ -340,30 +375,45 @@ graph TB
 
 ```
 agent/
-├── core.py          # 无循环依赖
-├── memory.py        # 依赖 memory/
-├── context.py       # 依赖 memory/
-├── prompt_builder.py # 依赖 agent/
-└── tool_registry.py # 无循环依赖
+├── core.py            # 依赖 providers/, tools/, prompt_builder, memory
+├── memory.py          # 依赖 memory/
+├── context.py         # 依赖 memory/
+├── prompt_builder.py  # 依赖 agent/, skills/ (Layer 6 cannbot scope 注入)
+├── tool_registry.py   # 依赖 agent/tools/
+└── session_record.py  # 依赖 backend/ (持久化)
 
-workflow/
-├── engine.py        # 依赖 agent/, mcp/, ssh/, skills/
-├── phases.py        # 依赖 workflow/models.py
-└── adapters.py      # 依赖 workflow/models.py
+orchestrator/
+├── state_machine.py   # 依赖 checkpoint, state (无 LangGraph)
+├── checkpoint.py      # 依赖 config (CheckpointConfig)
+├── npu_exec.py        # 依赖 ssh/ (SSHEnvironment, 可选)
+├── fix_loop.py        # 依赖 state_machine.apply_update
+├── cannbot_loader.py  # 依赖 vendor/cannbot-skills (submodule)
+├── graphs/            # 依赖 nodes/, cannbot_loader, state_machine
+└── nodes/             # 依赖 agent/ (AgentFactory), cannbot_loader
 
-mcp/
-├── client.py        # 依赖 mcp/, security/
-├── lifecycle.py     # 依赖 mcp/
-└── oauth.py         # 依赖 security/
+task_router/
+├── commands.py        # 依赖 task_store/, checkpoint (progress 聚合)
+└── executor_dispatch.py # 依赖 task_store, orchestrator (develop 路径)
+
+task_store/
+├── store.py           # 依赖 models
+├── progress.py        # 依赖 store, checkpoint (list_all_threads)
+└── rollup.py          # 依赖 models (状态推导)
+
+backend/rpc/
+├── server.py          # 依赖 notification_queue
+├── agent_service.py   # 依赖 agent/ (AgentAsyncWrapper + _DeltaBatcher)
+└── notification_queue.py # 线程池 -> stdout
 
 skills/
-├── repository.py    # 依赖 skills/models.py
-├── index.py         # 依赖 memory/vector_store.py
-└── installer.py     # 依赖 skills/storage.py
+├── index.py           # SkillsIndex（FTS5 + 向量混合检索）
+├── repository.py      # 依赖 skills/models
+├── installer.py       # 依赖 skills/storage
+└── usage_tracker.py   # Curator Lite 活跃度埋点
 
 ssh/
-├── manager.py       # 依赖 ssh/, security/
-└── sync.py         # 依赖 ssh/base_environment.py
+├── manager.py         # 依赖 ssh/, security/
+└── sync.py            # 依赖 ssh/base_environment.py
 
 memory/
 ├── episodic_memory.py # 依赖 memory/vector_store.py
@@ -371,12 +421,7 @@ memory/
 └── vector_store.py    # 无循环依赖
 
 acp/
-├── adapter.py       # 依赖 acp/
-├── protocol.py      # 无循环依赖
-└── session.py       # 依赖 acp/protocol.py
-
-backend/
-└── rpc/
-    ├── server.py    # 依赖 backend/rpc/
-    └── agent_service.py # 依赖 agent/
+├── adapter.py         # 依赖 acp/
+├── protocol.py        # 无循环依赖
+└── session.py         # 依赖 acp/protocol.py
 ```

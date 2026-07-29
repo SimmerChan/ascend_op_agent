@@ -6,28 +6,49 @@
 # 敏感字段(api_key / password)建议放 ~/.ascend_op_agent/.env,
 # 这里用 ${ENV_VAR} 引用。支持 ${ENV_VAR:-default} 语法。
 
-# ---- LLM(此处以 minimax 国内版为例,走 OpenAI 兼容端点)----
+# ---- LLM(三 provider 轮询,全 Anthropic 兼容;默认主力 Minimax)----
+# 切换 provider 只需改 llm 段(三 provider 的 key 已在 ~/.ascend_op_agent/.env 配齐:
+# MINIMAX_API_KEY / GLM_API_KEY / ARK_API_KEY)。adapter streaming 总开 +
+# per-provider max_tokens 自适应上限(Minimax 256K / GLM 128K / Ark 64K)。
 llm:
-  provider: openai  # minimax OpenAI 兼容,直接复用 OpenAIAdapter
-  # 国内版端点(国际版用 https://api.minimaxi.com/v1)
-  api_base: https://api.minimax.chat/v1
-  api_key: ${MINIMAX_API_KEY}  # 从 ~/.ascend_op_agent/.env 读
-  # minimax 国内模型:abab6.5s-chat / abab6.5-chat / MiniMax-Text-01 / MiniMax-M1
-  model: abab6.5s-chat
+  provider: "anthropic"               # 三 provider 均走 anthropic 兼容端点
+  api_key: "${MINIMAX_API_KEY}"        # 主力 Minimax
+  api_base: "https://api.minimaxi.com/anthropic"
+  model: "MiniMax-M3"
   max_retries: 3
-  timeout: 120
+  timeout: 300                         # 推理模型 reasoning 阶段长,加大 timeout
+  # max_tokens 默认 None = 用 provider 真实上限;数字 = min(数字, 上限)
+  # disable_thinking 默认 false(不禁推理);glm-5.2 thinking 膨胀时按需设 true
 
-# ---- 远程开发环境(910B SSH)----
+# 备 1:智谱 GLM-5.2(Anthropic 兼容)-- 取消注释切换
+# llm:
+#   provider: "anthropic"
+#   api_key: "${GLM_API_KEY}"
+#   api_base: "https://open.bigmodel.cn/api/anthropic"
+#   model: "glm-5.2"
+#   timeout: 300
+
+# 备 2:火山 Ark GLM-5.2(Anthropic 兼容,Bearer auth)-- 取消注释切换
+# llm:
+#   provider: "anthropic"
+#   auth_token: "${ARK_API_KEY}"        # Ark 走 Bearer(adapter 已支持);api_key 的 x-api-key 会 401
+#   api_base: "https://ark.cn-beijing.volces.com/api/plan"
+#   model: "glm-5.2"
+#   timeout: 300
+
+# ---- 远程开发环境(910B SSH -> docker exec ops_pt)----
 remote:
-  host: ${NPU_HOST}        # 910B 机器 IP/hostname
-  user: ${NPU_USER}        # SSH 用户名(HwHiAiUser / root / 自定义)
+  host: ${NPU_HOST}                    # 910B 机器 IP(实测 192.168.9.105)
+  user: ${NPU_USER}                    # SSH 用户名(root)
   port: 22
   # 二选一:密钥 或 密码
-  key_path: ${NPU_KEY_PATH:-}   # 如 ~/.ssh/id_rsa,留空则用 password
-  password: ${NPU_PASSWORD:-}   # 走 .env
-  # 若 910B 在容器里(可选)
+  key_path: ${NPU_KEY_PATH:-}          # 如 ~/.ssh/id_rsa,留空则用 password
+  password: ${NPU_PASSWORD:-}          # 走 .env
+  # 910B 容器拓扑:ssh 进宿主机后 docker exec 进开发容器
   image_name: ""
-  container_name: ""
+  container_name: "ops_pt"             # 910B 开发容器(常驻,NpuExecutor 自动包装 docker exec)
+  # 注:非交互 shell 不自动 source CANN env,NpuExecutor 内部已前置
+  #   source /usr/local/Ascend/ascend-toolkit/set_env.sh(见 CLAUDE.md)
 
 # ---- 编排器 checkpoint(自研 sqlite3)----
 checkpoint:
@@ -38,3 +59,33 @@ checkpoint:
 # skill_repositories:
 #   - name: cannbot-skills
 #     url: vendor/cannbot-skills
+
+# ---- MCP 服务器(可选,外部工具扩展,详见 docs/modules/mcp.md)----
+# mcp:
+#   servers:
+#     - name: "code-search"
+#       type: "stdio"
+#       command: "npx"
+#       args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+#     - name: "github"
+#       type: "http"
+#       url: "https://api.github.com/mcp"
+#       token: "${GITHUB_TOKEN}"
+
+# ---- 外部 Skill 仓库(可选,交互式 CLI 安装)----
+# skill_repositories:
+#   - name: "ascend-community"
+#     url: "https://gitcode.com/ascend/agent-skills"
+
+# ---- 本地模式(可选)----
+# local:
+#   workspace: "./workspace"
+#   skills_path: "~/.ascend_op_agent/skills"
+
+# ---- Embedding(记忆系统用,可选,详见 docs/modules/memory.md)----
+# embedding:
+#   model: "${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v3}"
+
+# ---- 向量存储(记忆系统用,可选)----
+# vector_store:
+#   persist_dir: "${VECTOR_STORE_DIR:-~/.ascend_op_agent/vector_db}"

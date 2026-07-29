@@ -18,7 +18,9 @@ limitations under the License.
 
 ## 概述
 
-ACP (Agent Code Protocol) 编辑器适配器允许 Ascend Op Agent 与主流 IDE（VS Code、Zed、JetBrains）集成。
+ACP (Agent Client Protocol) 编辑器适配器使 Ascend Op Agent 可作为 VS Code、Zed、
+JetBrains 等编辑器的 AI 后端运行。通过 stdio 进行 JSON-RPC 2.0 通信，复用
+`backend/rpc/protocol.py` 的 JSONRPCProtocol 实现。
 
 ## 支持的 IDE
 
@@ -26,94 +28,111 @@ ACP (Agent Code Protocol) 编辑器适配器允许 Ascend Op Agent 与主流 IDE
 |-----|------|----------|
 | VS Code | ✅ 已支持 | JSON-RPC via stdio |
 | Zed | ✅ 已支持 | JSON-RPC via stdio |
-| JetBrains | 🔄 开发中 | JSON-RPC via stdio |
+| JetBrains | ✅ 已支持 | JSON-RPC via stdio |
 
 ## 架构
 
 ```mermaid
 graph TB
     subgraph IDE["IDE"]
-        A[VS Code] --> B[Zed]
-        B --> C[JetBrains]
+        A[VS Code / Zed / JetBrains]
     end
 
-    subgraph ACP["ACP 适配器"]
-        D[ACPAdapter] --> E[ACPProtocol]
-        D --> F[ACPSession]
+    subgraph ACP["ACP 适配器 acp/"]
+        B[ACPAdapter]
+        C[ACPProtocol]
+        D[SessionManager]
+        E[ACPSession]
     end
 
-    A --> D
+    subgraph Core["Agent 核心"]
+        F[agent_runner 回调]
+        G[ToolRegistry]
+    end
+
+    A -->|stdio JSON-RPC| B
+    B --> C
     B --> D
-    C --> D
+    D --> E
+    B --> F
+    B --> G
 ```
 
 ## 核心组件
 
 ### ACPAdapter
 
+整合协议处理、会话管理和工具路由的主类：
+
 ```python
-from ascend_op_agent.acp.adapter import ACPAdapter
+from ascend_op_agent.acp import ACPAdapter
 
 adapter = ACPAdapter(
-    editor="vscode",  # vscode, zed, jetbrains
-    workspace_root="/path/to/workspace"
+    agent_runner=lambda user_input: agent.run(user_input),  # Agent 运行回调
+    tool_registry=tool_registry,        # 工具注册表（可选）
+    session_timeout=30 * 60,           # 会话超时（秒），默认 30 分钟
 )
 
-# 初始化
-await adapter.initialize()
-
-# 处理请求
-response = await adapter.handle_request(request)
+# 运行 stdio 循环（阻塞，读取 stdin 处理消息）
+await adapter.run()
 
 # 关闭
-await adapter.shutdown()
+adapter.shutdown()
 ```
+
+主要方法：
+- `handle_message(raw_message)` -- 处理收到的 JSON-RPC 消息字符串
+- `send_notification(method, params)` -- 向编辑器发送通知
+- `run()` -- 启动 stdio 主循环（async）
+- `shutdown()` -- 关闭适配器
+
+输出通过 `asyncio.Lock` 串行化，避免并发消息交错。
 
 ### ACPProtocol
 
-```python
-from ascend_op_agent.acp.protocol import ACPProtocol, ACPRequest, ACPResponse
-
-# 创建请求
-request = ACPRequest(
-    method="initialize",
-    params={
-        "editor": "vscode",
-        "workspace": "/path/to/workspace",
-        "capabilities": ["inline-completion", "diagnostics"]
-    }
-)
-
-# 发送请求
-response = await adapter.send_request(request)
-```
-
-### ACPSession
+ACP 1.0 协议处理器，扩展 JSON-RPC 2.0：
 
 ```python
-from ascend_op_agent.acp.session import ACPSession
+from ascend_op_agent.acp.protocol import ACPProtocol
 
-session = ACPSession(
-    adapter=adapter,
-    session_id="session-123"
-)
-
-# 开始会话
-await session.start()
-
-# 发送消息
-await session.send("hello")
-
-# 接收消息
-message = await session.receive()
-
-# 结束会话
-await session.end()
+protocol = ACPProtocol()
+request, notification = protocol.parse_message(raw_json)  # 解析消息
+protocol.validate_method("agent.run")                     # 校验方法白名单
+protocol.validate_params("agent.run", {"user_input": "..."})  # 校验参数
+response = protocol.build_success_response(id=1, result={...})
+error = protocol.build_error_response(id=1, code=-32601, message="method not found")
+notif = protocol.build_notification("notifications/status", {"status": "running"})
 ```
+
+### ACPSession / SessionManager
+
+`ACPSession` 是会话数据对象，`SessionManager` 管理会话生命周期与超时清理：
+
+```python
+from ascend_op_agent.acp import SessionManager, ACPSession
+
+manager = SessionManager(timeout_seconds=30 * 60)
+session = manager.create_session(session_id="sess-1", editor_info={"name": "vscode"})
+manager.update_session(session.session_id)   # 更新最后活动时间
+expired = session.is_expired(timeout_seconds=30 * 60)
+manager.cleanup_expired()                     # 清理超时会话
+```
+
+`ACPSession` 字段：`session_id` / `editor_info` / `created_at` / `last_activity` /
+`context` / `capabilities`。
 
 ## 协议方法
 
-### 初始化
+| 方法 | 方向 | 参数 | 说明 |
+|------|------|------|------|
+| `initialize` | Editor -> Agent | `clientInfo`, `capabilities` | 初始化会话，传递客户端能力 |
+| `agent.run` | Editor -> Agent | `user_input` | 运行 Agent 对话 |
+| `agent.compose` | Editor -> Agent | `messages` | 发送组合消息 |
+| `tools/list` | Editor -> Agent | - | 列出可用工具 |
+| `tools/call` | Editor -> Agent | `name`, `args` | 调用工具 |
+| `notifications/status` | Agent -> Editor | `status`, `message` | 推送状态更新 |
+
+### initialize 请求/响应
 
 ```json
 // 请求
@@ -121,9 +140,8 @@ await session.end()
     "jsonrpc": "2.0",
     "method": "initialize",
     "params": {
-        "editor": "vscode",
-        "workspace": "/path/to/workspace",
-        "capabilities": ["inline-completion"]
+        "clientInfo": {"name": "vscode", "version": "1.0.0"},
+        "capabilities": ["inline-completion", "diagnostics"]
     },
     "id": 1
 }
@@ -132,47 +150,36 @@ await session.end()
 {
     "jsonrpc": "2.0",
     "result": {
-        "status": "initialized",
-        "agent_version": "0.1.0"
+        "protocolVersion": "1.0",
+        "capabilities": {"agentRun": true, "tools": true},
+        "serverInfo": {"name": "ascend-op-agent-acp", "version": "1.0.0"}
     },
     "id": 1
 }
 ```
 
-### 推理请求
+### agent.run 请求
 
 ```json
-// 请求
 {
     "jsonrpc": "2.0",
-    "method": "推理",
+    "method": "agent.run",
     "params": {
-        "prompt": "实现一个 MatMul 算子",
-        "context": {}
+        "user_input": "实现一个 MatMul 算子"
     },
     "id": 2
 }
 ```
 
-### 工具调用
+### tools/call 请求
 
 ```json
-// 请求
 {
     "jsonrpc": "2.0",
-    "method": "invoke_tool",
+    "method": "tools/call",
     "params": {
         "name": "bash",
         "args": {"command": "ls -la"}
-    },
-    "id": 3
-}
-
-// 响应
-{
-    "jsonrpc": "2.0",
-    "result": {
-        "output": "total 64\ndrwxr-xr-x  5 user staff  160 May  4 20:15 .\n..."
     },
     "id": 3
 }
@@ -180,72 +187,53 @@ await session.end()
 
 ## 使用示例
 
+### 启动 ACP 服务
+
+ACP 适配器通过 stdio 与编辑器通信，由 IDE 扩展拉起 Agent 进程：
+
+```bash
+# IDE 扩展启动时拉起 Agent（stdio 模式）
+ascend-op-agent acp --stdio
+```
+
 ### VS Code 集成
 
 1. 安装 VS Code 扩展
-2. 配置扩展连接到 Agent
+2. 配置扩展连接到 Agent：
 
 ```json
 {
     "acp.agentPath": "/path/to/ascend-op-agent",
-    "acp.server": "stdio"
+    "acp.transport": "stdio"
 }
 ```
 
-### Zed 集成
+### Zed / JetBrains 集成
 
-1. 安装 Zed 扩展
-2. 配置 `settings.json`
-
-```json
-{
-    "acp": {
-        "agentPath": "/path/to/ascend-op-agent"
-    }
-}
-```
-
-### JetBrains 集成
-
-1. 安装 IntelliJ/GoLand/... 插件
-2. 配置插件
-
-```properties
-acp.agent.path=/path/to/ascend-op-agent
-acp.communication.mode=stdio
-```
-
-## 延迟初始化
-
-ACP 适配器使用延迟初始化以避免启动时序问题：
-
-```python
-# 内部使用 asyncio.Lock
-async def _ensure_initialized(self):
-    async with self._init_lock:
-        if not self._initialized:
-            await self._do_initialize()
-```
+配置扩展指向 `ascend-op-agent acp --stdio`，通过 stdio 交换 JSON-RPC 消息。
 
 ## 错误处理
 
-```python
-from ascend_op_agent.acp.adapter import ACPError
+协议层返回标准 JSON-RPC 错误响应：
 
-try:
-    await adapter.handle_request(request)
-except ACPError as e:
-    print(f"ACP 错误: {e.code} - {e.message}")
-except Exception as e:
-    print(f"未知错误: {e}")
+```python
+# 方法不在白名单
+response = protocol.build_error_response(id, code=-32601, message="method not found")
+
+# 参数校验失败（agent.run 缺 user_input）
+response = protocol.build_error_response(id, code=-32602, message="invalid params")
 ```
+
+`ACPAdapter.handle_message` 内部捕获解析异常并记录日志，不中断主循环。
 
 ## 配置
 
-```yaml
-acp:
-  editor: "vscode"  # vscode, zed, jetbrains
-  workspace: "/path/to/workspace"
-  timeout: 300  # 请求超时（秒）
-  retry: 3       # 重试次数
+ACP 适配器无独立配置文件，通过构造参数控制：
+
+```python
+adapter = ACPAdapter(
+    agent_runner=agent_runner,
+    tool_registry=tool_registry,
+    session_timeout=30 * 60,  # 会话超时（秒）
+)
 ```

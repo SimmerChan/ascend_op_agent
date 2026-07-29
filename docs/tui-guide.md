@@ -37,12 +37,26 @@ ascend-op-agent run
 
 ## 状态说明
 
-| 状态 | 说明 |
-|------|------|
-| 就绪 | 等待用户输入 |
-| 推理中 | Agent 正在处理请求 |
-| 等待确认 | 需要用户确认方案 |
-| 完成 | 对话完成，可开始新对话 |
+| 状态 | 内部名 | 说明 |
+|------|--------|------|
+| 就绪 | `idle` | 等待用户输入（`backend.ready` 通知后进入） |
+| 推理中 | `running` | Agent 正在处理请求（LLM 推理 / 工具调用） |
+| 等待确认 | `waiting_confirm` | HITL 中断，需要用户确认方案（design / delivery_mode） |
+| 完成 | `completed` | 对话完成，可开始新对话 |
+| 出错 | `error` | 执行出错（`agent.error` 通知） |
+
+## 通知协议
+
+前端通过 stdin/stdout JSON-RPC 2.0 接收后端通知（`frontend/src/hooks/useRPC.ts`）：
+
+| 通知方法 | 触发时机 | payload 关键字段 |
+|---------|---------|-----------------|
+| `backend.ready` | 后端就绪 | - |
+| `agent.progress` | LLM 状态变化 / 工具执行 / stream delta | `stage`: `thinking` / `idle` / `completed` / `waiting` / `tool_executing`；`delta`（streaming 文本增量，由 `_DeltaBatcher` 节流合并） |
+| `orchestrator.progress` | PhaseRunner 节点生命周期 | `phase`: 节点名；`stage`: `phase_started` / `phase_completed` / `phase_failed` / `phase_interrupted` |
+| `agent.error` | 执行出错 | 错误信息 |
+
+> **stream delta 节流**：大 max_tokens（最高 256K）长生成会产生数千 token chunk，per-chunk 发 `agent.progress` 会洪水 stdout。`agent_service.py` 的 `_DeltaBatcher` 累积 chunk 按 0.1s 间隔合并成单个 `agent.progress{stage:thinking, delta}`，LLM call 结束（idle/completed）时 `finish()` flush 收尾。
 
 ## 故障排除
 
@@ -88,8 +102,8 @@ npm run build
 3. 防火墙是否阻止了本地进程通信
 
 ```bash
-# 调试模式启动
-ascend-op-agent run --debug
+# 后端日志输出到 stderr（默认 INFO，可在 config.yaml 的 logging 段调级别）
+ascend-op-agent run
 ```
 
 ## 工作流程
@@ -121,9 +135,10 @@ tui:
 
 ### 调试模式
 
+后端日志输出到 stderr，级别由 `config.yaml` 的 `logging` 段控制（默认 INFO）：
+
 ```bash
-# 启用详细日志
-ascend-op-agent run --debug --log-level trace
+ascend-op-agent run
 ```
 
 ## 常见问题

@@ -58,13 +58,25 @@ mcp:
   servers:
     - name: code-search
       type: stdio
-      command: npx /path/to/mcp-server
+      command: npx
+      args: ["/path/to/mcp-server"]
+      env:
+        KEY: "value"
 
     - name: remote-api
       type: http
       url: https://api.example.com/mcp
       headers:
         X-API-Key: "${REMOTE_API_KEY}"
+
+    - name: oauth-protected
+      type: http
+      url: https://api.example.com/oauth-mcp
+      oauth:
+        type: oauth
+        client_id: "${OAUTH_CLIENT_ID}"
+        client_secret: "${OAUTH_CLIENT_SECRET}"
+        token_url: https://api.example.com/oauth/token
 ```
 
 ## 核心组件
@@ -74,12 +86,20 @@ mcp:
 ```python
 from ascend_op_agent.mcp.server_config import MCPServerConfig, TransportType
 
+# 直接构造
 config = MCPServerConfig(
     name="code-search",
     type=TransportType.STDIO,
-    command="npx /path/to/server",
+    command="npx",
+    args=["/path/to/mcp-server"],  # 命令参数列表
     env={"KEY": "value"},
+    token="${MCP_TOKEN}",           # Bearer token（支持 ${ENV_VAR} 引用）
+    headers={"X-Custom": "value"},
+    oauth={"type": "oauth", "client_id": "...", "client_secret": "...", "token_url": "..."},
 )
+
+# 从字典构造（type 字符串自动转枚举）
+config = MCPServerConfig.from_dict({"name": "api", "type": "http", "url": "https://..."})
 ```
 
 ### MCPClient
@@ -185,9 +205,19 @@ config = MCPServerConfig(
 
 ### OAuth 令牌刷新
 
+OAuth token 自动缓存并在过期前 60 秒刷新（客户端凭证流）。手动清除缓存强制重新获取：
+
 ```python
 oauth = MCPOAuthManager(...)
-oauth.set_refresh_token("new-token")
+oauth.clear_token_cache()  # 清除缓存，下次 get_auth_header 重新获取 token
+```
+
+若使用环境变量 token（非 OAuth），设置对应环境变量即可：
+
+```bash
+export MCP_TOKEN_<SERVER_NAME>=new-token
+# 或
+export OAUTH_TOKEN_<SERVER_NAME>=new-token
 ```
 
 ### stdio 通信问题

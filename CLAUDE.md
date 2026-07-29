@@ -388,8 +388,8 @@ llm:
 ## 调试
 
 ```bash
-# 查看详细日志
-ascend-op-agent run --debug
+# 查看后端日志（输出到 stderr，级别由 config.yaml 的 logging 段控制，默认 INFO）
+ascend-op-agent run
 
 # TUI 前端卡住时检查后端进程
 ps aux | grep ascend_op_agent

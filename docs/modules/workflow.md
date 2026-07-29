@@ -18,298 +18,254 @@ limitations under the License.
 
 ## 概述
 
-工作流引擎实现六阶段算子开发流程（Phase0-5），支持自动化算子开发、编译验证和精度评估。
+工作流引擎由 **自研轻量状态机编排器**（`ascend_op_agent.orchestrator`）实现，无 LangGraph
+依赖。它驱动算子开发的三条路径（A/B/C），消费 cannbot-skills 作知识层，并提供 checkpoint
+持久化、HITL 暂停/恢复、崩溃恢复和 910B 真编译/精度验证能力。
+
+> **迁移说明**：旧的 `ascend_op_agent.workflow.engine` / `phases` / `adapters`（Phase0-8 六阶段）
+> 已被识别为死代码并移除。`workflow/` 目录现在只保留数据契约（`models.py` / `compiler.py` /
+> `performance.py`）。所有编排能力由 `orchestrator/` 提供。
+
+## 三条路径
+
+| 路径 | 说明 | 入口 | 状态 |
+|------|------|------|------|
+| **A** | 模型级选择性批量迁移 | `build_migration_graph`（规划中） | P2 规划中 |
+| **B** | 单算子迁移（CUDA / Triton -> Ascend C） | `build_migration_graph(source_type=...)` | P0 ✅ |
+| **C** | 单算子全新开发 | `build_new_dev_graph` | P0 ✅ |
+
+路径 B/C 共享后端节点（design / codegen / review_fix / compile / precision / delivery）。
 
 ## 架构
 
 ```mermaid
 graph TB
-    subgraph Workflow["工作流引擎"]
-        A[OperatorWorkflow] --> B[Phase 0-5]
-        B --> C[Phase 7: Skill]
-        B --> D[Phase 8: Perf]
+    subgraph Orchestrator["自研编排器 orchestrator/"]
+        PR[PhaseRunner 顺序状态机]
+        CS[CheckpointStore SQLite v2]
+        NE[NpuExecutor SSH->910B]
+        FL[fix_loop review-fix 闭环]
+        CL[cannbot_loader 知识层]
     end
 
-    subgraph Phases["阶段"]
-        E[Phase0 初始化]
-        F[Phase1 需求分析]
-        G[Phase2 方案设计]
-        H[Phase3 代码生成]
-        I[Phase4 编译验证]
-        J[Phase5 精度评估]
+    subgraph Graphs["图定义 graphs/"]
+        ND[new_dev.py 路径 C]
+        MG[migration.py 路径 B]
     end
 
-    A --> E
-    E --> F
-    F --> G
-    G --> H
-    H --> I
-    I --> J
+    PR --> CS
+    PR --> NE
+    PR --> FL
+    PR --> CL
+    ND --> PR
+    MG --> PR
 ```
 
-## 阶段说明
+## 节点流（Path-C 新开发）
 
-### Phase 0: 初始化
+`build_new_dev_graph` 构造的节点顺序（LLM 节点 + 确定性节点 + HITL）：
 
-环境检测和设置：
-
-```python
-from ascend_op_agent.workflow.phases import Phase0
-
-phase = Phase0(workflow_context)
-result = await phase.execute()
-# result = {"status": "ready", "environment": {...}}
+```
+entry -> analyze -> design(HITL) -> codegen_scaffold ->
+codegen_kernel -> codegen_host -> codegen_proto ->
+review_fix -> compile -> precision -> delivery_mode(HITL) -> framework_adapt -> done
 ```
 
-### Phase 1: 需求分析
+- `analyze` / `design` / `codegen_*` / `review_fix`：LLM 节点（`make_llm_node` / `make_hitl_llm_node`，`no_tools=True`）
+- `codegen_scaffold`：确定性节点，内联 `add_example` 构建参考工程（CANN 环境配置）
+- `design` / `delivery_mode`：HITL 节点，通过 `__interrupt__` 暂停等待用户确认
+- `compile` / `precision`：可注入 `fix_loop` 包装节点（review -> fix -> re-review 闭环）；无注入时用占位节点
 
-自动分析算子需求：
+## 节点流（Path-B 迁移）
 
-```python
-from ascend_op_agent.workflow.phases import Phase1
+`build_migration_graph(source_type="cuda"|"triton")` 构造的节点顺序：
 
-phase = Phase1(workflow_context)
-result = await phase.execute({
-    "requirement": "实现一个 1024x1024 的 MatMul 算子"
-})
-# result = {"analysis": {...}, "spec": {...}}
+```
+entry -> cuda_frontend|triton_frontend -> design(HITL) ->
+codegen -> review_fix -> compile -> precision -> delivery_mode -> framework_adapt -> done
 ```
 
-### Phase 2: 方案设计
-
-架构和 tiling 策略设计（需用户确认）：
-
-```python
-from ascend_op_agent.workflow.phases import Phase2
-
-phase = Phase2(workflow_context)
-design = await phase.execute({"spec": spec})
-
-# 等待用户确认
-user_approved = await phase.wait_confirmation()
-if user_approved:
-    await phase.proceed()
-```
-
-### Phase 3: 代码生成
-
-生成 AscendC/CATLASS/Triton 代码：
-
-```python
-from ascend_op_agent.workflow.phases import Phase3
-
-phase = Phase3(workflow_context)
-result = await phase.execute({
-    "design": design,
-    "language": "ascendc"  # ascendc, catlass, triton
-})
-# result = {"files": {...}, "code": {...}}
-```
-
-### Phase 4: 编译验证
-
-自动编译和修复错误：
-
-```python
-from ascend_op_agent.workflow.phases import Phase4
-
-phase = Phase4(workflow_context)
-result = await phase.execute({
-    "code": code,
-    "max_attempts": 3  # 最多尝试3次
-})
-# result = {"status": "success", "build_log": "..."}
-```
-
-### Phase 5: 精度评估
-
-验证精度（≥30 测试用例）：
-
-```python
-from ascend_op_agent.workflow.phases import Phase5
-
-phase = Phase5(workflow_context)
-result = await phase.execute({
-    "kernel": kernel,
-    "test_cases": 30  # 最小30个用例
-})
-# result = {"accuracy": 0.9999, "passed": 30, "failed": 0}
-```
-
-### Phase 7: Skill 保存
-
-保存经验到知识库：
-
-```python
-from ascend_op_agent.workflow.phills import Phase7
-
-phase = Phase7(workflow_context)
-result = await phase.execute({
-    "skill_name": "matmul-optimized",
-    "tags": ["matmul", "performance"],
-    "auto": False  # 手动确认
-})
-```
-
-### Phase 8: 性能报告
-
-生成性能基准：
-
-```python
-from ascend_op_agent.workflow.phases import Phase8
-
-phase = Phase8(workflow_context)
-report = await phase.execute({
-    "kernel": kernel,
-    "benchmarks": ["throughput", "latency"]
-})
-```
+前端节点解析 CUDA/Triton 源码产 OpInfo（`migration_strategy`），后续节点与 Path-C 共享设计。
 
 ## 核心组件
 
-### OperatorWorkflow
+### PhaseRunner
+
+顺序 DAG 状态机。每个节点是 `Callable[[OpState], dict]`，返回 update dict。
 
 ```python
-from ascend_op_agent.workflow.engine import OperatorWorkflow
+from ascend_op_agent.orchestrator import PhaseRunner, Node, CheckpointStore
 
-workflow = OperatorWorkflow(
-    mode="local",  # local, remote
-    workspace="./workspace"
+runner = PhaseRunner(
+    nodes=[Node("entry", entry_fn), Node("analyze", analyze_fn), ...],
+    store=CheckpointStore("~/.ascend_op_agent/checkpoints/ck.db"),
+    phase_callback=lambda phase, event, payload: print(phase, event),
 )
 
-# 执行完整工作流
-async for progress in workflow.run(requirement):
-    print(f"Phase {progress.phase}: {progress.status}")
+# 启动新 thread
+state = runner.invoke("实现一个 add 算子", thread_id="t1", task_type="develop")
 
-# 或分阶段执行
-await workflow.phase0()
-await workflow.phase1()
+# HITL 恢复 / 崩溃恢复
+state = runner.resume("t1", payload={"approved": True})
 ```
 
-### WorkflowEngine
+**reducer 规则**（`apply_update`）：
+- `messages` / `phase_history`：list append（累积，不覆盖）
+- `memory_pools` / `retry_counts`：dict merge
+- 其他字段：last-write-wins
+- 控制字段 `__interrupt__` / `__status__` 不进 OpState
+
+**控制字段**：
+- `__interrupt__: dict` —— 触发 HITL 暂停，payload 存 `pending_approvals`，status=waiting_confirm
+- `__status__: "done" | "failed"` —— 终止执行
+
+### OpState
+
+编排器状态（TypedDict），节点间传递的可序列化状态：
 
 ```python
-from ascend_op_agent.workflow.engine import WorkflowEngine
+from ascend_op_agent.orchestrator import OpState, initial_state
 
-engine = WorkflowEngine()
-
-# 添加阶段
-engine.add_phase(Phase0())
-engine.add_phase(Phase1())
-
-# 执行
-result = await engine.execute(context)
+state = initial_state("t1")
+# 字段：thread_id, op_info, design_doc, code_result, compile_result,
+#       precision_report, delivery_mode, messages, memory_pools,
+#       phase_history, retry_counts, current_phase, pending_confirmation, task_type
 ```
 
-### WorkflowContext
+dataclass（OpInfo/DesignDoc/...）以 **dict** 形式嵌入（JSON 可序列化进 checkpoint）。
+`messages` 与 `AIAgent._conversation_history` 同形，rehydrate 时零转换。
+
+### CheckpointStore
+
+SQLite 单文件持久化（3 表 + WAL + v1->v2 迁移）：
 
 ```python
-from ascend_op_agent.workflow.models import WorkflowContext
+from ascend_op_agent.orchestrator import CheckpointStore, STATUS_WAITING_CONFIRM
 
-context = WorkflowContext(
-    requirement="MatMul 算子",
-    mode="local",
-    workspace="./workspace"
+store = CheckpointStore("~/.ascend_op_agent/checkpoints/ck.db")
+store.save("t1", state, current_phase="design", status="running")
+state = store.load("t1")
+store.mark_waiting("t1", "design", {"options": ["approve", "reject"]})
+pending = store.consume_pending("t1")  # 读 payload + 删除 + status 回 running
+```
+
+**3 表**：
+- `checkpoints` —— thread 级状态（`skill_loads_json` generated column + `schema_version`）
+- `artifacts` —— 大对象索引（sha256 幂等 gate）
+- `pending_approvals` —— HITL 暂存
+
+**特性**：
+- WAL + `BEGIN IMMEDIATE` + `busy_timeout=30000` 防跨进程 SQLITE_BUSY
+- v1->v2 forward migration（启动期原子 ALTER）+ v2->v1 rollback（备份恢复）
+- 坏 row quarantine（LRU cap 100）
+- `list_pending()` / `list_all_threads()` 供 task 层聚合
+
+### NpuExecutor
+
+封装 CANN 工具链调用（compile + numpy diff 精度验证）：
+
+```python
+from ascend_op_agent.orchestrator import NpuExecutor
+
+executor = NpuExecutor(
+    ssh_env=ssh_env,
+    remote_env_setup="source /usr/local/Ascend/ascend-toolkit/set_env.sh && ",
+    container_name="ops_pt",  # 自动包装 docker exec ops_pt bash -c "..."
 )
-
-# 存储数据
-context.set("phase0_result", result)
-context.get("phase0_result")
+result = executor.compile(operator_path="/home/hsl/ops_agent/op_add", soc_version="Ascend910B3")
+# CompileOutcome(success, command, stdout, stderr, return_code, operator_path, soc_version)
 ```
 
-## 数据模型
+**910B 容器拓扑**：`ssh root@192.168.9.105 -> docker exec ops_pt -> CANN 9.1.0`。
+`container_name` 非空时远程命令自动包装 `docker exec <container> bash -c "..."`。
 
-### WorkflowContext
+**编译成功判定**（`_is_compile_success`）：build.sh 末尾 `[ERROR] Package not found or empty`
+是已知 false negative（return_code=1 但 `.run` 产物已生成）。检测 stdout 含
+`successfully created` + `.run` -> 标 success=True。
 
-```python
-@dataclass
-class WorkflowContext:
-    requirement: str
-    mode: str  # "local" | "remote"
-    workspace: Path
+### fix_loop
 
-    # 阶段结果
-    phase_results: dict[str, Any]
-
-    # 用户确认状态
-    confirmations: dict[str, bool]
-```
-
-### PhaseResult
+闭环修复控制器（review -> fix -> re-review）：
 
 ```python
-@dataclass
-class PhaseResult:
-    phase: str
-    status: str  # "success" | "failed" | "pending"
-    data: dict[str, Any]
-    error: Optional[str]
-```
+from ascend_op_agent.orchestrator import run_fix_loop, make_fix_loop_node, ReviewResult
 
-## 工作流适配器
-
-### CompilerAdapter
-
-```python
-from ascend_op_agent.workflow.adapters import CompilerAdapter
-
-compiler = CompilerAdapter(workspace)
-
-# 编译
-result = await compiler.compile(
-    source="kernel.cu",
-    target="ascend",
-    options=["-O3", "-std=c++17"]
+result = run_fix_loop(
+    state=state,
+    kind="compile",  # "compile" / "precision"
+    review_func=review_func,  # callable(state) -> ReviewResult
+    fix_func=fix_func,        # callable(state, issues) -> update dict
+    max_rounds=5,
 )
+# {"status": "done"|"failed", "rounds": int, "clean": bool, "reason": "clean"|"fatal"|"max_rounds"}
 ```
 
-### PerformanceAdapter
+停止条件：review clean / fatal 不可修复信号 / max_rounds 用完。
+`compress_transcript(messages, keep_last_n=4)` 压缩跨轮对话（首条 + 最近 N + 中间摘要）。
+
+### cannbot_loader（知识层）
+
+消费华为官方 cannbot-skills（`vendor/cannbot-skills` submodule）作知识层：
 
 ```python
-from ascend_op_agent.workflow.adapters import PerformanceAdapter
+from ascend_op_agent.orchestrator import build_skill_bundle, render_skill_bundle_text, SKILL_BUNDLES
 
-perf = PerformanceAdapter(workspace)
-
-# 性能测试
-result = await perf.benchmark(
-    kernel="matmul",
-    input_shape=[1024, 1024],
-    warmup=10,
-    iterations=100
-)
+# 按 (graph, phase) 查决策表加载 skill bundle
+skills = build_skill_bundle(phase="codegen", graph="new_dev")
+text = render_skill_bundle_text(skills, phase="codegen", inline_build_template=True)
+# text 注入 PromptBuilder Layer 6 作为该阶段 cannbot 知识上下文
 ```
+
+`SKILL_BUNDLES` 决策表映射 `(graph, phase) -> [skill 路径]`，例如：
+- `("new_dev", "codegen")` -> `ascendc-direct-invoke-template` + `ascendc-simt-best-practices`
+- `("migration", "cuda_frontend")` -> `cuda2ascend-simt`
+
+`SkillUsageRegistry`（单例）记录每阶段加载/使用的 skill 名（signal-1 跟踪）。
+
+## HITL 与恢复
+
+### HITL 暂停
+
+节点返回 `{"__interrupt__": payload}` 触发暂停：
+1. PhaseRunner 把 payload 写 `state["pending_confirmation"]`
+2. `CheckpointStore.mark_waiting` 存 `pending_approvals` + status=waiting_confirm
+3. `resume(thread_id, payload)` 时注入 `pending_confirmation` 并重跑当前节点
+
+### 崩溃恢复
+
+- `resume(thread_id)` 无 pending -> 从 current_phase 的下一节点续跑（当前节点已落盘）
+- `resume(thread_id)` 有 pending -> HITL 恢复，重跑当前节点
+
+## 数据契约（workflow/ 模块）
+
+`workflow/` 目录保留 3 个数据契约职责（旧 engine/phases/adapters 已移除）：
+
+- `models.py` —— OpInfo / DesignDoc / CodeGenResult / CompileResult / PrecisionReport / PhaseResult 等 dataclass + serde
+- `compiler.py` —— `cann_compile` subprocess 封装（确定性编译）
+- `performance.py` —— `torch_npu.profiler` 性能采集
 
 ## 配置
 
 ```yaml
-workflow:
-  mode: "local"  # local, remote
+# ~/.ascend_op_agent/config.yaml
+checkpoint:
+  db_path: "~/.ascend_op_agent/checkpoints/ck.db"
 
-  workspace: "./workspace"
-
-  phases:
-    phase2:
-      auto_confirm: false  # 需要用户确认
-    phase4:
-      max_attempts: 3
-    phase5:
-      min_test_cases: 30
+remote:
+  host: "192.168.9.105"
+  user: "root"
+  container_name: "ops_pt"        # 910B 容器拓扑
+  cann_setup: "source /usr/local/Ascend/ascend-toolkit/set_env.sh && "
 ```
 
-## 事件和回调
+## 事件回调
 
 ```python
-workflow = OperatorWorkflow(...)
+def phase_callback(phase: str, event: str, payload: dict) -> None:
+    # event: "started" | "completed" | "interrupted" | "failed"
+    print(f"[{phase}] {event} {payload}")
 
-# 阶段开始
-workflow.on_phase_start += lambda phase: print(f"开始 {phase}")
-
-# 阶段完成
-workflow.on_phase_complete += lambda phase, result: print(f"完成 {phase}")
-
-# 错误
-workflow.on_error += lambda phase, error: print(f"错误 {phase}: {error}")
-
-# 全部完成
-workflow.on_complete += lambda: print("工作流完成")
+runner = PhaseRunner(nodes=..., store=store, phase_callback=phase_callback)
 ```
+
+backend 层（`AgentAsyncWrapper`）注入回调，转发为 `agent.progress` JSON-RPC 通知给前端。

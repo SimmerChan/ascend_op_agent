@@ -50,7 +50,7 @@ cd frontend && npm install && cd ..
 
 ```bash
 # 复制配置示例文件
-cp config.yaml.example config.yaml
+cp config.example.yaml config.yaml
 mkdir -p ~/.ascend_op_agent
 cp .env.example ~/.ascend_op_agent/.env
 
