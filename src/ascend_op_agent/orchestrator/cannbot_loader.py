@@ -628,8 +628,17 @@ def load_build_scaffold(op_snake: str, op_pascal: str) -> dict[str, str]:
         "op_kernel/CMakeLists.txt",
         "op_graph/CMakeLists.txt",
     )
+    # ST 驱动模板(tests/st/):参数化注入,LLM codegen_st 节点改 ComputeGolden 语义。
+    # 解决 precision 验证对象错(原测 scaffold 的 add_example 非 LLM 生成的 op_add) +
+    # scaffold 残留(.run 含两套 kernel)。参数化覆盖 aclnnAddExample->aclnn{OpPascal} /
+    # aclnn_add_example.h->aclnn_{op}.h / test_aclnn_add_example->test_aclnn_{op}。
+    _ST_FILES = (
+        "tests/st/test_aclnn_add_example.cpp",
+        "tests/st/CMakeLists.txt",
+        "tests/st/run.sh",
+    )
     out: dict[str, str] = {}
-    for rel in _BUILD_FILES:
+    for rel in _BUILD_FILES + _ST_FILES:
         fpath = add_example_dir / rel
         if not fpath.is_file():
             logging.warning("load_build_scaffold: missing %s", fpath)
@@ -640,10 +649,28 @@ def load_build_scaffold(op_snake: str, op_pascal: str) -> dict[str, str]:
         content = content.replace("add_example_op_prj", f"{op_snake}_op_prj")
         content = content.replace("AddExample", op_pascal)
         content = content.replace("add_example", op_snake)
+        if rel == "build.sh":
+            # 修复包名检测:build.sh 硬编码 custom_opp_ubuntu_aarch64.run,但 910B 容器
+            # 是 almalinux,CPack 生成 custom_opp_almalinux_aarch64.run -> 文件名不匹配
+            # -> [ERROR] Package not found or empty -> exit 1 false negative。
+            # 改为通配符 find,适配任意 distro 的 .run 产物。
+            content = content.replace(
+                'PKG_PATH="${BUILD_PATH}/custom_opp_ubuntu_aarch64.run"',
+                'PKG_PATH=$(find ${BUILD_PATH} -maxdepth 1 -name "custom_opp_*.run" | head -1)',
+            )
+        if rel == "tests/st/run.sh":
+            # run.sh install 段(COMPILE_OPERATOR 可选路径)也有 ubuntu 包名;
+            # 910B 容器是 almalinux(run_st_driver 不走 run.sh,但交付件规范对齐)
+            content = content.replace(
+                "./custom_opp_ubuntu_aarch64.run",
+                "./custom_opp_almalinux_aarch64.run",
+            )
         if rel == "op_host/CMakeLists.txt":
             # 方向 B 不注入 op_api/(aclnn),移除 cust_opapi library 段避免 No SOURCES
             content = _strip_opapi_section(content)
-        out[rel] = content
+        # relpath 参数化文件名(test_aclnn_add_example.cpp -> test_aclnn_{op}.cpp),
+        # 与 run_st_driver 找 test_aclnn_{op_name} 二进制 + tests/st/CMakeLists 引用一致
+        out[rel.replace("add_example", op_snake)] = content
     return out
 
 

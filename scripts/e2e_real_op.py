@@ -277,8 +277,12 @@ def _rsync_to_npu(local_dir: str, remote_dir: str) -> None:
     1. 容器内 tar 接收端:`docker exec ... tar -xf - -C <remote_dir>`
     2. 本地 tar 发送端:`tar -cf - -C <local_dir> . | ssh ... docker exec -i ops_pt tar -xf - -C <remote_dir>`
     """
-    # 先确保远程目录存在
+    # 先清远程目录(避免历史残留:旧 add_example 语义文件 + 旧 ST 驱动混入 .run package,
+    # 致 .run 含 add_example + op_add 两套 kernel)。rm -rf 整个 remote_dir 后 mkdir 重建,
+    # 确保 .run 只含本次 LLM 生成的 op_add。
     ssh = f"ssh -o StrictHostKeyChecking=no root@{NPU_HOST}"
+    clean_cmd = f"{ssh} 'docker exec {NPU_CONTAINER} rm -rf {remote_dir}'"
+    os.system(clean_cmd)
     mkdir_cmd = f"{ssh} 'docker exec {NPU_CONTAINER} mkdir -p {remote_dir}'"
     os.system(mkdir_cmd)
     # tar 流式传输
@@ -579,7 +583,7 @@ def _do_one_run(
     # 3. graph
     agent_factory = make_real_agent_factory()
     operator_path_resolver = make_operator_path_resolver(NPU_REMOTE_WORKDIR)
-    operator_name_resolver = lambda s: (s.get("op_info") or {}).get("name", "add_example")
+    operator_name_resolver = lambda s: (s.get("op_info") or {}).get("name", "op_add")
     test_cases_resolver = make_test_cases_resolver()
     phase_cb = make_phase_callback("orchestrator")
 

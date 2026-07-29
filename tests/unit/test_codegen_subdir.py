@@ -18,8 +18,8 @@ from ascend_op_agent.orchestrator.graphs.new_dev import build_new_dev_graph
 # ---- _scaffold_inject_node 注入 5 构建文件 ----
 
 
-def test_scaffold_inject_node_loads_5_build_files(tmp_path, monkeypatch):
-    """_scaffold_inject_node 从 load_build_scaffold 注入 5 构建文件到 code_result.files(子目录)。"""
+def test_scaffold_inject_node_loads_8_files_parameterized(tmp_path, monkeypatch):
+    """_scaffold_inject_node 从 load_build_scaffold 注入 5 构建 + 3 ST 模板到 code_result.files(子目录)。"""
     # 用 build_new_dev_graph 构造图,取 codegen_scaffold 节点
     from ascend_op_agent.orchestrator import CheckpointStore
     from dataclasses import dataclass
@@ -51,7 +51,7 @@ def test_scaffold_inject_node_loads_5_build_files(tmp_path, monkeypatch):
     # 跑 scaffold 节点(它会写 /tmp/e2e_ops_local/op_add,测试后清理)
     update = scaffold_node.func(state)
     files = update["code_result"]["files"]
-    # 5 构建文件
+    # 5 构建 + 3 ST 模板(ST 文件名参数化 test_aclnn_op_add.cpp)
     rels = {str(Path(f["path"]).relative_to("/tmp/e2e_ops_local/op_add")) for f in files}
     expected = {
         "CMakeLists.txt",
@@ -59,6 +59,9 @@ def test_scaffold_inject_node_loads_5_build_files(tmp_path, monkeypatch):
         "op_host/CMakeLists.txt",
         "op_kernel/CMakeLists.txt",
         "op_graph/CMakeLists.txt",
+        "tests/st/test_aclnn_op_add.cpp",
+        "tests/st/CMakeLists.txt",
+        "tests/st/run.sh",
     }
     assert rels == expected, f"实际 rels: {rels}"
     # tool 标记

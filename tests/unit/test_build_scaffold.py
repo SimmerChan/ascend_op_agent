@@ -12,15 +12,18 @@ from ascend_op_agent.orchestrator.cannbot_loader import load_build_scaffold
 # ---- 5 文件 + 参数化无残留 ----
 
 
-def test_load_build_scaffold_returns_5_files_parameterized():
+def test_load_build_scaffold_returns_8_files_parameterized():
     out = load_build_scaffold("op_add", "OpAdd")
-    # 5 个构建文件
+    # 5 构建文件 + 3 ST 驱动模板(tests/st/test_aclnn_op_add.cpp 文件名参数化)
     expected = {
         "CMakeLists.txt",
         "build.sh",
         "op_host/CMakeLists.txt",
         "op_kernel/CMakeLists.txt",
         "op_graph/CMakeLists.txt",
+        "tests/st/test_aclnn_op_add.cpp",
+        "tests/st/CMakeLists.txt",
+        "tests/st/run.sh",
     }
     assert set(out.keys()) == expected, f"实际 keys: {set(out.keys())}"
 
@@ -117,3 +120,45 @@ def test_load_build_scaffold_different_op_names():
     kernel_cmake = out["op_kernel/CMakeLists.txt"]
     assert "Matmul" in kernel_cmake
     assert "AddExample" not in kernel_cmake
+
+
+# ---- ST 驱动模板参数化 + build.sh/run.sh 包名修复 ----
+
+
+def test_st_template_parameterized_no_residual():
+    """tests/st/test_aclnn_op_add.cpp 参数化:aclnnAddExample->aclnnOpAdd /
+    aclnn_add_example.h->aclnn_op_add.h / 文件名 test_aclnn_op_add / 无残留。"""
+    out = load_build_scaffold("op_add", "OpAdd")
+    st_cpp = out["tests/st/test_aclnn_op_add.cpp"]
+    assert "aclnnOpAdd" in st_cpp, "API 名应参数化 aclnnAddExample->aclnnOpAdd"
+    assert "aclnn_op_add.h" in st_cpp, "header 应参数化 aclnn_add_example.h->aclnn_op_add.h"
+    assert "add_example" not in st_cpp, f"ST cpp 残留 add_example"
+    assert "AddExample" not in st_cpp, f"ST cpp 残留 AddExample"
+    # ComputeGolden 保留(LLM codegen_st 节点改算子语义;对 add 算子是 no-op)
+    assert "ComputeGolden" in st_cpp
+
+
+def test_st_cmakelists_references_op_add():
+    """tests/st/CMakeLists.txt 引用 test_aclnn_op_add + op_add_custom(参数化)。"""
+    out = load_build_scaffold("op_add", "OpAdd")
+    cmake = out["tests/st/CMakeLists.txt"]
+    assert "test_aclnn_op_add" in cmake
+    assert "aclnn_op_add.h" in cmake
+    assert "op_add_custom" in cmake
+    assert "add_example" not in cmake
+
+
+def test_build_sh_package_name_wildcard():
+    """build.sh 包名检测改通配符(原硬编码 ubuntu -> find custom_opp_*.run)。"""
+    out = load_build_scaffold("op_add", "OpAdd")
+    build_sh = out["build.sh"]
+    assert "custom_opp_ubuntu_aarch64.run" not in build_sh, "build.sh 残留 ubuntu 包名"
+    assert 'find ${BUILD_PATH} -maxdepth 1 -name "custom_opp_*.run"' in build_sh
+
+
+def test_run_sh_package_name_almalinux():
+    """tests/st/run.sh install 段包名改 almalinux(910B 容器)。"""
+    out = load_build_scaffold("op_add", "OpAdd")
+    run_sh = out["tests/st/run.sh"]
+    assert "./custom_opp_ubuntu_aarch64.run" not in run_sh, "run.sh 残留 ubuntu 包名"
+    assert "./custom_opp_almalinux_aarch64.run" in run_sh
