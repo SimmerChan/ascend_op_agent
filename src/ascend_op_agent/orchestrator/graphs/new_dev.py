@@ -145,7 +145,13 @@ def build_new_dev_graph(
             "用户需求:{user_input}\n\n"
             "输出格式:算子名称、描述、op_type、输入/输出 shape 与 dtype、"
             "migration_strategy=from_scratch。\n"
-            "本阶段只产 OpInfo,不写代码。"
+            "本阶段只产 OpInfo,不写代码。\n\n"
+            "【强制 —— 必须输出结构化 OP_INFO 块】\n"
+            "在响应末尾,完整包含一段:\n"
+            '<<OP_INFO>>{"name": "<snake_case>", "class_name": "<PascalCase>"}<<END>>\n'
+            "name 用 snake_case(vector_add / op_add / my_op),"
+            "class_name 用 PascalCase(VectorAdd / OpAdd / MyOp)。"
+            "后续 codegen 节点据此命名文件 / 类名,缺此块会让 codegen 编译失败。"
         ),
         skill_bundle_text=bundles.get("analyze"),
         skill_names=bundle_names.get("analyze"),

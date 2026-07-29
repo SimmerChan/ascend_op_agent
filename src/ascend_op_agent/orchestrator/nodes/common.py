@@ -1,5 +1,15 @@
 """make_llm_node —— LLM 节点工厂(实现 P0-2 共存契约)。
 
+U5 修复:LLM 命名飘移防御。任何 LLM 节点的 response 都会被解析:
+
+1. ``<<OP_INFO>>{json}<<END>>`` 结构化块 → 写 ``state["op_info"]``
+   (analyze 阶段产出,后续 codegen/compile 用)
+2. 路径以 ``op_host/`` ``op_kernel/`` ``op_graph/`` 开头的 markdown 提取
+   文件,若 LLM 用了非 ``state.op_info.name`` 的 snake_case 前缀(如
+   ``add_custom_def.cpp``),rename 到 ``{op_snake}_def.cpp``(防止
+   CMakeLists 引用 ``op_add_def.cpp`` 但 LLM 写了 ``add_custom_def.cpp``
+   → No rule to make target 编译失败)
+
 每个 LLM 节点封装一个 **fresh AIAgent**,按以下顺序工作:
 
 1. ``agent = agent_factory()`` —— 每节点新 AIAgent(``session_manager=None``,
@@ -33,6 +43,12 @@ from ascend_op_agent.orchestrator.state_machine import Node
 
 AgentFactory = Callable[[], Any]
 
+# LLM 命名飘移防御:识别 codegen 语义目录里的"其他 op 名"前缀。
+# 这些是 LLM hallucinate 出的真实失败案例(2026-07-29 e2e 暴露:
+# add_custom_def.cpp 残留 → CMakeLists 引 op_add_def.cpp 编译挂)。
+# 命中后 rename 到 state.op_info.name。
+_KNOWN_BAD_OP_PREFIXES = ("add_example", "add_custom", "AddExample", "AddCustom")
+
 
 def to_pascal(snake: str) -> str:
     """snake_case -> PascalCase('vector_add' -> 'VectorAdd','add' -> 'Add')。
@@ -40,6 +56,89 @@ def to_pascal(snake: str) -> str:
     U3 方向 B:op 名参数化 scaffold 时,从 snake_case op 名转 PascalCase 类名。
     """
     return "".join(part.capitalize() for part in snake.split("_") if part)
+
+
+def parse_op_info_block(response: str) -> dict | None:
+    """从 LLM response 抽 ``<<OP_INFO>>{json}<<END>>`` 结构化块。
+
+    失败(无块/JSON 解析错)返 None,不抛。analyze 节点 prompt 末尾要求
+    LLM 产此结构化块,后续 codegen/compile 节点从 ``state["op_info"]``
+    取 op 名,避免下游 LLM 再 hallucinate 出 add_custom_ 等错误前缀。
+    """
+    import json
+    import re
+
+    m = re.search(r"<<OP_INFO>>\s*(\{.*?\})\s*<<END>>", response, re.DOTALL)
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    name = obj.get("name")
+    class_name = obj.get("class_name")
+    if not isinstance(name, str) or not name:
+        return None
+    if not isinstance(class_name, str) or not class_name:
+        class_name = to_pascal(name)
+    return {"name": name, "class_name": class_name}
+
+
+def enforce_op_naming(files: list[dict], op_snake: str) -> tuple[list[dict], int]:
+    """扫 ``code_result.files``,rename 语义目录里用了错前缀的文件。
+
+    范围:``op_host/`` ``op_kernel/`` ``op_graph/`` 下的 cpp/h 文件。
+    错前缀:已知 LLM 幻觉的 ``add_example_*`` / ``add_custom_*`` / ``AddExample_*``
+    / ``AddCustom_*``(2026-07-29 e2e 实证残留)。``<op_snake>_*`` 与
+    ``OpClass_*`` 视为正确(不动)。
+
+    Args:
+        files: ``[{"path": str, "content": str, ...}]``
+        op_snake: ``state.op_info.name``(如 ``op_add``)
+
+    Returns:
+        (renamed_files, n_renamed) —— 重命名后的 files 列表 + rename 次数
+        便于观测。
+    """
+    import re
+    from pathlib import Path
+
+    if not op_snake:
+        return files, 0
+    # 文件名 basename 匹配:add_custom_def -> add_custom,suffix 可选
+    # (允许 add_custom.h 这种 stem 完全等于错前缀的情况)
+    pattern = re.compile(
+        r"^(?P<prefix>(" + "|".join(_KNOWN_BAD_OP_PREFIXES) + r"))(?P<suffix>[_.].+)?$"
+    )
+    renamed: list[dict] = []
+    n = 0
+    for f in files:
+        path = f.get("path", "")
+        # 仅语义目录
+        if not any(seg in path.split("/") for seg in ("op_host", "op_kernel", "op_graph")):
+            renamed.append(f)
+            continue
+        p = Path(path)
+        stem = p.stem  # add_custom_def 或 add_custom
+        suffix = p.suffix  # .cpp / .h
+        m = pattern.match(stem)
+        if not m:
+            renamed.append(f)
+            continue
+        # 重命名: add_custom_def -> op_add_def,add_custom -> op_add
+        kept_suffix = m.group("suffix") or ""
+        new_stem = f"{op_snake}{kept_suffix}"
+        new_name = new_stem + suffix
+        new_path = str(p.with_name(new_name))
+        # 内容里也同步替换(避免 content 引用 add_custom 不一致)
+        new_content = f.get("content", "")
+        for bad in _KNOWN_BAD_OP_PREFIXES:
+            new_content = new_content.replace(bad, op_snake)
+        renamed.append({**f, "path": new_path, "content": new_content})
+        n += 1
+    return renamed, n
 
 
 def make_llm_node(
@@ -223,15 +322,35 @@ def make_llm_node(
                 for f in existing_files
                 if not (isinstance(f, dict) and f.get("path") in new_paths)
             ]
-            code_result["files"] = surviving_existing + new_files
+            merged_files = surviving_existing + new_files
+
+            # U5:LLM 命名飘移防御 —— rename 语义目录里用了错前缀的文件
+            # (如 add_custom_def.cpp -> op_add_def.cpp)。
+            op_info_for_rename = state.get("op_info") or {}
+            op_snake = op_info_for_rename.get("name") or ""
+            naming_renamed = 0
+            if op_snake:
+                merged_files, naming_renamed = enforce_op_naming(merged_files, op_snake)
+            code_result["files"] = merged_files
+            code_result["naming_renamed"] = naming_renamed
 
         update = {
             "messages": [{"role": "assistant", "content": response}],
             "memory_pools": new_memory_pools,
-            "last_phase_result": {"phase": phase, "response": response},
+            "last_phase_result": {
+                "phase": phase,
+                "response": response,
+                "naming_renamed": code_result.get("naming_renamed", 0) if new_files else 0,
+            },
         }
         if new_files:
             update["code_result"] = code_result
+
+        # U5:LLM response 里的 <<OP_INFO>>{json}<<END>> 块 → 写 state.op_info。
+        # analyze 节点产,下游 codegen 节点读 state.op_info.name/class_name 命名文件。
+        op_info = parse_op_info_block(response)
+        if op_info is not None:
+            update["op_info"] = op_info
 
         # 9. U2: SkillUsageRegistry 跟踪(signal-1)。
         # 加载侧:skill_names 显式记录(SKILL_BUNDLES 决定的)。
