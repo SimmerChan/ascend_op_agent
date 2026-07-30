@@ -43,11 +43,34 @@ from ascend_op_agent.orchestrator.state_machine import Node
 
 AgentFactory = Callable[[], Any]
 
-# LLM 命名飘移防御:识别 codegen 语义目录里的"其他 op 名"前缀。
-# 这些是 LLM hallucinate 出的真实失败案例(2026-07-29 e2e 暴露:
-# add_custom_def.cpp 残留 → CMakeLists 引 op_add_def.cpp 编译挂)。
-# 命中后 rename 到 state.op_info.name。
-_KNOWN_BAD_OP_PREFIXES = ("add_example", "add_custom", "AddExample", "AddCustom")
+# 语义文件的结构后缀(add_example 范本约定):``{op}_<suffix>`` 或 ``{op}`` 本身。
+# enforce_op_naming 用 **allowlist** —— 语义目录下 cpp/h 的 stem 去掉这些后缀后
+# 必须等于 op_snake,否则 LLM 发明了别的 op 名(2026-07-30 e2e 实证:
+# ``elementwise_add_arch22.cpp`` —— 旧 blocklist 只认 add_example/add_custom,
+# 挡不住 LLM 任意发明的语义名,改 allowlist 彻底兜底)。
+_STRUCTURAL_SUFFIXES = (
+    "_tiling_data",
+    "_tiling_key",
+    "_tiling",
+    "_infershape",
+    "_arch22",
+    "_arch35",
+    "_def",
+    "_proto",
+)
+
+
+def _strip_structural_suffix(stem: str) -> tuple[str, str]:
+    """去结构后缀,返回 (llm_prefix, kept_suffix)。
+
+    ``elementwise_add_arch22`` -> (``elementwise_add``, ``_arch22``);
+    ``op_add_def`` -> (``op_add``, ``_def``);``elementwise_add`` -> (``elementwise_add``, ````)。
+    取最长匹配后缀(``_tiling_data`` 先于 ``_tiling``)。
+    """
+    for suf in sorted(_STRUCTURAL_SUFFIXES, key=len, reverse=True):
+        if stem.endswith(suf) and len(stem) > len(suf):
+            return stem[: -len(suf)], suf
+    return stem, ""
 
 
 def to_pascal(snake: str) -> str:
@@ -176,12 +199,14 @@ def parse_op_info_block(response: str) -> dict | None:
 
 
 def enforce_op_naming(files: list[dict], op_snake: str) -> tuple[list[dict], int]:
-    """扫 ``code_result.files``,rename 语义目录里用了错前缀的文件。
+    """扫 ``code_result.files``,rename 语义目录里**前缀 != op_snake** 的文件。
 
     范围:``op_host/`` ``op_kernel/`` ``op_graph/`` 下的 cpp/h 文件。
-    错前缀:已知 LLM 幻觉的 ``add_example_*`` / ``add_custom_*`` / ``AddExample_*``
-    / ``AddCustom_*``(2026-07-29 e2e 实证残留)。``<op_snake>_*`` 与
-    ``OpClass_*`` 视为正确(不动)。
+    allowlist 规则:stem 去结构后缀(``_def`` / ``_arch22`` / ``_tiling_data`` 等,
+    见 ``_STRUCTURAL_SUFFIXES``)后必须 == ``op_snake``;否则 LLM 发明了别的 op 名
+    (``add_custom`` / ``elementwise_add`` / 任意语义名)→ rename 到 ``op_snake``
+    + content 同步替换(snake + PascalCase 两形式,保证 kernel 入口函数 / include /
+    类名引用一致)。
 
     Args:
         files: ``[{"path": str, "content": str, ...}]``
@@ -196,11 +221,7 @@ def enforce_op_naming(files: list[dict], op_snake: str) -> tuple[list[dict], int
 
     if not op_snake:
         return files, 0
-    # 文件名 basename 匹配:add_custom_def -> add_custom,suffix 可选
-    # (允许 add_custom.h 这种 stem 完全等于错前缀的情况)
-    pattern = re.compile(
-        r"^(?P<prefix>(" + "|".join(_KNOWN_BAD_OP_PREFIXES) + r"))(?P<suffix>[_.].+)?$"
-    )
+    op_pascal = to_pascal(op_snake)
     renamed: list[dict] = []
     n = 0
     for f in files:
@@ -210,24 +231,73 @@ def enforce_op_naming(files: list[dict], op_snake: str) -> tuple[list[dict], int
             renamed.append(f)
             continue
         p = Path(path)
-        stem = p.stem  # add_custom_def 或 add_custom
+        stem = p.stem  # elementwise_add_arch22 或 elementwise_add
         suffix = p.suffix  # .cpp / .h
-        m = pattern.match(stem)
-        if not m:
+        llm_prefix, kept_suffix = _strip_structural_suffix(stem)
+        if not llm_prefix or llm_prefix == op_snake:
             renamed.append(f)
             continue
-        # 重命名: add_custom_def -> op_add_def,add_custom -> op_add
-        kept_suffix = m.group("suffix") or ""
+        # 重命名: elementwise_add_arch22 -> op_add_arch22,elementwise_add -> op_add
         new_stem = f"{op_snake}{kept_suffix}"
         new_name = new_stem + suffix
         new_path = str(p.with_name(new_name))
-        # 内容里也同步替换(避免 content 引用 add_custom 不一致)
+        # content 同步替换 LLM 前缀(snake + PascalCase 两形式,word-boundary):
+        # kernel 入口 `elementwise_add(...)` -> `op_add(...)`,include 路径,
+        # 类名 `ElementwiseAdd` -> `OpAdd`(与 enforce_op_class_naming 收敛一致)。
         new_content = f.get("content", "")
-        for bad in _KNOWN_BAD_OP_PREFIXES:
-            new_content = new_content.replace(bad, op_snake)
+        new_content = re.sub(rf"\b{re.escape(llm_prefix)}\b", op_snake, new_content)
+        llm_pascal = to_pascal(llm_prefix)
+        if llm_pascal != llm_prefix:
+            new_content = re.sub(rf"\b{re.escape(llm_pascal)}\b", op_pascal, new_content)
         renamed.append({**f, "path": new_path, "content": new_content})
         n += 1
     return renamed, n
+
+
+def enforce_op_class_naming(files: list[dict], op_pascal: str) -> tuple[list[dict], int]:
+    """确定性改写 ``op_host/{op}_def.cpp`` 的算子类名 → ``op_pascal``。
+
+    防御 LLM 把 snake 算子名当 PascalCase 类名写(2026-07-30 e2e 实证:
+    op_info.name="add_custom" 时 LLM 产 ``class add_custom : public OpDef`` +
+    ``OP_ADD(add_custom)``,而 scaffold CMakeLists 是 ``OP_TYPE AddCustom`` →
+    CANN ``write_adapt`` 区分大小写匹配失败 → FileNotFoundError,compile_fix_loop
+    5 轮修不好这个 case 问题,因为错误信息只说 source file not found)。
+
+    仅作用于含 ``: public OpDef`` 的文件(即 def.cpp,语义唯一)。提取
+    ``class NAME : public OpDef`` 的 NAME,若 ≠ op_pascal,用 word-boundary
+    全量替换该 token(def.cpp 内该 token 只出现在 class 声明 + 构造函数 +
+    OP_ADD(NAME) 三处,inputs 是 x1/y 等不冲突)。
+
+    Args:
+        files: ``[{"path": str, "content": str, ...}]``
+        op_pascal: ``state.op_info.class_name``(如 ``OpAdd``)
+
+    Returns:
+        (patched_files, n_patched) —— 改写后的 files + 改写文件数(观测用)。
+    """
+    import re
+
+    if not op_pascal:
+        return files, 0
+    patched: list[dict] = []
+    n = 0
+    for f in files:
+        content = f.get("content", "")
+        if "public OpDef" not in content:
+            patched.append(f)
+            continue
+        m = re.search(r"class\s+(\w+)\s*:\s*public\s+OpDef", content)
+        if not m:
+            patched.append(f)
+            continue
+        current = m.group(1)
+        if current == op_pascal:
+            patched.append(f)
+            continue
+        new_content = re.sub(rf"\b{re.escape(current)}\b", op_pascal, content)
+        patched.append({**f, "content": new_content})
+        n += 1
+    return patched, n
 
 
 def make_llm_node(
@@ -417,11 +487,22 @@ def make_llm_node(
             # (如 add_custom_def.cpp -> op_add_def.cpp)。
             op_info_for_rename = state.get("op_info") or {}
             op_snake = op_info_for_rename.get("name") or ""
+            op_pascal_for_class = op_info_for_rename.get("class_name") or ""
             naming_renamed = 0
+            class_patched = 0
             if op_snake:
                 merged_files, naming_renamed = enforce_op_naming(merged_files, op_snake)
+            # U6:def.cpp 类名确定性改写 → op_pascal(防 LLM 把 snake 名当类名,
+            # 与 CMakeLists OP_TYPE 大小写不一致致 write_adapt FileNotFoundError)。
+            # 必须在 enforce_op_naming 之后(后者先把 add_custom/AddCustom 归一到
+            # op_snake,这里再把类名 token 提到 PascalCase)。
+            if op_pascal_for_class:
+                merged_files, class_patched = enforce_op_class_naming(
+                    merged_files, op_pascal_for_class
+                )
             code_result["files"] = merged_files
             code_result["naming_renamed"] = naming_renamed
+            code_result["class_patched"] = class_patched
 
         update = {
             "messages": [{"role": "assistant", "content": response}],
@@ -437,8 +518,10 @@ def make_llm_node(
 
         # U5:LLM response 里的 <<OP_INFO>>{json}<<END>> 块 → 写 state.op_info。
         # analyze 节点产,下游 codegen 节点读 state.op_info.name/class_name 命名文件。
+        # U6:调用方(e2e/生产)在 invoke 时 pin 了 op_info → 不让 analyze LLM 覆盖
+        # (LLM 常从 skill 范本飘移到 add_custom;pin 后强制对齐用户意图的算子名)。
         op_info = parse_op_info_block(response)
-        if op_info is not None:
+        if op_info is not None and not state.get("op_info"):
             update["op_info"] = op_info
 
         # 9. U2: SkillUsageRegistry 跟踪(signal-1)。

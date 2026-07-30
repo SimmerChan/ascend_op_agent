@@ -142,6 +142,55 @@ def test_enforce_op_naming_empty_op_snake_is_noop():
     assert out == files  # 没 op_snake 时不动
 
 
+def test_enforce_op_naming_renames_arbitrary_semantic_prefix():
+    """allowlist:LLM 发明任意语义名(``elementwise_add``,非 blocklist 已知)也 rename。
+    2026-07-30 e2e 实证:LLM 把 op_add 漂移成 elementwise_add,旧 blocklist 挡不住。"""
+    from ascend_op_agent.orchestrator.nodes.common import enforce_op_naming
+
+    files = [
+        {
+            "path": "/tmp/op/op_kernel/elementwise_add_arch22.cpp",
+            "content": "__global__ __aicore__ void elementwise_add(GM_ADDR x) {}",
+        },
+        {
+            "path": "/tmp/op/op_kernel/arch22/elementwise_add.h",
+            "content": "class ElementwiseAdd {};",
+        },
+        {
+            "path": "/tmp/op/op_host/elementwise_add_def.cpp",
+            "content": "class ElementwiseAdd : public OpDef {};\nOP_ADD(ElementwiseAdd);",
+        },
+    ]
+    out, n = enforce_op_naming(files, "op_add")
+    assert n == 3
+    paths = {f["path"] for f in out}
+    assert "/tmp/op/op_kernel/op_add_arch22.cpp" in paths
+    assert "/tmp/op/op_kernel/arch22/op_add.h" in paths
+    assert "/tmp/op/op_host/op_add_def.cpp" in paths
+    # 无 elementwise 残留(文件名)
+    assert not any("elementwise" in p for p in paths)
+    # content 同步:kernel 入口 + include + PascalCase 类名
+    kernel = next(f for f in out if "op_add_arch22.cpp" in f["path"])
+    assert "void op_add(GM_ADDR x)" in kernel["content"]
+    assert "elementwise_add" not in kernel["content"]
+    header = next(f for f in out if "arch22/op_add.h" in f["path"])
+    assert "class OpAdd {}" in header["content"]
+    assert "ElementwiseAdd" not in header["content"]
+
+
+def test_enforce_op_naming_leaves_correct_op_snake_prefix():
+    """已用 op_snake 前缀的语义文件不动(allowlist 正例)。"""
+    from ascend_op_agent.orchestrator.nodes.common import enforce_op_naming
+
+    files = [
+        {"path": "/tmp/op/op_kernel/op_add_arch22.cpp", "content": "void op_add(){}"},
+        {"path": "/tmp/op/op_host/op_add_def.cpp", "content": "class OpAdd{};"},
+    ]
+    out, n = enforce_op_naming(files, "op_add")
+    assert n == 0
+    assert out == files
+
+
 # ---- make_llm_node 集成 ----
 
 
@@ -272,3 +321,148 @@ def test_make_llm_node_no_state_op_info_no_rename():
     assert "code_result" in update
     assert update["code_result"]["files"][0]["path"] == "/tmp/op/op_host/add_custom_def.cpp"
     assert update["code_result"]["naming_renamed"] == 0
+
+
+# ---- enforce_op_class_naming(U6:def.cpp 类名确定性改写)----
+
+
+_DEF_CPP_SNAKE_CLASS = """\
+#include "register/op_def_registry.h"
+namespace ops {
+class op_add : public OpDef {
+public:
+    explicit op_add(const char* name) : OpDef(name)
+    { this->Input("x1"); }
+};
+OP_ADD(op_add);
+}
+"""
+
+
+_DEF_CPP_PASCAL_CLASS = """\
+#include "register/op_def_registry.h"
+namespace ops {
+class OpAdd : public OpDef {
+public:
+    explicit OpAdd(const char* name) : OpDef(name)
+    { this->Input("x1"); }
+};
+OP_ADD(OpAdd);
+}
+"""
+
+
+def test_enforce_op_class_naming_rewrites_snake_to_pascal():
+    """LLM 把 snake 名当类名写(``class op_add``+``OP_ADD(op_add)``)→ 改写到 OpAdd。"""
+    from ascend_op_agent.orchestrator.nodes.common import enforce_op_class_naming
+
+    files = [{"path": "/tmp/op/op_host/op_add_def.cpp", "content": _DEF_CPP_SNAKE_CLASS}]
+    out, n = enforce_op_class_naming(files, "OpAdd")
+    assert n == 1
+    content = out[0]["content"]
+    assert "class OpAdd : public OpDef" in content
+    assert "explicit OpAdd(const char* name)" in content
+    assert "OP_ADD(OpAdd)" in content
+    # 原 snake 类名不残留
+    assert "class op_add" not in content
+    assert "OP_ADD(op_add)" not in content
+
+
+def test_enforce_op_class_naming_leaves_correct_pascal():
+    """类名已是 OpAdd → 不动(n=0)。"""
+    from ascend_op_agent.orchestrator.nodes.common import enforce_op_class_naming
+
+    files = [{"path": "/tmp/op/op_host/op_add_def.cpp", "content": _DEF_CPP_PASCAL_CLASS}]
+    out, n = enforce_op_class_naming(files, "OpAdd")
+    assert n == 0
+    assert out[0]["content"] == _DEF_CPP_PASCAL_CLASS
+
+
+def test_enforce_op_class_naming_skips_non_def_files():
+    """非 def.cpp(无 ``public OpDef``)不动 —— kernel/host tiling 类名各异,不碰。"""
+    from ascend_op_agent.orchestrator.nodes.common import enforce_op_class_naming
+
+    kernel = "class NsAddExampleOuter { __aicore__ void op_add(); };"
+    files = [{"path": "/tmp/op/op_kernel/op_add_arch22.cpp", "content": kernel}]
+    out, n = enforce_op_class_naming(files, "OpAdd")
+    assert n == 0
+    assert out[0]["content"] == kernel
+
+
+def test_enforce_op_class_naming_empty_op_pascal_is_noop():
+    from ascend_op_agent.orchestrator.nodes.common import enforce_op_class_naming
+
+    files = [{"path": "/tmp/op/op_host/op_add_def.cpp", "content": _DEF_CPP_SNAKE_CLASS}]
+    out, n = enforce_op_class_naming(files, "")
+    assert n == 0
+    assert out == files
+
+
+def test_enforce_op_class_naming_after_enforce_op_naming_chains():
+    """端到端链路:LLM 写 add_custom 全套 → enforce_op_naming 归一文件名到 op_add,
+    再 enforce_op_class_naming 把类名提到 OpAdd(模拟 2026-07-30 e2e 失败现场)。"""
+    from ascend_op_agent.orchestrator.nodes.common import (
+        enforce_op_class_naming,
+        enforce_op_naming,
+    )
+
+    add_custom_def = _DEF_CPP_SNAKE_CLASS.replace("op_add", "add_custom")
+    files = [{"path": "/tmp/op/op_host/add_custom_def.cpp", "content": add_custom_def}]
+    files, _ = enforce_op_naming(files, "op_add")
+    # enforce_op_naming 把 add_custom 归一到 op_add(含类名 → class op_add)
+    assert "class op_add : public OpDef" in files[0]["content"]
+    files, n = enforce_op_class_naming(files, "OpAdd")
+    assert n == 1
+    assert "class OpAdd : public OpDef" in files[0]["content"]
+    assert "OP_ADD(OpAdd)" in files[0]["content"]
+
+
+# ---- make_llm_node:U6 pin op_info + class_patched 上报 ----
+
+
+def test_make_llm_node_does_not_override_pinned_op_info():
+    """调用方 invoke 时 pin 了 op_info → analyze LLM 产 add_custom 的 OP_INFO 块
+    也不覆盖(state.op_info 对齐用户意图,杀 analyze→add_custom 飘移)。"""
+    from ascend_op_agent.orchestrator.nodes.common import make_llm_node
+
+    response = "分析完成\n<<OP_INFO>>" '{"name": "add_custom", "class_name": "AddCustom"}<<END>>'
+    agent = _make_mock_agent(response)
+    node = make_llm_node(
+        phase="analyze",
+        task_prompt_template="分析 {user_input}",
+        agent_factory=lambda: agent,
+        no_tools=True,
+    )
+    state = {"messages": [{"role": "user", "content": "op_add"}]}
+    state["op_info"] = {"name": "op_add", "class_name": "OpAdd"}  # 调用方 pin
+    update = node.func(state)
+    # pin 的 op_info 不被 LLM 的 add_custom 块覆盖
+    assert "op_info" not in update
+
+
+def test_make_llm_node_reports_class_patched_for_snake_def():
+    """codegen_host LLM 产 snake 类名 def.cpp → code_result.class_patched=1。"""
+    from ascend_op_agent.orchestrator.nodes.common import make_llm_node
+
+    agent = _make_mock_agent("已生成")
+    node = make_llm_node(
+        phase="codegen_host",
+        task_prompt_template="生成 {user_input}",
+        agent_factory=lambda: agent,
+        no_tools=True,
+    )
+    state = {
+        "messages": [
+            {"role": "user", "content": "host"},
+            {
+                "role": "assistant",
+                "content": f"```cpp\n// /tmp/op/op_host/op_add_def.cpp\n{_DEF_CPP_SNAKE_CLASS}```",
+            },
+        ],
+        "op_info": {"name": "op_add", "class_name": "OpAdd"},
+    }
+    update = node.func(state)
+    assert update["code_result"]["class_patched"] == 1
+    content = update["code_result"]["files"][0]["content"]
+    assert "class OpAdd : public OpDef" in content
+    assert "OP_ADD(OpAdd)" in content

@@ -145,3 +145,57 @@ def test_resolver_local_dir_is_op_root_when_first_file_in_subdir(tmp_path, monke
     # 所有子目录文件落盘
     assert (operator_dir / "op_kernel/arch22/entry.cpp").exists()
     assert (operator_dir / "op_host/def.cpp").exists()
+
+
+# ---- U6:should_sync=False(precision 不擦 build/)----
+
+
+def test_resolver_should_sync_false_skips_rsync(tmp_path, monkeypatch):
+    """should_sync=False(precision 用)→ 不调 _rsync_to_npu(不擦远程 build/),
+    但仍落盘本地 + 返回远程路径。"""
+    operator_dir = tmp_path / "op_add"
+    captured = {}
+    monkeypatch.setattr(
+        e2e, "_rsync_to_npu", lambda local, remote: captured.update(local=local, remote=remote)
+    )
+    resolver = e2e.make_operator_path_resolver(
+        remote_workdir="/remote/wd", operator_dir=str(operator_dir), should_sync=False
+    )
+    state = {
+        "code_result": {
+            "files": [
+                {"path": str(operator_dir / "op_host/def.cpp"), "content": "D"},
+                {"path": str(operator_dir / "CMakeLists.txt"), "content": "C"},
+                {"path": str(operator_dir / "build.sh"), "content": "B"},
+            ]
+        }
+    }
+    remote = resolver(state)
+    # 不 sync(captured 空)—— 保护远程已编译的 build/
+    assert captured == {}
+    # 路径照常返回
+    assert remote == "/remote/wd/op_add"
+    # 本地落盘仍发生(precision 无害副作用)
+    assert (operator_dir / "op_host/def.cpp").read_text() == "D"
+
+
+def test_resolver_should_sync_true_default_calls_rsync(tmp_path, monkeypatch):
+    """默认 should_sync=True(compile_fix_loop 用)→ 调 _rsync_to_npu(回归保护)。"""
+    operator_dir = tmp_path / "op_add"
+    captured = {}
+    monkeypatch.setattr(
+        e2e, "_rsync_to_npu", lambda local, remote: captured.update(local=local, remote=remote)
+    )
+    resolver = e2e.make_operator_path_resolver(
+        remote_workdir="/remote/wd", operator_dir=str(operator_dir)
+    )
+    state = {
+        "code_result": {
+            "files": [
+                {"path": str(operator_dir / "CMakeLists.txt"), "content": "C"},
+                {"path": str(operator_dir / "build.sh"), "content": "B"},
+            ]
+        }
+    }
+    resolver(state)
+    assert captured == {"local": str(operator_dir), "remote": "/remote/wd/op_add"}

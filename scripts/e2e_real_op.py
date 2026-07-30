@@ -192,12 +192,20 @@ def _extract_files_from_messages(messages: list[dict]) -> list[dict]:
 
 
 def make_operator_path_resolver(
-    remote_workdir: str, operator_dir: str = "/tmp/e2e_ops_local/op_add"
+    remote_workdir: str,
+    operator_dir: str = "/tmp/e2e_ops_local/op_add",
+    should_sync: bool = True,
 ):
     """返回 (state) -> str(远程 operator_path,供 build.sh 跑)。
 
     operator_dir: 本地算子工程根(codegen 落盘根,与 codegen template_vars 一致)。
     U1 方向 B:落盘保留子目录(op_kernel/arch22/ 等),tar 整个 operator_dir 到远程。
+
+    should_sync: True(默认,compile_fix_loop 用)——解析后 ``_rsync_to_npu`` 同步
+        本地→远程(含 ``rm -rf`` 重建)。**False(precision 用)**——只解析路径+落盘,
+        不同步。U6 修复:precision 在 compile 之后跑,build/ 已由 compile 生成,
+        若再 sync 会 ``rm -rf`` 擦掉 build/,致 install ``cd build/`` 失败
+        (2026-07-30 e2e 实证:compile success=True 但 precision 报 build/ No such file)。
     """
 
     def _resolve(state: dict) -> str:
@@ -266,7 +274,8 @@ def make_operator_path_resolver(
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_text(f["content"], encoding="utf-8")
         remote_dir = f"{remote_workdir}/{Path(operator_dir).name}"
-        _rsync_to_npu(operator_dir, remote_dir)
+        if should_sync:
+            _rsync_to_npu(operator_dir, remote_dir)
         return remote_dir
 
     return _resolve
@@ -593,6 +602,11 @@ def _do_one_run(
     # 3. graph
     agent_factory = make_real_agent_factory()
     operator_path_resolver = make_operator_path_resolver(NPU_REMOTE_WORKDIR)
+    # U6:precision 用 nosync resolver —— compile 已生成 build/,precision 再 sync 会
+    # rm -rf 擦掉 build/ 致 install 失败。precision 只需远程路径,不重新同步。
+    operator_path_resolver_nosync = make_operator_path_resolver(
+        NPU_REMOTE_WORKDIR, should_sync=False
+    )
     operator_name_resolver = lambda s: (s.get("op_info") or {}).get("name", "op_add")
     test_cases_resolver = make_test_cases_resolver()
     phase_cb = make_phase_callback("orchestrator")
@@ -617,14 +631,21 @@ def _do_one_run(
         ),
         precision_node_factory=lambda: make_real_precision_node(
             executor=npu,
-            operator_path_resolver=operator_path_resolver,
+            operator_path_resolver=operator_path_resolver_nosync,
             operator_name_resolver=operator_name_resolver,
         ),
         use_scaffold_codegen=True,
     )
 
     # 4. invoke + 循环 resume
-    state = runner.invoke(task, thread_id=thread_id)
+    # U6:pin op_info = op_add/OpAdd —— 强制对齐用户意图的算子名,不让 analyze LLM
+    # 飘移到 add_custom(make_llm_node 见 state.op_info 已设就不覆盖;enforce_op_class_naming
+    # 进一步把 def.cpp 类名确定性改写到 OpAdd,与 scaffold CMakeLists OP_TYPE 一致)。
+    state = runner.invoke(
+        task,
+        thread_id=thread_id,
+        op_info={"name": "op_add", "class_name": "OpAdd"},
+    )
     round_n = 0
     while state.get("pending_confirmation") is not None:
         round_n += 1
