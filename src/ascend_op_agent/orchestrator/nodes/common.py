@@ -58,6 +58,95 @@ def to_pascal(snake: str) -> str:
     return "".join(part.capitalize() for part in snake.split("_") if part)
 
 
+def validate_kernel_symbol(files: list[dict], op_snake: str, op_pascal: str) -> dict | None:
+    """U2.5 校验 kernel 入口函数符号 = op_snake(CANN 9.1.0 文件名 stem 规则)。
+
+    Args:
+        files: ``code_result.files``(loader 注入 op_api + LLM 写的 kernel)
+        op_snake: ``state.op_info.name``(如 ``op_add``)
+        op_pascal: ``state.op_info.class_name``(如 ``OpAdd``,仅用于观测)
+
+    Returns:
+        ``None`` 校验通过;否则返 ``{"error": str, "kernel_symbols": [...],
+        "op_api_symbols": [...]}`` —— PhaseRunner 接到 raise 抛 ``ValueError``
+        让 fix_loop 看到 stderr 修 kernel 符号。
+
+    校验规则(CANN 9.1.0 实证):
+      1. kernel cpp 文件存在(``op_kernel/{op_snake}_arch22.cpp``)
+      2. kernel cpp 含 ``__global__ __aicore__ void {op_snake}(...)`` entry,
+         **必须 snake_case**(CANN 强制 kernel 入口名 == 文件名 stem,实测
+         `OpAdd` PascalCase 会被 infer compile info 阶段拒:`kernel entry
+         'op_add' not implement in 'op_add_arch22.cpp'`)
+      3. op_api cpp(``op_api/aclnn_{op_snake}.cpp``)含 ``l0op::{op_pascal}(...)``
+         调用 —— L0 算子名,**独立于 kernel 入口名**,由 aclnnOpAdd 端点链接
+    """
+    import re
+
+    kernel_path = f"op_kernel/{op_snake}_arch22.cpp"
+    op_api_path = f"op_api/aclnn_{op_snake}.cpp"
+    kernel_content = None
+    op_api_content = None
+    for f in files:
+        path = f.get("path", "")
+        if path.endswith(kernel_path):
+            kernel_content = f.get("content", "")
+        elif path.endswith(op_api_path):
+            op_api_content = f.get("content", "")
+
+    if kernel_content is None:
+        return {
+            "error": f"kernel_symbol_validator: missing kernel file {kernel_path}",
+            "kernel_symbols": [],
+            "op_api_symbols": [],
+        }
+    if op_api_content is None:
+        return {
+            "error": f"kernel_symbol_validator: missing op_api file {op_api_path}",
+            "kernel_symbols": [],
+            "op_api_symbols": [],
+        }
+
+    # 提取 kernel 入口函数名(`__global__ __aicore__ void NAME(...)`)
+    kernel_syms = re.findall(r"__global__\s+__aicore__\s+void\s+(\w+)\s*\(", kernel_content)
+    # 提取 op_api `l0op::NAME(...)` 调用(观测用,独立校验)
+    op_api_syms = re.findall(r"l0op::(\w+)\s*\(", op_api_content)
+
+    if not kernel_syms:
+        return {
+            "error": (
+                f"kernel_symbol_validator: no `__global__ __aicore__ void NAME(`"
+                f" entry in {kernel_path}; LLM 必须导出 kernel 入口函数"
+            ),
+            "kernel_symbols": kernel_syms,
+            "op_api_symbols": op_api_syms,
+        }
+
+    # kernel 入口必须 = op_snake(CANN 文件名 stem 规则)
+    if op_snake not in kernel_syms:
+        return {
+            "error": (
+                f"kernel_symbol_validator: kernel entry symbols {kernel_syms} "
+                f"must contain snake_case '{op_snake}' (CANN 9.1.0 filename stem rule; "
+                f"PascalCase '{op_pascal}' will be rejected at infer compile info stage)"
+            ),
+            "kernel_symbols": kernel_syms,
+            "op_api_symbols": op_api_syms,
+        }
+
+    # op_api 调用观测(允许 l0op::OpPascal 独立存在,是 vendor 参数化输出)
+    if not op_api_syms:
+        return {
+            "error": (
+                f"kernel_symbol_validator: no `l0op::NAME(` call in {op_api_path};"
+                f" op_api 必须调 L0 算子"
+            ),
+            "kernel_symbols": kernel_syms,
+            "op_api_symbols": op_api_syms,
+        }
+
+    return None
+
+
 def parse_op_info_block(response: str) -> dict | None:
     """从 LLM response 抽 ``<<OP_INFO>>{json}<<END>>`` 结构化块。
 

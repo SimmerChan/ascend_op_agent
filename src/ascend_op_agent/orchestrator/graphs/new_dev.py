@@ -31,7 +31,12 @@ from ascend_op_agent.orchestrator.cannbot_loader import (
     render_skill_bundle_text,
 )
 from ascend_op_agent.orchestrator.checkpoint import CheckpointStore
-from ascend_op_agent.orchestrator.nodes.common import AgentFactory, make_llm_node, to_pascal
+from ascend_op_agent.orchestrator.nodes.common import (
+    AgentFactory,
+    make_llm_node,
+    to_pascal,
+    validate_kernel_symbol,
+)
 from ascend_op_agent.orchestrator.nodes.delivery import (
     make_delivery_mode_node,
     make_framework_adapt_node,
@@ -212,6 +217,35 @@ def build_new_dev_graph(
 
     scaffold_node = Node(name="codegen_scaffold", func=_scaffold_inject_node)
 
+    # U2.5:kernel 入口符号自校验节点 —— 编译前 fast-fail 校验 kernel `__global__ __aicore__
+    # void NAME(` 与 op_api `l0op::NAME(` 匹配,避免 ST 跑到 link 阶段才报 undefined reference。
+    # 失败 raise ValueError 让 PhaseRunner catch 写到 stderr,后续 compile_fix_loop 看 stderr 修。
+    def _kernel_symbol_validator(state: dict) -> dict:
+        op_info = state.get("op_info") or {}
+        op_snake = op_info.get("name") or "op_add"
+        op_pascal = op_info.get("class_name") or to_pascal(op_snake)
+        files = (state.get("code_result") or {}).get("files") or []
+        result = validate_kernel_symbol(files, op_snake, op_pascal)
+        if result is None:
+            return {
+                "last_phase_result": {
+                    "phase": "kernel_symbol_validator",
+                    "passed": True,
+                    "op_snake": op_snake,
+                    "op_pascal": op_pascal,
+                }
+            }
+        # 校验失败:raise 让 PhaseRunner catch,fix_loop 看 stderr 修
+        raise ValueError(
+            f"kernel_symbol_validator failed: {result['error']} "
+            f"(kernel_symbols={result['kernel_symbols']}, "
+            f"op_api_symbols={result['op_api_symbols']})"
+        )
+
+    kernel_symbol_validator_node = Node(
+        name="kernel_symbol_validator", func=_kernel_symbol_validator
+    )
+
     # LLM 语义节点(3,子目录 arch22,每节点多 markdown 代码块)。
     # op 名从 state.op_info 取(LLM 在 prompt 里看 state.op_info.name/class_name)。
     # <op_snake> 是字面占位(非 format {} 占位,避免 make_llm_node KeyError fallback),
@@ -269,6 +303,15 @@ def build_new_dev_graph(
                     "- 严格照范本 include 清单,#include 只能是范本中存在的 header 或工程内已生成的文件;"
                     "禁止幻觉 autogen 生成的 header(实测 *_tiling.h 不存在 —— add_example 范本 def.cpp"
                     " 只 #include register/op_def_registry.h,autogen 不生成 tiling.h)\n\n"
+                    "【U2.5 强制 —— kernel 入口符号约定(CANN 9.1.0 文件名 stem 规则)】\n"
+                    "op_kernel/<op_snake>_arch22.cpp 必须导出 kernel 入口函数,签名严格匹配:\n"
+                    "    __global__ __aicore__ void <op_snake>(GM_ADDR x, GM_ADDR y, GM_ADDR z, GM_ADDR workspace, GM_ADDR tiling)\n"
+                    "其中 <op_snake> = state.op_info.name(snake_case,如 'op_add')。\n"
+                    "**CANN 9.1.0 强制 kernel 入口名 == 文件名 stem**(实测:PascalCase 'OpAdd' 会被 infer\n"
+                    "compile info 阶段拒:`kernel entry 'op_add' not implement in 'op_add_arch22.cpp'`,\n"
+                    "与 vendor add_example 同名 snake_case)。\n"
+                    "op_api/aclnn_<op_snake>.cpp 通过 l0op::<OpPascal>(...) 调 L0 算子(loader 已注入,\n"
+                    "**独立于 kernel 入口名**,由 aclnnOpAddGetWorkspaceSize 端点链接)。\n\n"
                     "【输出格式】每个文件一个 markdown 代码块,首行路径注释 // 绝对路径:\n"
                     "```cpp\n// /abs/path/file\n<内容>\n```\n"
                     "【禁止】调用 file_write 等 tool(本节点加 markdown fallback 提取多代码块)。\n"
@@ -355,11 +398,14 @@ def build_new_dev_graph(
         design_node,
     ]
     if isinstance(codegen_node, list):
-        # LLM-based:5 个独立 codegen 节点
+        # LLM-based:codegen scaffold + 3 语义节点 + kernel_symbol_validator
+        # (U2.5:validator 在所有 LLM codegen 完成后跑,确认 kernel 符号与 op_api 匹配)
         nodes.extend(codegen_node)
+        nodes.append(kernel_symbol_validator_node)
     else:
-        # scaffold-based:单 codegen 节点
+        # scaffold-based:单 codegen 节点 + validator
         nodes.append(codegen_node)
+        nodes.append(kernel_symbol_validator_node)
     nodes.extend(
         [
             review_fix_node,

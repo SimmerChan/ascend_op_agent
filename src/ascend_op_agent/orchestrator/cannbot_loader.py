@@ -581,12 +581,17 @@ def _render_build_template_section(skills: list[CannbotSkill]) -> str:
 
 
 def _strip_opapi_section(content: str) -> str:
-    """移除 op_host/CMakeLists.txt 的 op_api(aclnn) library 段 + package_add 引用。
+    """[DEPRECATED 2026-07-29 U1] 移除 op_host/CMakeLists.txt 的 op_api(aclnn) library 段。
 
-    方向 B 不注入 op_api/(aclnn 封装 plan deferred),但 add_example 原版 op_host/CMakeLists
-    引用 op_api/aclnn_*.cpp 构建 cust_opapi library,导致 CMake 'No SOURCES given to target
-    cust_opapi'。compile(msopgen compile)只编译 kernel+host,op_api 是上层 aclnn 封装,
-    删后不影响 kernel/host 编译。
+    历史:d725530 / 10005 commit 引入"方向 B 不注入 op_api/"决策,在 load_build_scaffold
+    里无条件 strip vendor `cust_opapi` library 段,避免 CMake 'No SOURCES given to target
+    cust_opapi'(LLM 没写出 op_api/ 源文件时空目录)。
+
+    现状:本次 U1 在 load_build_scaffold 里**重新注入** op_api/ 4 文件(aclnn_{op}.{h,cpp}
+    + {op}.{h,cpp}),vendor `cust_opapi` 段必须保留(op_host CMakeLists 用 op_api_srcs
+    编译这些文件)。故 load_build_scaffold line 668-670 已删除对该函数的调用。
+
+    函数本体保留(无害 grep 用),仅 docstring 标 DEPRECATED。如未来真无调用方,可删除。
     """
     # 删 set(op_api_dir...) 到 target_link_options(cust_opapi...) 整段
     content = re.sub(
@@ -637,8 +642,23 @@ def load_build_scaffold(op_snake: str, op_pascal: str) -> dict[str, str]:
         "tests/st/CMakeLists.txt",
         "tests/st/run.sh",
     )
+    # U1:op_api/ 4 文件(aclnn 封装 + L0 wrapper),从 vendor add_example/op_api/ 参数化注入。
+    # 解决 ST 二进制编译/链接缺 aclnnOpAddGetWorkspaceSize 符号 -> precision 0 case。
+    # 文件名参数化:rel.replace("add_example", op_snake) 对所有 4 文件均生效
+    #   op_api/aclnn_add_example.h  -> op_api/aclnn_op_add.h
+    #   op_api/aclnn_add_example.cpp -> op_api/aclnn_op_add.cpp
+    #   op_api/add_example.h        -> op_api/op_add.h
+    #   op_api/add_example.cpp      -> op_api/op_add.cpp
+    # vendor 原版 op_api/ 无 CMakeLists.txt(op_api library 在 op_host/CMakeLists 内部
+    # 通过 set(op_api_dir) + npu_op_library(cust_opapi ACLNN ${op_api_srcs}) 注册)。
+    _OP_API_FILES = (
+        "op_api/aclnn_add_example.h",
+        "op_api/aclnn_add_example.cpp",
+        "op_api/add_example.h",
+        "op_api/add_example.cpp",
+    )
     out: dict[str, str] = {}
-    for rel in _BUILD_FILES + _ST_FILES:
+    for rel in _BUILD_FILES + _ST_FILES + _OP_API_FILES:
         fpath = add_example_dir / rel
         if not fpath.is_file():
             logging.warning("load_build_scaffold: missing %s", fpath)
@@ -665,11 +685,12 @@ def load_build_scaffold(op_snake: str, op_pascal: str) -> dict[str, str]:
                 "./custom_opp_ubuntu_aarch64.run",
                 "./custom_opp_almalinux_aarch64.run",
             )
-        if rel == "op_host/CMakeLists.txt":
-            # 方向 B 不注入 op_api/(aclnn),移除 cust_opapi library 段避免 No SOURCES
-            content = _strip_opapi_section(content)
+        # U1:不再 strip op_host/CMakeLists.txt 的 cust_opapi 段 —— op_api/ 已注入,
+        # vendor 原版 op_host CMakeLists 的 set(op_api_dir) + npu_op_library(cust_opapi ACLNN
+        # ${op_api_srcs}) + package_add(cust_opapi) 必须保留,否则 ST 链接缺 aclnn 符号。
         # relpath 参数化文件名(test_aclnn_add_example.cpp -> test_aclnn_{op}.cpp),
-        # 与 run_st_driver 找 test_aclnn_{op_name} 二进制 + tests/st/CMakeLists 引用一致
+        # 与 run_st_driver 找 test_aclnn_{op_name} 二进制 + tests/st/CMakeLists 引用一致。
+        # 对 op_api/ 4 文件同样生效(op_api/aclnn_add_example.cpp -> op_api/aclnn_op_add.cpp)。
         out[rel.replace("add_example", op_snake)] = content
     return out
 

@@ -12,9 +12,9 @@ from ascend_op_agent.orchestrator.cannbot_loader import load_build_scaffold
 # ---- 5 文件 + 参数化无残留 ----
 
 
-def test_load_build_scaffold_returns_8_files_parameterized():
+def test_load_build_scaffold_returns_12_files_parameterized():
     out = load_build_scaffold("op_add", "OpAdd")
-    # 5 构建文件 + 3 ST 驱动模板(tests/st/test_aclnn_op_add.cpp 文件名参数化)
+    # 5 构建 + 3 ST 驱动 + 4 op_api 文件(U1 新增)
     expected = {
         "CMakeLists.txt",
         "build.sh",
@@ -24,6 +24,11 @@ def test_load_build_scaffold_returns_8_files_parameterized():
         "tests/st/test_aclnn_op_add.cpp",
         "tests/st/CMakeLists.txt",
         "tests/st/run.sh",
+        # U1:op_api 4 文件,文件名参数化
+        "op_api/aclnn_op_add.h",
+        "op_api/aclnn_op_add.cpp",
+        "op_api/op_add.h",
+        "op_api/op_add.cpp",
     }
     assert set(out.keys()) == expected, f"实际 keys: {set(out.keys())}"
 
@@ -71,16 +76,20 @@ def test_op_host_cmakelists_references_op_host_files():
     assert "AddExample" not in cmake
 
 
-def test_op_host_cmakelists_strips_opapi_section():
-    """方向 B 不注入 op_api/,op_host/CMakeLists.txt 移除 cust_opapi library 段 + package_add 引用。
+def test_op_host_cmakelists_includes_opapi_section():
+    """U1:loader 注入 op_api/ 4 文件后,vendor op_host/CMakeLists.txt 的 cust_opapi 段必须保留。
 
-    add_example 原版引用 op_api/aclnn_*.cpp 构建 cust_opapi -> CMake 'No SOURCES given to
-    target cust_opapi'。strip 后 cust_opapi/op_api_dir 不存在,但 cust_optiling/cust_op_proto 保留。
+    原版 d725530 / 10005 commit strip 了 cust_opapi(因 LLM 写不出 op_api/ 源文件致 CMake
+    'No SOURCES given to target')。U1 在 loader 里直接注入 op_api/ 4 文件,vendor 原版
+    set(op_api_dir) + npu_op_library(cust_opapi ACLNN ${op_api_srcs}) + package_add 段
+    需保留(否则 ST 二进制链接缺 aclnnOpAddGetWorkspaceSize 符号)。
     """
     out = load_build_scaffold("vector_add", "VectorAdd")
     cmake = out["op_host/CMakeLists.txt"]
-    assert "cust_opapi" not in cmake, f"op_host/CMakeLists 应移除 cust_opapi:\n{cmake}"
-    assert "op_api_dir" not in cmake, f"应移除 op_api_dir:\n{cmake}"
+    assert "cust_opapi" in cmake, f"op_host/CMakeLists 应保留 cust_opapi:\n{cmake}"
+    assert "op_api_dir" in cmake, f"应保留 op_api_dir:\n{cmake}"
+    # op_api_srcs 引用 op_api/4 文件(参数化后)
+    assert "vector_add_custom_impl" not in cmake  # no residual
     # 其他 library 保留(compile 需要)
     assert "cust_optiling" in cmake
     assert "cust_op_proto" in cmake
@@ -162,3 +171,61 @@ def test_run_sh_package_name_almalinux():
     run_sh = out["tests/st/run.sh"]
     assert "./custom_opp_ubuntu_aarch64.run" not in run_sh, "run.sh 残留 ubuntu 包名"
     assert "./custom_opp_almalinux_aarch64.run" in run_sh
+
+
+# ---- U1:op_api 注入 + 参数化 ----
+
+
+def test_op_api_files_parameterized_no_residual():
+    """U1:op_api/ 4 文件 content 无 add_example/AddExample 残留(l0op::AddExample 等已替换)。"""
+    out = load_build_scaffold("op_add", "OpAdd")
+    for rel in (
+        "op_api/aclnn_op_add.h",
+        "op_api/aclnn_op_add.cpp",
+        "op_api/op_add.h",
+        "op_api/op_add.cpp",
+    ):
+        assert rel in out, f"{rel} 应在 scaffold 中"
+        content = out[rel]
+        assert "add_example" not in content, f"{rel} 残留 add_example"
+        assert "AddExample" not in content, f"{rel} 残留 AddExample"
+
+
+def test_op_api_key_naming():
+    """U1:文件名参数化 key 是 op_api/{aclnn_,}op_add.{h,cpp} 不是 vendor 原 add_example。"""
+    out = load_build_scaffold("op_add", "OpAdd")
+    keys = set(out.keys())
+    # 旧的 vendor key 不应出现(已被 rel.replace 参数化)
+    assert "op_api/aclnn_add_example.h" not in keys
+    assert "op_api/aclnn_add_example.cpp" not in keys
+    assert "op_api/add_example.h" not in keys
+    assert "op_api/add_example.cpp" not in keys
+
+
+def test_op_api_aclnn_cpp_references_l0op_op_add():
+    """U1:op_api/aclnn_op_add.cpp 必须含 l0op::OpAdd 调用(与 kernel 符号匹配)。
+
+    vendor 原版 aclnn_add_example.cpp 关键符号:
+      - `l0op::AddExample(x1Contiguous, x2Contiguous, ...)` (L0 调用)
+      - `aclnnAddExampleGetWorkspaceSize(...)` (workspace size + executor)
+      - `CommonOpExecutorRun(...)` (公共执行)
+    参数化后:AddExample -> OpAdd,add_example -> op_add
+    """
+    out = load_build_scaffold("op_add", "OpAdd")
+    aclnn_cpp = out["op_api/aclnn_op_add.cpp"]
+    assert "l0op::OpAdd" in aclnn_cpp, f"aclnn_op_add.cpp 应含 l0op::OpAdd 调用:\n{aclnn_cpp[:500]}"
+    assert "aclnnOpAddGetWorkspaceSize" in aclnn_cpp, "应含 aclnnOpAddGetWorkspaceSize"
+    assert "CommonOpExecutorRun" in aclnn_cpp
+
+
+def test_op_api_guard_vendor_missing_skips(monkeypatch):
+    """vendor add_example/op_api/ 缺失时 warn + 跳过(不抛,返 8 文件:5+3)。
+
+    简化测:全 vendor 缺失 -> 返空 dict(已存在的 _BUILD_FILES missing 降级路径)。
+    """
+    import pathlib
+    from ascend_op_agent.orchestrator import cannbot_loader
+
+    monkeypatch.setattr(cannbot_loader, "CANNBOT_ROOT", pathlib.Path("/nonexistent/xyz"))
+    out = cannbot_loader.load_build_scaffold("op_add", "OpAdd")
+    assert out == {}

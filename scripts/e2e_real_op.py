@@ -302,11 +302,20 @@ def _rsync_to_npu(local_dir: str, remote_dir: str) -> None:
 
 
 def make_test_cases_resolver():
+    """[DEPRECATED 2026-07-29 U3] ST 驱动自供 cases,此 resolver 不被消费。
+
+    历史:早 e2e_real_op 阶段 precision 节点用 ``test_cases_resolver`` 注 golden/actual
+    走 ``run_precision(numpy diff)`` 路径。2026-06-27 spike 之后 precision 节点改走
+    ``run_st_driver``(U1 实现 6 步配方:install op 包 → build ST → run ST → parse
+    stdout MERE/MARE),cases 由 vendor ``tests/st/test_aclnn_add_example.cpp`` 内置
+    10 个用例提供。
+
+    保留此函数仅为 e2e_real_op 启动时 import 不报错,实际不被任何代码路径消费。
+    """
     import numpy as np
 
     def _resolve(state: dict) -> list[dict]:
-        # 简单占位:golden==actual 全部通过(precision 节点是确定性节点,
-        # 它会真跑 NpuExecutor.run_precision。这里只验证 orchestration 通路)
+        # 占位:不被消费,留作历史兼容
         return [
             {"golden": np.array([1.0]), "actual": np.array([1.0])},
         ]
@@ -662,6 +671,28 @@ def _main_single_report(state: dict, run_index: int = 0, total: int = 1) -> int:
         print(
             f"  total: {pr.get('total_cases')}, passed: {pr.get('passed_cases')}, failed: {pr.get('failed_cases')}"
         )
+        if pr.get("success") is False:
+            err = pr.get("error") or ""
+            print(f"  success:  {pr.get('success')}")
+            print(f"  error:    {err[:300]}")
+        else:
+            print(f"  success:  {pr.get('success')}")
+        # 前 3 case 详情(FP32 mere/mare 或 INT32 elems)
+        cases = pr.get("cases") or []
+        for case in cases[:3]:
+            mid = case.get("case_id")
+            passed = case.get("passed")
+            metrics = case.get("metrics") or {}
+            if "mere" in metrics:
+                print(
+                    f"  case {mid}: passed={passed} mere={metrics['mere']:.2e} "
+                    f"mare={metrics['mare']:.2e} elems={metrics.get('elems')}"
+                )
+            else:
+                print(
+                    f"  case {mid}: passed={passed} dtype={metrics.get('dtype', '?')} "
+                    f"elems={metrics.get('elems')}"
+                )
     print(f"delivery_mode: {state.get('delivery_mode')}")
     print("================================\n")
     return 0
